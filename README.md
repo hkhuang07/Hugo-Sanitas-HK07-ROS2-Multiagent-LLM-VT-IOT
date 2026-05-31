@@ -1,0 +1,242 @@
+# HK-07 // HUGO SANITAS ROBOT COMPANION
+
+> **Identifier:** HK.Huang07 | **Version:** 1.0.0-ALPHA | **Initiated:** 2026-05-31
+
+A next-generation healthcare robot companion — assisting in daily life through multi-agent artificial intelligence, real-time vitals monitoring, and <5ms emergency safety reflexes.
+
+---
+
+## System Interface Showcase
+
+| **Vitals Dashboard Monitor (60FPS)** | **Empathetic AI Companion Chat** |
+|:---:|:---:|
+| ![Vitals Dashboard](./asset/dashboard-ui.jpg) | ![Companion Chat](./asset/companion-chat.jpg) |
+
+| **Multi-Agent System Logs (Agents Log)** | **Safety Control Coordination (Safety Radar)** | **Historical Vitals Metrics (History)** |
+|:---:|:---:|:---:|
+| ![Agents Log](./asset/agent_tab.jpg) | ![Safety Radar](./asset/safemode-tab.jpg) | ![Historical Metrics](./asset/history_tab.jpg) |
+
+---
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│         HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE           │
+├─────────────────┬───────────────────┬───────────────────────┤
+│  [FRONTEND]     │   [BACKEND CORE]  │   [AGENT ENGINE]      │
+│  Vue 3 + Vite   │  Spring Boot 3.2  │   Python FastAPI      │
+│  Port: 5173     │   Java 21 VT      │   Port: 8889          │
+│  Cyber-Dark UI  │   Port: 8888      │   3 Agent Loops       │
+│                 │   JWT + RBAC      │   Groq/Gemini API     │
+└────────┬────────┴────────┬──────────┴──────────┬────────────┘
+         │  WebSocket/REST │   MQTT/WebSocket     │ MQTT
+         ▼                 ▼                      ▼
+┌────────────────┐  ┌─────────────┐  ┌───────────────────────┐
+│   PostgreSQL   │  │    Redis    │  │  Eclipse Mosquitto    │
+│   (Persist)    │  │  (Buffer)   │  │  MQTT Broker :1883    │
+└────────────────┘  └─────────────┘  └───────────────────────┘
+                                              ▲
+                              ┌───────────────┴───────────────┐
+                              │     SENSOR LAYER (Simulated)  │
+                              │  Wokwi ESP32 (BLE Wristband)  │
+                              │  ROS 2 LiDAR Mock Nodes       │
+                              │  Webots Robot Simulator       │
+                              └───────────────────────────────┘
+```
+
+---
+
+## Mission & Resolved Problems
+
+### 1. Project Mission (Mission & Philosophy)
+The **HK-07 // HUGO SANITAS** project is designed to build an intelligent care-robot companion for the elderly and patients with cardiovascular conditions. The robot is not merely a passive vitals monitoring device but acts as an empathetic, fast-reacting interactive companion bridging patients, families, and medical staff.
+
+### 2. Practical Problems Solved
+* **Emergency Reflex Latency:** In medicine, every second counts. The system processes and reacts to critical health events (such as stroke detection, or stopping robot movement upon obstacle collision) in under 5ms using prioritized MQTT queues and STOMP WebSockets.
+* **Hardware Resource Optimization:** The entire stack runs comfortably on resource-constrained embedded systems and legacy computers (e.g., Dell Latitude E7270 with a 1.6GHz CPU, 8GB RAM) with an extremely low memory footprint (<615MB RAM total).
+* **Deterministic Rules & Empathetic AI Hybrid:** The system separates reflex responses into two layers: a Hard Reflex layer (triggering immediate SOS alerts based on fixed clinical thresholds) and a Soft Interaction layer (providing psychological comfort and secondary diagnostics using an LLM-powered Multi-Agent loop).
+* **Secured Real-Time Telemetry:** Secures live health streams over WebSockets via a JWT Inbound Channel interceptor on STOMP, preventing unauthorized interception of sensitive medical telemetry.
+
+---
+
+## Tech Stack & Operational Workflow
+
+### 1. Comprehensive Tech Stack
+* **Frontend Dashboard:**
+  * **Vue 3 + TypeScript + Vite:** High-performance SPA frontend.
+  * **Pinia:** Synced state management for real-time vitals streams.
+  * **Custom Cinematic Cyber-Dark Theme:** FUI (Fictional User Interface) aesthetic inspired by Big Hero 6 and Iron Man, featuring a Dark-Blue theme for professional operations monitoring.
+  * **ECG Waveform Canvas:** GPU-accelerated HTML5 Canvas rendering a 60Hz real-time electrocardiogram wave.
+* **Backend Core (Command Center):**
+  * **Spring Boot 3.2 + Java 21 (Virtual Threads):** Thread-per-task concurrency model allowing thousands of concurrent WebSocket client connections with minimal CPU overhead.
+  * **Spring Security + JWT:** Strict role-based access control (RBAC) supporting Owner, Medic, and Guest.
+  * **STOMP Broker Interceptor:** Token-based security validation at the WebSocket connection layer.
+* **AI Multi-Agent Engine (Cognitive Layer):**
+  * **Python FastAPI:** Empathetic dialogue API and structured log forwarding.
+  * **Multi-Agent Architecture:**
+    * *Vitals Monitor Agent:* Tracks remote bio-metrics.
+    * *Emergency Diagnostics Agent:* Clinical event detection.
+    * *Empathetic Interactive Agent:* Natural conversation generator powered by Groq Llama 3 / Gemini Pro APIs for healthcare interactions.
+* **IoT & Simulation (Hardware Layer):**
+  * **Eclipse Mosquitto (MQTT Broker):** Ultra-low latency (<5ms) publish-subscribe message broker.
+  * **Simulated ESP32 (Wokwi BLE Wristband):** Simulated smart band emitting heart rate, SpO2, body temperature, and an SOS panic button.
+  * **Webots Simulator & ROS 2 Mock Nodes:** Physics-based simulation of the HK-07 robot chassis, distance sensors, and LiDAR obstacle avoidance.
+* **Database:**
+  * **MariaDB:** Relational database storing patient history, logs, and user metadata.
+  * **Redis:** In-memory caching, WebSocket session management, and rate-limiting (throttling).
+
+### 2. Operational Workflow
+```
+[BLE Wristband / Robot Sensors]
+          │ (10Hz telemetry via MQTT)
+          ▼
+[Eclipse Mosquitto (Port: 1883)]
+    ├───► [Python Multi-Agent Engine (Port: 8889)] ───► AI Reasoning & LLM Diagnosis
+    └───► [Spring Boot Backend Core (Port: 8888)]
+               │ (Priority handling, Database storage)
+               ▼ (WebSocket STOMP via JWT Interceptor)
+         [Vue 3 Frontend Dashboard (60FPS ECG)]
+```
+
+* **Step 1: IoT Ingestion:** The smart band simulator publishes JSON packets to `hk07/sensors/wristband/...` while the Webots robot emits obstacle distance metrics to `hk07/sensors/lidar/...`.
+* **Step 2: Routing & Reflex Loop:**
+  * Spring Boot Core intercepts the MQTT packets. If metrics fall within normal ranges, it persists them in MariaDB and broadcasts them instantly to the Vue 3 Dashboard via STOMP WebSockets.
+  * If vitals exceed clinical thresholds (e.g. Heart Rate > 150 BPM - Heart Attack), the backend skips standard buffers, flags the event as an EMERGENCY, sends a command via MQTT to immediately halt the Webots robot, and triggers an overlay SOS modal on the frontend dashboard.
+* **Step 3: Empathetic AI Dialogue:** The Python AI Agent catches the health event, reviews the patient's historical records, and calls the Groq/Gemini APIs to generate clinical advice and supportive dialogue, instantly routing it to the companion chat widget in the Vue 3 dashboard.
+
+---
+
+## Directory Structure
+
+```
+source/
+├── backend/
+│   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
+│   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
+│   └── docker/             ← Mosquitto + PostgreSQL configs
+├── frontend/
+│   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
+└── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
+```
+
+---
+
+## Quick Start & Testing Guide
+
+The system supports two operating modes: **Full Docker Stack** (fully integrated simulation) or **Local Dev** (running individual modules locally).
+
+### 1. Full Stack Mode (All Services in Docker)
+This mode automatically builds and starts: Mosquitto, Redis, MariaDB, Spring Boot Core, Python Agent, Vue Dashboard (behind Nginx), and the Webots simulation.
+
+```bash
+# 1. Configure environment variables
+cd source/backend
+cp .env.example .env
+# Open the .env file and fill in GROQ_API_KEY or GEMINI_API_KEY
+
+# 2. Start the stack
+docker-compose up -d --build
+
+# 3. Access urls
+# Dashboard Frontend: http://localhost:4205 (Standard Port)
+# Backend Swagger: http://localhost:8888/swagger-ui.html
+```
+
+### 2. Local Dev Mode (Independent Component Execution)
+
+To run components locally, backing infrastructure services (database, cache, broker) must still be active.
+
+**0. Start Docker Infrastructure Services:**
+Run the following command at the project root or inside `source/backend` to start the databases and brokers:
+```bash
+# From the project root:
+docker compose -f source/backend/docker-compose.yml up -d redis mariadb mosquitto
+
+# Or navigate to source/backend and run:
+cd source/backend
+docker compose up -d redis mariadb mosquitto
+```
+
+**A. Start Backend Core (Spring Boot):**
+*(Ensure step 0 is completed so MariaDB and Redis are available)*
+```bash
+cd source/backend/hk07-core
+mvn clean install -DskipTests
+mvn spring-boot:run
+# Backend runs at http://localhost:8888
+```
+
+**B. Start AI Engine (Python Multi-Agent):**
+```bash
+cd source/backend/hk07-agent
+
+python -m pip install -r requirements.txt
+# Or:
+pip install -r requirements.txt 
+
+uvicorn main:app --reload --port 8889
+# Or:
+python -m uvicorn main:app --reload --port 8889
+
+# AI Agent API runs at http://localhost:8889
+```
+
+**C. Start Frontend Dashboard (Vue 3):**
+```bash
+cd source/frontend/hk07-dashboard
+npm install
+npm run dev
+# Dashboard Frontend runs at http://localhost:5173 (Vite dev)
+```
+
+**D. Execute Simulation Test Scripts:**
+```bash
+cd source/robotics/scripts
+./run_full_simulation.sh
+
+# Emit simulated emergency vital signs via MQTT
+python trigger_heart_attack.py
+python trigger_obstacle.py
+```
+
+---
+
+## Troubleshooting
+
+### 1. `RedisConnectionFailureException` during Login
+* **Symptom:** After entering credentials, the backend throws a `Unable to connect to Redis` exception.
+* **Fix:** Ensure the `hk07-redis` container is active by checking `docker ps`. If stopped, perform **Step 0** above.
+
+### 2. `no configuration file provided: not found` during docker-compose
+* **Symptom:** Executing `docker compose up` raises a configuration missing error.
+* **Fix:** Make sure you are in `source/backend/` before executing commands, or specify the file directly:
+  ```bash
+  docker compose -f source/backend/docker-compose.yml up -d redis mariadb mosquitto
+  ```
+
+---
+
+## RAM Budget (8GB Host Dell Latitude E7270)
+
+| Service | RAM Limit | Purpose |
+|---------|-----------|---------|
+| Mosquitto | 32MB | MQTT Broker |
+| Redis | 64MB | Lag Compensation Buffer |
+| MariaDB | 128MB | Persistent Health Records |
+| hk07-core | 512MB | Spring Boot (JVM: -Xmx512m) |
+| hk07-agent | 256MB | Python Multi-Agent |
+| **Total** | **~615MB** | ✅ Safe on WSL2 4GB |
+
+---
+
+## Phase Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 01-foundation | ✅ DONE | Spring Boot core + Docker stack + Python agents |
+| 02-auth | ✅ DONE | JWT + RBAC + In-Memory Token Handling |
+| 03-data-closure | ✅ DONE | Flyway migrations, REST agent logging pipeline |
+| 04-evolution | ✅ DONE | Red Teaming, Fix Leaks, Race conditions, MQTT Throttle |
+| FE-01-dashboard | ✅ DONE | Vue 3 + Cyber-Cinematic UI, Subsumption Radar |
+| FE-02-auth | ✅ DONE | Cinematic Terminal Login + Interceptor |

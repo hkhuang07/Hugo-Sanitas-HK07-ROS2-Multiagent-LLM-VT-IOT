@@ -1,0 +1,122 @@
+# ─── OS / IDE System Files ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+
+# IDE configs
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.factorypath
+bin/
+
+# ─── Java / Maven (hk07-core) ────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+replay_pid*
+.mvn/wrapper/maven-wrapper.jar
+
+# ─── Node.js / Vue (hk07-dashboard) ──────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+.eslintcache
+.stylelintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.vite/
+.nuxt/
+
+# ─── Python (hk07-agent & scripts) ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+ENV/src/
+
+# Scrapy / Poetry / Test
+.scrapy
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.pytest_cache/
+.mypy_cache/
+.poetry/
+
+# ─── Docker Infrastructure & Volumes ─────────────────────────────────────────
+# Exclude local persistent database/broker data volumes
+source/backend/docker/mariadb/data/
+source/backend/docker/mosquitto/data/
+source/backend/docker/mosquitto/log/
+source/backend/docker/redis/data/
+mariadb-data/
+mosquitto-data/
+mosquitto-log/
+
+# ─── Environment Credentials & API Keys (DO NOT PUSH SECRETS) ────────────────
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+source/backend/.env
+source/backend/hk07-agent/.env
+source/backend/hk07-core/src/main/resources/application-local.yml
+
+# ─── Robotics / Webots / ROS2 ────────────────────────────────────────────────
+install/
+log/
+source/robotics/build/
+source/robotics/install/
+source/robotics/log/
+.webots-project/
+*.wbt.bak
