@@ -9,7 +9,7 @@ Bạn có thể lưu nội dung này trực tiếp vào tệp ở thư mục g�
 **Tiêu chuẩn vận hành:** Hyper-Autonomous Engine Mode  
 
 Tài liệu này đóng vai trò là sơ đồ cấu trúc tối cao định nghĩa mối quan hệ giữa phân vùng tài liệu cấu hình (`docs/`) và phân vùng mã nguồn thực thi (`source/`). Tất cả các AI Agent hoặc hệ thống biên dịch tự động khi vận hành dự án bắt buộc phải tuân thủ nghiêm ngặt cấu trúc phân cấp này để đọc hiểu bối cảnh và thực thi mã nguồn chính xác.
-
+```
 ---
 
 ## I. SƠ ĐỒ CÂY THƯ MỤC TOÀN CỤC (WORKSPACE TREE SYSTEM)
@@ -64,7 +64,7 @@ HK07_WORKSPACE/
 └── PROJECT_REQUIREMENTS.md          # Đặc tả yêu cầu nghiệp vụ và kỹ thuật cốt lõi (PRD)
 
 ```
-```
+
 ---
 
 ## II. ĐỊNH NGHĨA CHỨC NĂNG CÁC ĐẦU NÚT PHÂN TÁN (NODE FUNCTIONALITY)
