@@ -2,14 +2,12 @@ Nội dung chi tiết và hoàn chỉnh của tệp **`PROJECT_ARCHITECTURE_TEMP
 
 Bạn có thể lưu nội dung này trực tiếp vào tệp ở thư mục gốc của dự án:
 
-```markdown
 # CHUẨN KIẾN TRÚC VÀ QUY TRÌNH QUẢN LÝ DỰ ÁN (PROJECT ARCHITECTURE TEMPLATE)
 **Dự án:** Robot Companion Hugo-Sanitas HK-07  
 **Mã hiệu hệ thống:** HK.Huang07  
 **Tiêu chuẩn vận hành:** Hyper-Autonomous Engine Mode  
 
 Tài liệu này đóng vai trò là sơ đồ cấu trúc tối cao định nghĩa mối quan hệ giữa phân vùng tài liệu cấu hình (`docs/`) và phân vùng mã nguồn thực thi (`source/`). Tất cả các AI Agent hoặc hệ thống biên dịch tự động khi vận hành dự án bắt buộc phải tuân thủ nghiêm ngặt cấu trúc phân cấp này để đọc hiểu bối cảnh và thực thi mã nguồn chính xác.
-```
 ---
 
 ## I. SƠ ĐỒ CÂY THƯ MỤC TOÀN CỤC (WORKSPACE TREE SYSTEM)
