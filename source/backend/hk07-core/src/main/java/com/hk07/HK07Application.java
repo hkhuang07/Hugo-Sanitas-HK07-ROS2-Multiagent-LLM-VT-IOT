@@ -2,6 +2,7 @@ package com.hk07;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration;
 import org.springframework.scheduling.annotation.EnableAsync;
 
 /**
@@ -17,7 +18,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
  * Hardware constraint: Dell Latitude E7270 (8GB RAM, 1.6GHz dual-core)
  * JVM heap: -Xms256m -Xmx512m (enforced in pom.xml & Dockerfile)
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = {RedisRepositoriesAutoConfiguration.class})
 @EnableAsync
 public class HK07Application {
 

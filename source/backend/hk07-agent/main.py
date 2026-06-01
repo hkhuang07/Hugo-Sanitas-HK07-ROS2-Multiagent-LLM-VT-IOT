@@ -2,34 +2,29 @@
 HK-07 Multi-Agent Engine — FastAPI Entry Point
 
 Architecture:
-    3 Independent Agents running as async coroutines on Python event loop:
-    ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐
-    │ EmpathicAgent   │  │ MedicalAgent    │  │ SafetyAgent (Tầng 0)│
-    │ (Tầng 2 - Low)  │  │ (Tầng 1 - Mid)  │  │ HIGHEST PRIORITY    │
-    └─────────────────┘  └─────────────────┘  └─────────────────────┘
-              └──────────────────┬──────────────────────┘
-                          [Arbitrator]
-                       (Subsumption Logic)
-                          [MQTT Publish]
-
-Memory budget: 120MB total (fastapi + agents + lancedb batch)
-Hardware: WSL2 Ubuntu 22.04 on Dell Latitude E7270 (i5-6300U, 8GB RAM)
+    Node-Router Multi-Agent graph flow using:
+    - Supervisor/Router (router_agent.py)
+    - Safety/Hardware Agent (safety_agent.py)
+    - Medical Agent (medical_agent.py)
+    - Empathetic Agent (empathetic_agent.py)
+    Unified and coordinated by AgentOrchestrator.
 """
 
 import asyncio
 import logging
 import os
-import signal
 import sys
 from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from agents.empathetic_agent import EmpathyAgent
-from agents.medical_agent import MedicalAgent
-from agents.safety_agent import SafetyAgent
+from agents.agent_orchestrator import AgentOrchestrator
 from arbitrator.arbitrator import Arbitrator
 from memory.lance_memory import LanceMemory
 from services.agent_log_client import start_log_client, stop_log_client
@@ -41,7 +36,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        # File handler with 1MB size limit (hardware constraint)
         logging.handlers.RotatingFileHandler(
             "logs/hk07-agent.log", maxBytes=1_000_000, backupCount=2
         ) if os.path.exists("logs") else logging.NullHandler()
@@ -49,36 +43,35 @@ logging.basicConfig(
 )
 log = logging.getLogger("hk07.main")
 
-# ─── Global Agent Instances ─────────────────────────────────────────────────
+# ─── Global Orchestrator & Memory Setup ─────────────────────────────────────
 memory = LanceMemory()
 arbitrator = Arbitrator()
-empathy_agent = EmpathyAgent(memory=memory, arbitrator=arbitrator)
-medical_agent = MedicalAgent(memory=memory, arbitrator=arbitrator)
-safety_agent = SafetyAgent(arbitrator=arbitrator)   # Safety: no long-term memory needed
+orchestrator = AgentOrchestrator(memory=memory, arbitrator=arbitrator)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown sequence for the agent engine"""
-    log.info("╔══════════════════════════════════════════════════╗")
-    log.info("║  HK-07 MULTI-AGENT ENGINE — STARTING             ║")
-    log.info("║  Agents: Empathetic | Medical | Safety           ║")
-    log.info("║  Subsumption: Safety(0) > Medical(1) > Emp(2)    ║")
-    log.info("╚══════════════════════════════════════════════════╝")
+    log.info("+--------------------------------------------------+")
+    log.info("|  HK-07 MULTI-AGENT ENGINE - STARTING             |")
+    log.info("|  Architecture: Supervisor Node-Router Graph      |")
+    log.info("|  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          |")
+    log.info("+--------------------------------------------------+")
 
-    # Initialize LanceDB memory (loads vector index from disk, ~50-100ms startup)
+    # Initialize LanceDB memory
     await memory.initialize()
     
     # Start agent log client for REST logging
     await start_log_client()
 
-    # Launch 3 agent event loops as concurrent async tasks
+    # Launch background loops for all agents + memory compaction
     agent_tasks = [
-        asyncio.create_task(empathy_agent.run_loop(), name="empathy-agent"),
-        asyncio.create_task(medical_agent.run_loop(), name="medical-agent"),
-        asyncio.create_task(safety_agent.run_loop(), name="safety-agent"),
+        asyncio.create_task(orchestrator.empathetic_agent.run_loop(), name="empathy-agent"),
+        asyncio.create_task(orchestrator.medical_agent.run_loop(), name="medical-agent"),
+        asyncio.create_task(orchestrator.safety_agent.run_loop(), name="safety-agent"),
+        asyncio.create_task(memory.run_compaction_loop(), name="memory-compaction"),
     ]
-    log.info("[ENGINE] All 3 agent tasks launched on event loop")
+    log.info("[ENGINE] All 3 agent tasks + memory compaction launched on event loop")
 
     yield  # App is running — serve API requests
 
@@ -90,8 +83,12 @@ async def lifespan(app: FastAPI):
 
     # Volatile data wipe (security protocol — RAM data cleared on shutdown)
     log.info("[VOLATILE_WIPE] Clearing in-RAM conversation context...")
-    empathy_agent.clear_volatile_context()
-    medical_agent.clear_volatile_context()
+    orchestrator.empathetic_agent.clear_volatile_context()
+    orchestrator.medical_agent.clear_volatile_context()
+    orchestrator.safety_agent.clear_volatile_context()
+    
+    # Close client sessions
+    await orchestrator.close()
     
     # Flush logs
     await stop_log_client()
@@ -101,11 +98,11 @@ async def lifespan(app: FastAPI):
 # ─── FastAPI Application ─────────────────────────────────────────────────────
 app = FastAPI(
     title="HK-07 Multi-Agent Engine",
-    description="MiroFish 3-Agent AI system for Hugo Sanitas HK-07 Robot Companion",
-    version="1.0.0-ALPHA",
+    description="MiroFish Node-Router Multi-Agent AI system for HK-07 Robot",
+    version="1.0.0-RC1",
     lifespan=lifespan,
-    docs_url="/docs",   # Swagger UI for development
-    redoc_url=None,     # Disable Redoc to save memory
+    docs_url="/docs",
+    redoc_url=None,
 )
 
 app.add_middleware(
@@ -119,27 +116,39 @@ app.add_middleware(
 # ─── Health & Status Endpoints ───────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "engine": "MiroFish-v1", "agents": 3}
+    return {"status": "ok", "engine": "MiroFish-MAS-Standard", "agents": 4}
 
 
 @app.get("/agents/status")
 async def agents_status():
     return {
-        "empathy": empathy_agent.get_status(),
-        "medical": medical_agent.get_status(),
-        "safety": safety_agent.get_status(),
+        "router": "ACTIVE",
+        "empathy": orchestrator.empathetic_agent.get_status(),
+        "medical": orchestrator.medical_agent.get_status(),
+        "safety": orchestrator.safety_agent.get_status(),
         "arbitrator": arbitrator.get_current_priority_agent(),
     }
 
 
 @app.post("/agents/empathetic/interact")
 async def empathetic_interact(body: dict):
-    """Direct text interaction with Empathetic Agent (for dashboard chat)"""
+    """Unified interaction endpoint utilizing Supervisor Router and Agent Orchestrator"""
     message = body.get("message", "")
     if not message:
         return {"error": "message field is required"}
-    response = await empathy_agent.process_text_interaction(message)
-    return {"agent": "EMPATHETIC", "response": response}
+    
+    # Retrieve current cached vitals to pass for medical/routing context
+    latest_vitals = orchestrator.medical_agent.latest_vitals
+    
+    # Run orchestrator routing and state processing
+    state = await orchestrator.route_and_execute(message, latest_vitals)
+    
+    return {
+        "agent": state["current_agent"],
+        "response": state["output"],
+        "alert_level": state["alert_level"],
+        "action": state["action"]
+    }
 
 
 if __name__ == "__main__":
@@ -148,9 +157,8 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8889,
-        # Single worker — CPU constraint; async handles concurrency
         workers=1,
         loop="asyncio",
         log_level="info",
-        access_log=False,   # Disable access logs to reduce I/O
+        access_log=False,
     )

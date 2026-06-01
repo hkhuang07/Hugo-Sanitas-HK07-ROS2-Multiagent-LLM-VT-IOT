@@ -1,16 +1,16 @@
 # ─── Stage 1: Build (Maven) ───────────────────────────────────────────────────
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 WORKDIR /build
 
 # Copy dependency declarations first (Docker layer cache optimization)
-COPY pom.xml .
+COPY pom.xml settings.xml ./
 # Download dependencies once; won't re-download if pom.xml unchanged
-RUN mvn dependency:go-offline -B -q 2>/dev/null || true
+RUN mvn dependency:go-offline -s settings.xml -Dhttps.protocols=TLSv1.2,TLSv1.3 -B -q 2>/dev/null || true
 
 # Copy source and build
 COPY src ./src
 # Single-threaded build to protect 1.6GHz CPU (hardware constraint)
-RUN mvn clean package -DskipTests -T 1 -B -q
+RUN mvn clean package -s settings.xml -Dhttps.protocols=TLSv1.2,TLSv1.3 -DskipTests -T 1 -B -q
 
 # ─── Stage 2: Runtime (Minimal JRE) ──────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine AS runtime

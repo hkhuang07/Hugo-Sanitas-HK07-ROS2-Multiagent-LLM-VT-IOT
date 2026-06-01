@@ -347,12 +347,19 @@ function onUnauthorized() {
   document.dispatchEvent(new CustomEvent('hk07:navigate', { detail: '/login' }))
 }
 
+function onSystemState(e: Event) {
+  const customEvent = e as CustomEvent<string>
+  robotState.value = customEvent.detail
+}
+
 onMounted(() => {
   document.addEventListener('hk07:unauthorized', onUnauthorized)
+  document.addEventListener('hk07:system-state', onSystemState)
 })
 
 onUnmounted(() => {
   document.removeEventListener('hk07:unauthorized', onUnauthorized)
+  document.removeEventListener('hk07:system-state', onSystemState)
 })
 </script>
 

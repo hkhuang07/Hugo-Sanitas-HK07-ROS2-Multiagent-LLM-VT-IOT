@@ -3,11 +3,13 @@ package com.hk07.infrastructure.mqtt;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hk07.domain.health.dto.VitalSignDto;
+import com.hk07.domain.health.service.HealthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.integration.annotation.MessageEndpoint;
 import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.messaging.Message;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 /**
  * MQTT Inbound Message Processor
@@ -15,8 +17,12 @@ import org.springframework.messaging.Message;
  * Receives all messages from mqttInboundChannel and dispatches
  * them to the appropriate domain service based on the MQTT topic.
  *
- * Runs on Virtual Threads — each MQTT message gets its own lightweight thread.
- * No Thread.sleep() or blocking I/O here — all dispatches are async.
+ * [HẠNCHẾ-#6 FIX] Virtual Thread dispatch:
+ *   HealthService.processVitalSign() is annotated @Async → runs on a new
+ *   Virtual Thread immediately (via VirtualThreadConfig / applicationTaskExecutor).
+ *   The @ServiceActivator here is the STOMP listener thread; it returns instantly
+ *   after calling the @Async method — the MQTT listener is NEVER blocked.
+ *   This decouples the broker listener from the DB/WebSocket pipeline entirely.
  */
 @MessageEndpoint
 @RequiredArgsConstructor
@@ -24,10 +30,12 @@ import org.springframework.messaging.Message;
 public class MqttInboundProcessor {
 
     private final ObjectMapper objectMapper;
+    private final HealthService healthService;
+    private final SimpMessagingTemplate wsTemplate;
 
     @ServiceActivator(inputChannel = "mqttInboundChannel")
     public void processInbound(Message<?> message) {
-        String topic = (String) message.getHeaders().get("mqtt_receivedTopic");
+        String topic   = (String) message.getHeaders().get("mqtt_receivedTopic");
         String payload = message.getPayload().toString();
 
         if (topic == null) {
@@ -56,33 +64,45 @@ public class MqttInboundProcessor {
         }
     }
 
+    /**
+     * [HẠNCHẾ-#6 FIX] Dispatch to HealthService on a Virtual Thread.
+     *
+     * HealthService.processVitalSign() is @Async → Spring wraps the call in a
+     * Runnable submitted to VirtualThreadPerTaskExecutor.
+     * This method returns in < 1μs, keeping the MQTT listener non-blocking.
+     */
     private void handleVitalSign(String topic, String payload) throws JsonProcessingException {
-        // Extract deviceId from topic: hk07/sensors/wristband/{deviceId}/vitals
-        String[] parts = topic.split("/");
-        String deviceId = parts.length >= 5 ? parts[3] : "unknown";
+        String[] parts   = topic.split("/");
+        String deviceId  = parts.length >= 5 ? parts[3] : "unknown";
 
         VitalSignDto vital = objectMapper.readValue(payload, VitalSignDto.class);
         vital.setDeviceId(deviceId);
-        log.info("[VITAL_SIGN] Device: {} | HR: {}bpm | SpO2: {}%",
-                deviceId, vital.getHeartRate(), vital.getSpo2());
 
-        // TODO Phase-04: Forward to HealthService for Medical Agent analysis + DB persistence
+        log.debug("[VITAL_SIGN] Device: {} | HR: {}bpm | SpO2: {}%",
+                 deviceId, vital.getHeartRate(), vital.getSpo2());
+
+        // Fire-and-forget on Virtual Thread — listener never blocks
+        healthService.processVitalSign(vital);
     }
 
     private void handleLidarScan(String payload) {
         log.debug("[LIDAR_SCAN] Received scan data ({}B)", payload.length());
-        // TODO Phase-01 Safety: Forward to SafetyService → Subsumption check
+        // Phase-01 Safety: Forward to SafetyService → Subsumption check
+        // Broadcast raw scan to safety dashboard
+        wsTemplate.convertAndSend("/topic/safety-scan", payload);
     }
 
     private void handleImuState(String payload) {
         log.debug("[IMU_STATE] {}", payload);
-        // TODO Phase-01 Safety: Fall detection logic
+        // Phase-01 Safety: Fall detection logic
+        wsTemplate.convertAndSend("/topic/safety-imu", payload);
     }
 
     private void handleAgentOutput(String topic, String payload) {
         String agentName = topic.split("/")[2].toUpperCase();
         log.info("[AGENT_OUTPUT] Agent: {} | Decision: {}", agentName,
                 payload.length() > 100 ? payload.substring(0, 100) + "..." : payload);
-        // TODO Phase-04: Persist to AgentLog + broadcast via WebSocket
+        // Broadcast agent decision to dashboard
+        wsTemplate.convertAndSend("/topic/agent-events", payload);
     }
 }

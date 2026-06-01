@@ -1,0 +1,172 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# HK-07 // HUGO SANITAS — Docker Compose Stack
+# RAM Budget: ~615MB total (Dell Latitude E7270 constraint)
+# ─────────────────────────────────────────────────────────────────────────────
+version: '3.9'
+
+networks:
+  hk07-net:
+    driver: bridge
+
+volumes:
+  mariadb-data:
+  mosquitto-data:
+  mosquitto-log:
+
+services:
+
+  # ── [P0-2] MariaDB — Primary persistent store ──────────────────────────────
+  hk07-mariadb:
+    image: mariadb:11.2
+    container_name: hk07-mariadb
+    restart: unless-stopped
+    networks: [hk07-net]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-HK040103}
+      MYSQL_DATABASE: ${DB_DATABASE:-hk07db}
+      MYSQL_USER: ${DB_USERNAME:-hk07user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-HK040103}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    # [P0-2] Healthcheck: hk07-core will not start until DB is truly ready
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ── [P0-2] Redis — Token cache + message throttle buffer ───────────────────
+  hk07-redis:
+    image: redis:7.2-alpine
+    container_name: hk07-redis
+    restart: unless-stopped
+    networks: [hk07-net]
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    # [P0-2] Healthcheck: ensures Redis is accepting commands
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # ── [P0-1] Mosquitto — MQTT Broker with authentication enabled ─────────────
+  hk07-mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: hk07-mosquitto
+    restart: unless-stopped
+    networks: [hk07-net]
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./docker/mosquitto/passwd:/mosquitto/config/passwd
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-u", "hk07core", "-P", "hk07mqtt2026", "-i", "healthcheck", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+
+  # ── [HẠNCHẾ-#19 FIX] Mosquitto Replica — High Availability / Broker Failover ──
+  hk07-mosquitto-replica:
+    image: eclipse-mosquitto:2.0
+    container_name: hk07-mosquitto-replica
+    restart: unless-stopped
+    networks: [hk07-net]
+    volumes:
+      - ./docker/mosquitto/replica.conf:/mosquitto/config/mosquitto.conf
+      - ./docker/mosquitto/passwd:/mosquitto/config/passwd
+    ports:
+      - "1884:1883"
+    depends_on:
+      - hk07-mosquitto
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+
+  # ── Spring Boot Core ────────────────────────────────────────────────────────
+  hk07-core:
+    build:
+      context: ./hk07-core
+      dockerfile: Dockerfile
+    container_name: hk07-core
+    restart: unless-stopped
+    networks: [hk07-net]
+    ports:
+      - "8888:8888"
+    environment:
+      DB_HOST: hk07-mariadb
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-hk07db}
+      DB_USERNAME: ${DB_USERNAME:-hk07user}
+      DB_PASSWORD: ${DB_PASSWORD:-HK040103}
+      REDIS_HOST: hk07-redis
+      REDIS_PORT: 6379
+      MQTT_BROKER_URL: tcp://hk07-mosquitto:1883
+      MQTT_USERNAME: hk07core
+      MQTT_PASSWORD: hk07mqtt2026
+      AGENT_ENGINE_URL: http://hk07-agent:8889
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-hk07-dev-secret-change-in-production-min-32-chars}
+      JAVA_OPTS: "-Xmx512m -Xms128m -XX:+UseZGC -XX:+UseStringDeduplication"
+    # [P0-2] depends_on with condition: service_healthy (not just started)
+    depends_on:
+      hk07-mariadb:
+        condition: service_healthy
+      hk07-redis:
+        condition: service_healthy
+      hk07-mosquitto:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ── Python AI Multi-Agent Engine ────────────────────────────────────────────
+  hk07-agent:
+    build:
+      context: ./hk07-agent
+      dockerfile: Dockerfile
+    container_name: hk07-agent
+    restart: unless-stopped
+    networks: [hk07-net]
+    ports:
+      - "8889:8889"
+    environment:
+      MQTT_BROKER_HOST: hk07-mosquitto
+      MQTT_BROKER_PORT: 1883
+      MQTT_USERNAME: hk07agent
+      MQTT_PASSWORD: hk07mqtt2026
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      HK07_CORE_URL: http://hk07-core:8888
+    depends_on:
+      hk07-mosquitto:
+        condition: service_healthy
+      hk07-core:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 256M

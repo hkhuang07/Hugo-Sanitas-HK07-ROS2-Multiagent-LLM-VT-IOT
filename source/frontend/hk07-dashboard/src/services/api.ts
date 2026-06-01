@@ -8,7 +8,7 @@ import { useRouter } from 'vue-router'
  * - On 401: clears tokens and redirects to login
  */
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: import.meta.env.VITE_API_URL || '/api/v1',
   timeout: 10_000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -34,7 +34,7 @@ api.interceptors.response.use(
       if (authStore.refreshToken) {
         try {
           // Attempt silent refresh
-          const resp = await axios.post('/api/v1/auth/refresh', {
+          const resp = await axios.post(`${import.meta.env.VITE_API_URL || '/api/v1'}/auth/refresh`, {
             refreshToken: authStore.refreshToken
           })
           const newToken = resp.data.data.accessToken

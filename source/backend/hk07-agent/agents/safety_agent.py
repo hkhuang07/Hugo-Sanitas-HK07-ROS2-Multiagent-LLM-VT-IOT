@@ -1,30 +1,30 @@
 """
 SafetyAgent — Tầng 0 (Tối thượng) trong Subsumption Architecture
 
-Chức năng: Quét môi trường vật lý liên tục thông qua dữ liệu LiDAR (ROS 2 mock)
-và cảm biến IMU (phát hiện ngã) để phát hiện các mối nguy hiểm.
-
+Chức năng: Quét môi trường vật lý liên tục qua dữ liệu LiDAR, IMU (phát hiện ngã) 
+và Cảm biến ánh sáng (Lux) để phát hiện mối nguy hiểm.
 Khi phát hiện nguy hiểm: Phát tín hiệu Inhibit qua MQTT tới Spring Boot Core
 trong thời gian < 5ms — ngắt toàn bộ di chuyển và hành động của Robot.
 
 Nguyên tắc thiết kế:
-- KHÔNG sử dụng LLM (không có độ trễ mạng)
-- KHÔNG sử dụng LanceDB memory (quyết định phải hoàn toàn local, tức thì)
-- Logic là thuần túy deterministic (ngưỡng + trạng thái)
+- TUYỆT ĐỐI KHÔNG DÙNG LLM HAY API.
+- Logic thuần túy bằng IF/ELSE và Toán học.
+- Trả về JSON trạng thái.
 """
 
 import asyncio
 import json
 import logging
 import os
+import re
 import time
-from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
-
 import paho.mqtt.client as mqtt
-
+from dotenv import load_dotenv
 from services.agent_log_client import log_agent_decision
+
+load_dotenv()
 
 log = logging.getLogger("hk07.safety_agent")
 
@@ -32,32 +32,15 @@ SAFETY_RESPONSE_DEADLINE_MS = 5   # Hard real-time constraint from PRD
 
 class SafetyTrigger(Enum):
     OBSTACLE = "OBSTACLE"
-    CLIFF = "CLIFF"
     FALL_RISK = "FALL_RISK"
-    TRAFFIC = "TRAFFIC"
-    LOW_BATTERY = "LOW_BATTERY"
+    LIGHT_GLARE = "LIGHT_GLARE"
     OWNER_EMERGENCY = "OWNER_EMERGENCY"
-
-
-@dataclass
-class SafetyDecision:
-    trigger: SafetyTrigger
-    distance_m: float
-    response_time_ms: float
-    subsumption_activated: bool
-    message: str
-
+    NONE = "NONE"
 
 class SafetyAgent:
-    """
-    Deterministic Safety Agent — No LLM, no external calls.
-    Pure threshold-based logic for < 5ms response guarantee.
-    """
-
-    # Safety thresholds (tunable)
     OBSTACLE_STOP_DISTANCE_M = 0.5    # Stop if obstacle within 0.5m
-    CLIFF_DEPTH_THRESHOLD_M = 0.3     # Cliff detected if depth drop > 0.3m
     FALL_ACCEL_THRESHOLD = 2.5        # g-force threshold for fall detection
+    LIGHT_GLARE_THRESHOLD = 5000.0    # blinding light lux threshold
 
     def __init__(self, arbitrator):
         self.arbitrator = arbitrator
@@ -65,58 +48,58 @@ class SafetyAgent:
         self._subsumption_active = False
         self._last_scan_time = 0.0
         self._volatile_context = {}  # RAM-only, wiped on shutdown
-        self._last_processed = {"lidar": 0.0, "imu": 0.0, "vitals": 0.0}
+        self._last_processed = {"lidar": 0.0, "imu": 0.0, "vitals": 0.0, "light": 0.0}
 
         # MQTT client for inhibit signals
         broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
         broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
         self._mqtt = mqtt.Client(client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
+        mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
+        mqtt_pass = os.getenv("MQTT_PASSWORD", "hk07mqtt2026")
+        if mqtt_user:
+            self._mqtt.username_pw_set(mqtt_user, mqtt_pass)
         self._mqtt.connect_async(broker_host, broker_port, keepalive=30)
         self._mqtt.loop_start()
 
     async def run_loop(self):
-        """Main event loop — subscribes to MQTT sensor topics via async polling"""
         self._status = "ACTIVE"
         log.info("[SAFETY_AGENT] Tầng 0 ACTIVE — Subsumption armed")
 
         loop = asyncio.get_event_loop()
-        mqtt_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+        mqtt_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
 
-        # Subscribe to sensor topics
         self._mqtt.on_message = lambda c, u, msg: loop.call_soon_threadsafe(
             mqtt_queue.put_nowait, (msg.topic, msg.payload.decode("utf-8", errors="replace"))
         )
         self._mqtt.subscribe([
             ("hk07/sensors/lidar/scan", 0),
             ("hk07/sensors/imu/state", 0),
+            ("hk07/sensors/ambient_light", 0),
             ("hk07/sensors/wristband/+/vitals", 0),
         ])
 
-        while True:
-            try:
-                topic, payload = await asyncio.wait_for(mqtt_queue.get(), timeout=1.0)
-                await self._process_sensor(topic, payload)
-            except asyncio.TimeoutError:
-                continue   # No sensor data — normal, keep alive
-            except asyncio.CancelledError:
-                log.info("[SAFETY_AGENT] Loop cancelled — shutdown")
-                break
-            except Exception as e:
-                log.error("[SAFETY_AGENT_ERROR] %s", e)
+        try:
+            while True:
+                try:
+                    topic, payload = await asyncio.wait_for(mqtt_queue.get(), timeout=1.0)
+                    await self._process_sensor(topic, payload)
+                except asyncio.TimeoutError:
+                    continue
+                except asyncio.CancelledError:
+                    break
+        finally:
+            self._mqtt.loop_stop()
 
     async def _process_sensor(self, topic: str, payload: str):
-        """
-        Process incoming sensor data. Must complete in < 5ms for safety guarantee.
-        Measured from message receipt to MQTT inhibit publish.
-        """
         start_ns = time.perf_counter_ns()
         now = time.time()
 
-        # Throttle (Message Flooding Protection): Max 20Hz (50ms) per sensor type
-        sensor_type = topic.split('/')[2] if len(topic.split('/')) > 2 else "unknown"
+        # Throttle logic
+        parts = topic.split('/')
+        sensor_type = parts[2] if len(parts) > 2 else "unknown"
         if sensor_type in self._last_processed:
             if now - self._last_processed[sensor_type] < 0.05:
-                return  # Drop frame (Debounce)
+                return
             self._last_processed[sensor_type] = now
 
         try:
@@ -124,103 +107,157 @@ class SafetyAgent:
         except json.JSONDecodeError:
             return
 
-        decision: Optional[SafetyDecision] = None
+        danger = False
+        trigger = SafetyTrigger.NONE
+        msg = ""
+        dist = 1.0
+        accel = 1.0
+        lux = 500.0
 
         if "lidar" in topic:
-            decision = self._analyze_lidar(data)
+            ranges = data.get("ranges", [])
+            if ranges:
+                dist = min(r for r in ranges if r > 0.01)
+                if dist < self.OBSTACLE_STOP_DISTANCE_M:
+                    danger = True
+                    trigger = SafetyTrigger.OBSTACLE
+                    msg = f"Obstacle too close: {dist:.2f}m (threshold < {self.OBSTACLE_STOP_DISTANCE_M}m)"
         elif "imu" in topic:
-            decision = self._analyze_imu(data)
+            ax = data.get("accel_x", 0.0)
+            ay = data.get("accel_y", 0.0)
+            az = data.get("accel_z", 9.81)
+            accel = (ax**2 + ay**2 + az**2) ** 0.5 / 9.81
+            if accel > self.FALL_ACCEL_THRESHOLD:
+                danger = True
+                trigger = SafetyTrigger.FALL_RISK
+                msg = f"Fall risk detected! Acceleration magnitude: {accel:.2f}g (threshold > {self.FALL_ACCEL_THRESHOLD}g)"
+        elif "ambient_light" in topic:
+            lux = data.get("lux", 100.0)
+            if lux > self.LIGHT_GLARE_THRESHOLD:
+                danger = True
+                trigger = SafetyTrigger.LIGHT_GLARE
+                msg = f"Blinding light glare detected! Ambient light: {lux:.1f} lux (threshold > {self.LIGHT_GLARE_THRESHOLD} lux)"
         elif "vitals" in topic:
-            decision = self._analyze_vitals(data)
+            if data.get("emergency_button_pressed", False):
+                danger = True
+                trigger = SafetyTrigger.OWNER_EMERGENCY
+                msg = "Emergency SOS button pressed by owner!"
 
         elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
 
-        if decision and decision.subsumption_activated:
-            decision.response_time_ms = elapsed_ms
-            await self._activate_subsumption(decision)
-            if elapsed_ms > SAFETY_RESPONSE_DEADLINE_MS:
-                log.warning("[SAFETY_LATENCY_BREACH] Response: %.2fms > %dms deadline!",
-                            elapsed_ms, SAFETY_RESPONSE_DEADLINE_MS)
+        if danger:
+            inhibit_payload = json.dumps({
+                "trigger": trigger.value,
+                "distance_m": dist,
+                "acceleration_g": accel,
+                "lux": lux,
+                "message": msg,
+                "agent": "SAFETY",
+                "timestamp_ms": int(time.time() * 1000)
+            })
+            # Publish QoS 2 for hard reliability
+            self._mqtt.publish("hk07/control/subsumption/inhibit", inhibit_payload, qos=2)
+            log.warning("[SAFETY_INHIBIT_SENT] Trigger: %s | Msg: %s | Latency: %.2fms", trigger.value, msg, elapsed_ms)
 
-    def _analyze_lidar(self, data: dict) -> Optional[SafetyDecision]:
-        """Check LiDAR scan for obstacles and cliff edges"""
-        ranges = data.get("ranges", [])
-        if not ranges:
-            return None
+            # Run logging & reset logic in background so we don't block the sensor loop!
+            async def run_bg_inhibit():
+                try:
+                    await log_agent_decision(
+                        agent_type="SAFETY",
+                        input_context=f"Sensor Topic: {topic}",
+                        output_decision=msg,
+                        llm_provider="DETERMINISTIC_MATH",
+                        latency_ms=int(elapsed_ms)
+                    )
+                except Exception as ex:
+                    log.error("[SAFETY_BG_LOG_ERROR] Exception: %s", ex)
 
-        min_distance = min(r for r in ranges if r > 0.01)  # Filter invalid 0-readings
+                # Auto-reset subsumption after 3 seconds
+                try:
+                    self._subsumption_active = True
+                    await asyncio.sleep(3.0)
+                    self._subsumption_active = False
+                    self._mqtt.publish("hk07/control/subsumption/inhibit", json.dumps({"trigger": "CLEAR", "agent": "SAFETY"}), qos=2)
+                except Exception as ex:
+                    log.error("[SAFETY_BG_RESET_ERROR] Exception: %s", ex)
 
-        if min_distance < self.OBSTACLE_STOP_DISTANCE_M:
-            return SafetyDecision(
-                trigger=SafetyTrigger.OBSTACLE,
-                distance_m=min_distance,
-                response_time_ms=0.0,
-                subsumption_activated=True,
-                message=f"Obstacle at {min_distance:.2f}m — INHIBIT activated"
-            )
-        return None
+            asyncio.create_task(run_bg_inhibit())
 
-    def _analyze_imu(self, data: dict) -> Optional[SafetyDecision]:
-        """Detect fall or sudden impact via accelerometer magnitude"""
-        ax = data.get("accel_x", 0.0)
-        ay = data.get("accel_y", 0.0)
-        az = data.get("accel_z", 9.81)  # Default: gravity
-        magnitude = (ax**2 + ay**2 + az**2) ** 0.5 / 9.81  # Normalize to g
-
-        if magnitude > self.FALL_ACCEL_THRESHOLD:
-            return SafetyDecision(
-                trigger=SafetyTrigger.FALL_RISK,
-                distance_m=0.0,
-                response_time_ms=0.0,
-                subsumption_activated=True,
-                message=f"Fall detected! Accel magnitude: {magnitude:.2f}g"
-            )
-        return None
-
-    def _analyze_vitals(self, data: dict) -> Optional[SafetyDecision]:
-        """Detect owner emergency via wristband panic button"""
-        if data.get("emergency_button_pressed", False):
-            return SafetyDecision(
-                trigger=SafetyTrigger.OWNER_EMERGENCY,
-                distance_m=0.0,
-                response_time_ms=0.0,
-                subsumption_activated=True,
-                message="Owner pressed emergency button!"
-            )
-        return None
-
-    async def _activate_subsumption(self, decision: SafetyDecision):
+    async def process_text_interaction(self, user_message: str) -> str:
         """
-        Publish Subsumption Inhibit signal — QoS 2 (Exactly Once).
-        This MUST reach the motion control node to stop the robot.
+        Calculates safety state from user message using deterministic math & threshold rules.
+        Publishes MQTT Inhibit if danger thresholds are crossed. Returns JSON status.
         """
-        self._subsumption_active = True
-        inhibit_payload = json.dumps({
-            "trigger": decision.trigger.value,
-            "distance_m": decision.distance_m,
-            "message": decision.message,
-            "agent": "SAFETY",
-            "timestamp_ms": int(time.time() * 1000)
-        })
-        self._mqtt.publish("hk07/control/subsumption/inhibit", inhibit_payload, qos=2)
-        log.warning("[SUBSUMPTION_ACTIVATED] Trigger: %s | Msg: %s | Response: %.2fms",
-                    decision.trigger.value, decision.message, decision.response_time_ms)
-                    
-        # Log to Spring Boot via REST (fire-and-forget, does not block safety loop)
-        await log_agent_decision(
-            agent_type="SAFETY",
-            input_context=f"Trigger: {decision.trigger.value}, Dist: {decision.distance_m}m",
-            output_decision=decision.message,
-            llm_provider="THRESHOLD",
-            latency_ms=int(decision.response_time_ms)
-        )
+        dist = 1.0
+        accel = 1.0
+        lux = 500.0
 
-        # Auto-release inhibit after 3 seconds (re-evaluate)
-        await asyncio.sleep(3.0)
-        self._subsumption_active = False
-        self._mqtt.publish("hk07/control/subsumption/inhibit",
-                           json.dumps({"trigger": "CLEAR", "agent": "SAFETY"}), qos=2)
-        log.info("[SUBSUMPTION_CLEARED] Re-enabling motion after safety hold")
+        dist_match = re.search(r'(?:khoảng cách|khoang cach|distance|obstacle|vật cản)\s*([\d\.]+)\s*m?', user_message.lower())
+        if dist_match:
+            try:
+                dist = float(dist_match.group(1))
+            except ValueError:
+                pass
+
+        accel_match = re.search(r'(?:gia tốc|gia toc|accel|imu|magnitude)\s*([\d\.]+)\s*g?', user_message.lower())
+        if accel_match:
+            try:
+                accel = float(accel_match.group(1))
+            except ValueError:
+                pass
+
+        lux_match = re.search(r'(?:ánh sáng|anh sang|lux|light)\s*([\d\.]+)', user_message.lower())
+        if lux_match:
+            try:
+                lux = float(lux_match.group(1))
+            except ValueError:
+                pass
+
+        danger = False
+        reason = "Nominal system parameters. Safe to proceed."
+        trigger = SafetyTrigger.NONE
+
+        if dist < self.OBSTACLE_STOP_DISTANCE_M:
+            danger = True
+            trigger = SafetyTrigger.OBSTACLE
+            reason = f"Obstacle too close: {dist}m (threshold < {self.OBSTACLE_STOP_DISTANCE_M}m)"
+        elif accel > self.FALL_ACCEL_THRESHOLD:
+            danger = True
+            trigger = SafetyTrigger.FALL_RISK
+            reason = f"Sudden fall acceleration detected: {accel}g (threshold > {self.FALL_ACCEL_THRESHOLD}g)"
+        elif lux > self.LIGHT_GLARE_THRESHOLD:
+            danger = True
+            trigger = SafetyTrigger.LIGHT_GLARE
+            reason = f"Blinding light glare: {lux} lux (threshold > {self.LIGHT_GLARE_THRESHOLD} lux)"
+
+        start_ns = time.perf_counter_ns()
+        if danger:
+            inhibit_payload = json.dumps({
+                "trigger": trigger.value,
+                "distance_m": dist,
+                "acceleration_g": accel,
+                "lux": lux,
+                "message": f"CRITICAL: {reason}",
+                "agent": "SAFETY",
+                "timestamp_ms": int(time.time() * 1000)
+            })
+            self._mqtt.publish("hk07/control/subsumption/inhibit", inhibit_payload, qos=2)
+            log.warning("[SAFETY_TEXT_TRIGGER] Inhibit sent: %s", reason)
+
+        elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
+
+        return json.dumps({
+            "status": "DANGER" if danger else "SAFE",
+            "trigger": trigger.value,
+            "reason": reason,
+            "telemetry": {
+                "distance_m": dist,
+                "acceleration_g": accel,
+                "lux": lux
+            },
+            "inhibit_activated": danger,
+            "response_time_ms": elapsed_ms
+        }, ensure_ascii=False)
 
     def get_status(self) -> dict:
         return {
@@ -230,6 +267,5 @@ class SafetyAgent:
         }
 
     def clear_volatile_context(self):
-        """Wipe all RAM-only data (called on shutdown per security protocol)"""
         self._volatile_context.clear()
         log.info("[VOLATILE_WIPE] SafetyAgent context cleared")

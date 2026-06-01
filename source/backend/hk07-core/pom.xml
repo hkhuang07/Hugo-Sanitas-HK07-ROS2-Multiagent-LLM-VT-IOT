@@ -14,7 +14,7 @@
     <groupId>com.hk07</groupId>
     <artifactId>hk07-core</artifactId>
     <version>1.0.0-ALPHA</version>
-    <name>HK-07 Core Backend — Hugo Sanitas Robot Companion</name>
+    <name>HK-07 Core Backend — Hugo Sanitas HK-07 Robot Companion</name>
     <description>
         Spring Boot backend for Hugo Sanitas HK-07 Companion Robot.
         Uses Java Virtual Threads for concurrent sensor stream processing.

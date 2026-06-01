@@ -36,7 +36,7 @@ public class AgentLogEntity {
     @Column(columnDefinition = "TEXT")
     private String outputDecision;  // Agent response / decision text
 
-    @Column(length = 20)
+    @Column(length = 100)
     private String llmProvider;     // GROQ | GEMINI | MOCK | THRESHOLD
 
     private int latencyMs;          // End-to-end latency of this decision

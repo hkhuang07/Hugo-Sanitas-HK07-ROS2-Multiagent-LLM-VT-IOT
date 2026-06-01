@@ -5,7 +5,9 @@ import com.hk07.domain.agent.dto.AgentLogRequest;
 import com.hk07.domain.agent.entity.AgentLogEntity;
 import com.hk07.domain.agent.service.AgentLogService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.reactive.function.client.WebClient;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -27,10 +29,18 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/v1/agents")
-@RequiredArgsConstructor
+@Slf4j
 public class AgentLogController {
 
     private final AgentLogService agentLogService;
+    private final WebClient pythonAgentClient;
+
+    public AgentLogController(AgentLogService agentLogService,
+                              @Value("${hk07.ai.agent-url:http://127.0.0.1:8889}") String agentUrl) {
+        this.agentLogService = agentLogService;
+        this.pythonAgentClient = WebClient.builder().baseUrl(agentUrl).build();
+        log.info("[AGENT_CONTROLLER] Initialized pythonAgentClient pointing to: {}", agentUrl);
+    }
 
     /** Called by Python hk07-agent to record a decision */
     @PostMapping("/log")
@@ -55,9 +65,6 @@ public class AgentLogController {
         return ResponseEntity.ok(ApiResponse.ok(agentLogService.getDecisionCounts()));
     }
 
-    private final org.springframework.web.reactive.function.client.WebClient pythonAgentClient = 
-            org.springframework.web.reactive.function.client.WebClient.builder().baseUrl("http://127.0.0.1:8889").build();
-
     /** Forward empathetic text interaction to Python agent engine */
     @PostMapping("/empathetic/interact")
     @SuppressWarnings("unchecked")
@@ -69,9 +76,10 @@ public class AgentLogController {
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(map -> Map.of("response", (String) map.get("response")))
-                    .block(java.time.Duration.ofSeconds(5));
+                    .block(java.time.Duration.ofSeconds(30));
             return ResponseEntity.ok(ApiResponse.ok(response));
         } catch (Exception e) {
+            log.error("[AGENT_CONTROLLER] Empathetic interaction failed: ", e);
             String message = body.getOrDefault("message", "");
             String fallbackResponse = "[FALLBACK_BRIDGE] Empathetic Agent offline. Echo: '" +
                     (message.length() > 30 ? message.substring(0, 30) + "..." : message) + "'";

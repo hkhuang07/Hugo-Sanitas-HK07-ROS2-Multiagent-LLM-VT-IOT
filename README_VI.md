@@ -1,5 +1,11 @@
 # HK-07 // HUGO SANITAS ROBOT COMPANION
 
+<p align="center">
+  <img src="./asset/main_logo.jpg" alt="Brand Logo" height="100" />
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="./asset/logo_name.jpg" alt="Logo Name" height="100" />
+</p>
+
 > **Mã hiệu:** HK.Huang07 | **Phiên bản:** 1.0.0-ALPHA | **Ngày khởi tạo:** 2026-05-31
 
 Robot Bạn đồng hành Chăm sóc Sức khỏe thế hệ mới — Đồng hành trong cuộc sống hàng ngày bằng trí tuệ nhân tạo đa tác nhân, giám sát sinh tồn thời gian thực và phản xạ an toàn < 5ms.
@@ -8,13 +14,31 @@ Robot Bạn đồng hành Chăm sóc Sức khỏe thế hệ mới — Đồng h
 
 ## Giao diện trực quan (System Interface Showcase)
 
-| **Màn hình giám sát Vitals Dashboard (60FPS)** | **Khung Chat thấu cảm AI (Companion)** |
-|:---:|:---:|
-| ![Vitals Dashboard](./asset/dashboard-ui.jpg) | ![Companion Chat](./asset/companion-chat.jpg) |
+### 1. Màn hình giám sát Vitals Dashboard (60FPS)
+![Vitals Dashboard](./asset/dashboard-ui.jpg)
 
-| **Nhật ký Động cơ Đa tác nhân (Agents Log)** | **Hệ thống điều phối an toàn (Safety Radar)** | **Lịch sử sinh tồn lâm sàng (History)** |
-|:---:|:---:|:---:|
-| ![Agents Log](./asset/agent_tab.jpg) | ![Safety Radar](./asset/safemode-tab.jpg) | ![Historical Metrics](./asset/history_tab.jpg) |
+### 2. Khung Chat thấu cảm AI & Suy luận Đa tác nhân (Companion Chat)
+![Agent Chat](./asset/agent-chat.jpg)
+![Agent Companion](./asset/agent-companion.jpg)
+
+### 3. Nhật ký Động cơ Đa tác nhân (Agents Log)
+![Agents Log](./asset/agent_logs.jpg)
+
+### 4. Hệ thống điều phối an toàn (Safety Radar)
+![Safety Radar](./asset/safemode-tab.jpg)
+
+### 5. Lịch sử sinh tồn lâm sàng (History)
+![Historical Metrics](./asset/history_tab.jpg)
+
+### 6. Giả lập Camera Robot (Khi có hình ảnh / Khi mất kết nối)
+![Robot Camera Simulation Online](./asset/robot-cam-simulate.jpg)
+![Robot Camera Simulation Lost](./asset/robot-cam-simulate-vision-lost.jpg)
+
+### 7. Trực quan hóa dữ liệu Robot trên máy tính
+![Robot Computer Visualization](./asset/robot-computer-visualize.jpg)
+
+### 8. Xử lý Camera bằng OpenCV & MediaPipe
+![OpenCV MediaPipe Process](./asset/opencv_medipipe_webcam_process.jpg)
 
 ---
 
@@ -33,7 +57,7 @@ Robot Bạn đồng hành Chăm sóc Sức khỏe thế hệ mới — Đồng h
          │  WebSocket/REST │   MQTT/WebSocket     │ MQTT
          ▼                 ▼                      ▼
 ┌────────────────┐  ┌─────────────┐  ┌───────────────────────┐
-│   PostgreSQL   │  │    Redis    │  │  Eclipse Mosquitto    │
+│   Mariadb      │  │    Redis    │  │  Eclipse Mosquitto    │
 │   (Persist)    │  │  (Buffer)   │  │  MQTT Broker :1883    │
 └────────────────┘  └─────────────┘  └───────────────────────┘
                                               ▲

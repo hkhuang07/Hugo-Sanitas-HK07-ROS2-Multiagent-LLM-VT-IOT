@@ -39,18 +39,18 @@ public class DatabaseStartupLogger implements CommandLineRunner {
             String driverName = metaData.getDriverName();
 
             System.out.printf("""
-                    %n╔═════════════════════════════════════════════════════════════════════╗
-                    ║   DATABASE & SYSTEM UPLINK CONNECTION DETAILS                         ║
-                    ╠═══════════════════════════════════════════════════════════════════════╣
-                    ║   DB Type:     %-53s ║
-                    ║   DB Version:  %-53s ║
-                    ║   DB URL:      %-37s ║
-                    ║   DB User:     %-53s ║
-                    ║   DB Driver:   %-53s ║
-                    ║   Redis Host:  %-53s ║
-                    ║   Redis Port:  %-53d ║
-                    ║   MQTT Broker: %-53s ║
-                    ╚═══════════════════════════════════════════════════════════════════════╝%n
+                    %n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+                    ║   DATABASE & SYSTEM UPLINK CONNECTION DETAILS                                                                                 ║
+                    ╠═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣
+                    ║   DB Type:     %-110s ║
+                    ║   DB Version:  %-110s ║
+                    ║   DB URL:      %-70s  ║
+                    ║   DB User:     %-110s ║
+                    ║   DB Driver:   %-110s ║
+                    ║   Redis Host:  %-110s ║
+                    ║   Redis Port:  %-110s ║
+                    ║   MQTT Broker: %-110s ║
+                    ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝%n
                     """,
                     dbProduct,
                     dbVersion,

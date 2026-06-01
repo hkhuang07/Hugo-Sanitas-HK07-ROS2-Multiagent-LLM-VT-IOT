@@ -1,18 +1,35 @@
->>> [HYPER-AUTONOMOUS ENGINE] ACTIVE_PLAN.TMP — CYCLE 4 COMPLETE
->>> TIMESTAMP: 2026-05-31T05:45:00+07:00
->>> FOCUS: Webots Headless + FE Login Loop + Full System Dockerization
+# HK-07 DEVELOPMENT ACTIVE PLAN (SESSION TRACKER)
+# Cập nhật lần cuối: Cuối phiên làm việc (Tái cấu trúc cốt lõi)
 
-== CYCLE 4 TASK BREAKDOWN ==
-[x] Phase-10 (Robotics): `webots_edge_controller.py` — Webots headless node pushing LiDAR/IMU to MQTT
-[x] Phase-10 (Robotics): Basic `.wbt` world setup documentation/stub (`hk07_demo.wbt`)
-[x] FE-10: LoginView.vue — Hacker terminal boot sequence UI
-[x] FE-10: auth.ts (Pinia) — In-memory JWT storage with silent refresh (no localStorage)
-[x] FE-10: api.ts — Axios interceptor for automatic silent token refresh
-[x] System: Nginx Dockerfile for Frontend (alpine, multi-stage Vite build)
-[x] System: Update `docker-compose.yml` to include Nginx UI, Mosquitto, Postgres, Redis, Spring Boot, Agent Engine, and Webots Headless.
-[x] Cleanup: Update MASTER_CHANGELOG.md and active plan.
+## CÁC TÁC VỤ ĐÃ HOÀN THÀNH (ACHIEVEMENTS):
 
-== PROJECT COMPLETION ==
-[x] DỰ ÁN HOÀN TẤT 100%.
+1. **Medical Agent - Nâng cấp hiệu năng & Kháng lỗi (Fault Tolerance)**
+   - Triển khai Ring Buffer (`collections.deque`) thay thế `asyncio.Queue` nhằm tránh rò rỉ bộ nhớ (QueueFull).
+   - Tích hợp kỹ thuật **Sliding Window Average** tính trung bình động thông số Vitals trước khi gửi LLM.
+   - Áp dụng **State-Transition Filtering** (Lọc chuyển đổi trạng thái): Chỉ gọi LLM khi trạng thái đổi từ NORMAL sang CRITICAL hoặc chỉ số thay đổi đột biến (`Delta HR > 15%`).
+   - Xây dựng hệ thống **Circuit Breaker** (Đóng cắt mạch): Chuyển đổi trạng thái CLOSED -> OPEN -> HALF_OPEN, tự động fallback từ Groq/OpenRouter về cấu trúc Local Rule-Based khi API sập.
+   - Passed toàn bộ bài Test Unit (`test_medical_patterns.py`).
 
-=== END PLAN ===
+2. **Backend Database & Chuẩn hóa Protocol (Enterprise Standard)**
+   - Khắc phục lỗi `DataIntegrityViolationException` (Data too long cho `llm_provider`).
+   - Tạo Flyway Migration `V6__extend_llm_provider_length.sql` mở rộng `llmProvider` lên 100 ký tự ở bảng `agent_logs`.
+   - Tạo tập tin `utils/enums.py` để định nghĩa Class `LLMProvider` gom toàn bộ danh tính Provider thay vì hardcode chuỗi.
+   - Refactor toàn diện `medical_agent.py` và `empathetic_agent.py` để trỏ vào `LLMProvider` Enum.
+
+3. **Tái cấu trúc Hệ thống Sensor Fusion Bridge (`hk07_sensor_fusion.py`)**
+   - Đập bỏ toàn bộ mô hình luồng khóa `while True` đồng bộ và `time.sleep()`.
+   - Chuyển đổi thành kiến trúc **Event-Driven Asynchronous** sử dụng `FastAPI` (uvicorn) và `aiomqtt`.
+   - Tạo `asyncio.Queue()` nhận tín hiệu Event từ các Module độc lập.
+   - Tách biệt tác vụ nặng (CPU-Bound) của OpenCV và MediaPipe ra luồng `concurrent.futures.ThreadPoolExecutor` an toàn, ngăn hiện tượng camera mất sóng khóa nghẽn tín hiệu cảm biến sinh tồn.
+   - Tích hợp **Graceful Degradation** qua cờ báo cáo `sensor_health` (hiển thị trạng thái ONLINE/OFFLINE độc lập của mắt Camera và cảm biến IMU).
+
+4. **Cập nhật tài liệu minh họa (Showcase Asset Update)**
+   - Cập nhật toàn bộ các ảnh chụp màn hình GUI, ảnh phân tích MediaPipe và giả lập robot Webots mới vào `README.md` và `README_VI.md`.
+   - Lọc bỏ các ảnh logo phiên bản sáng (light) và ảnh logo lớn theo yêu cầu.
+   - Sửa đường dẫn ảnh tĩnh từ `agent_tab.jpg` thành `agent_logs.jpg` để hiển thị chính xác.
+
+---
+## GHI CHÚ BÀN GIAO CHO PHIÊN LÀM VIỆC SAU (NEXT STEPS):
+- [ ] Review lại `system_analysis_and_limitations.md` để đối chiếu những tác vụ đã hoàn thành (Ví dụ P0/P2) và cập nhật lại lộ trình.
+- [ ] Tích hợp tính năng xác thực (Username/Password) vào `MQTT Broker` theo chuẩn bảo mật nếu chưa hoàn thiện.
+- [ ] Chạy End-to-End Test (E2E) trên `FastAPI` Telemetry và quan sát phản hồi tại `Node Safety Agent`.

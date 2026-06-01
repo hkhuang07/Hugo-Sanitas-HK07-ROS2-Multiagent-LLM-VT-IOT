@@ -5,8 +5,11 @@ import com.hk07.common.enums.SystemState;
 import com.hk07.domain.robot.service.RobotCommandService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
+import jakarta.servlet.http.HttpServletRequest;
+import java.util.UUID;
 
 /**
  * Robot Command Controller — Phase 07
@@ -28,24 +31,51 @@ public class RobotCommandController {
     }
 
     @PostMapping("/command/hold")
-    @PreAuthorize("hasAnyRole('OWNER','OPERATOR')")
-    public ResponseEntity<ApiResponse<Void>> hold() {
-        robotCommandService.issueHold();
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OWNER','OPERATOR')")
+    public ResponseEntity<ApiResponse<Void>> hold(Authentication auth, HttpServletRequest request) {
+        UUID actorId = UUID.fromString(auth.getName());
+        String role = auth.getAuthorities().stream().findFirst().map(GrantedAuthority::getAuthority).orElse("UNKNOWN").replace("ROLE_", "");
+        robotCommandService.issueHold(actorId, role, request.getRemoteAddr());
         return ResponseEntity.ok(ApiResponse.ok("SAFE_HOLD command issued", null));
     }
 
     @PostMapping("/command/resume")
-    @PreAuthorize("hasAnyRole('OWNER','OPERATOR')")
-    public ResponseEntity<ApiResponse<Void>> resume() {
-        robotCommandService.issueResume();
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OWNER','OPERATOR')")
+    public ResponseEntity<ApiResponse<Void>> resume(Authentication auth, HttpServletRequest request) {
+        UUID actorId = UUID.fromString(auth.getName());
+        String role = auth.getAuthorities().stream().findFirst().map(GrantedAuthority::getAuthority).orElse("UNKNOWN").replace("ROLE_", "");
+        robotCommandService.issueResume(actorId, role, request.getRemoteAddr());
         return ResponseEntity.ok(ApiResponse.ok("RESUME command issued", null));
     }
 
     @PostMapping("/command/shutdown")
-    @PreAuthorize("hasRole('OWNER')")
-    public ResponseEntity<ApiResponse<Void>> shutdown() {
-        robotCommandService.issueShutdown();
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('OWNER')")
+    public ResponseEntity<ApiResponse<Void>> shutdown(Authentication auth, HttpServletRequest request) {
+        UUID actorId = UUID.fromString(auth.getName());
+        String role = auth.getAuthorities().stream().findFirst().map(GrantedAuthority::getAuthority).orElse("UNKNOWN").replace("ROLE_", "");
+        robotCommandService.issueShutdown(actorId, role, request.getRemoteAddr());
         return ResponseEntity.ok(ApiResponse.ok("SHUTDOWN sequence initiated — volatile data will be wiped", null));
+    }
+
+    @PostMapping("/command/subsumption")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OWNER','OPERATOR')")
+    public ResponseEntity<ApiResponse<Void>> toggleSubsumption(
+            @RequestBody java.util.Map<String, Boolean> payload,
+            Authentication auth, HttpServletRequest request) {
+        UUID actorId = UUID.fromString(auth.getName());
+        String role = auth.getAuthorities().stream().findFirst().map(GrantedAuthority::getAuthority).orElse("UNKNOWN").replace("ROLE_", "");
+        boolean active = payload.getOrDefault("active", true);
+        robotCommandService.toggleSubsumption(actorId, role, active, request.getRemoteAddr());
+        return ResponseEntity.ok(ApiResponse.ok("Subsumption override: " + active, null));
+    }
+
+    @PostMapping("/command/sos")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OWNER','OPERATOR','EMERGENCY_CONTACT')")
+    public ResponseEntity<ApiResponse<Void>> dispatchSos(Authentication auth, HttpServletRequest request) {
+        UUID actorId = UUID.fromString(auth.getName());
+        String role = auth.getAuthorities().stream().findFirst().map(GrantedAuthority::getAuthority).orElse("UNKNOWN").replace("ROLE_", "");
+        robotCommandService.recordSosDispatch(actorId, role, request.getRemoteAddr());
+        return ResponseEntity.ok(ApiResponse.ok("SOS Dispatched", null));
     }
 
     /** Health endpoint for Docker healthcheck */

@@ -1,5 +1,11 @@
 # HK-07 // HUGO SANITAS ROBOT COMPANION
 
+<p align="center">
+  <img src="./asset/main_logo.jpg" alt="Brand Logo" height="100" />
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="./asset/logo_name.jpg" alt="Logo Name" height="100" />
+</p>
+
 > **Identifier:** HK.Huang07 | **Version:** 1.0.0-ALPHA | **Initiated:** 2026-05-31
 
 A next-generation healthcare robot companion — assisting in daily life through multi-agent artificial intelligence, real-time vitals monitoring, and <5ms emergency safety reflexes.
@@ -8,13 +14,34 @@ A next-generation healthcare robot companion — assisting in daily life through
 
 ## System Interface Showcase
 
-| **Vitals Dashboard Monitor (60FPS)** | **Empathetic AI Companion Chat** |
-|:---:|:---:|
-| ![Vitals Dashboard](./asset/dashboard-ui.jpg) | ![Companion Chat](./asset/companion-chat.jpg) |
+### 1. Vitals Dashboard Monitor (60FPS)
+![Vitals Dashboard](./asset/dashboard-ui.jpg)
 
-| **Multi-Agent System Logs (Agents Log)** | **Safety Control Coordination (Safety Radar)** | **Historical Vitals Metrics (History)** |
-|:---:|:---:|:---:|
-| ![Agents Log](./asset/agent_tab.jpg) | ![Safety Radar](./asset/safemode-tab.jpg) | ![Historical Metrics](./asset/history_tab.jpg) |
+### 2. Empathetic AI Companion Chat & Reasoning
+![Agent Chat](./asset/agent-chat.jpg)
+![Agent Companion](./asset/agent-companion.jpg)
+
+### 3. Multi-Agent System Logs (Agents Log)
+![Agents Log](./asset/agent_logs.jpg)
+
+### 4. Safety Control Coordination (Safety Radar)
+![Safety Radar](./asset/safemode-tab.jpg)
+
+### 5. Historical Vitals Metrics (History)
+![Historical Metrics](./asset/history_tab.jpg)
+
+### 6. Robot Camera Simulation (Vision Stream Online / Offline)
+![Robot Camera Simulation Online](./asset/robot-cam-simulate.jpg)
+![Robot Camera Simulation Lost](./asset/robot-cam-simulate-vision-lost.jpg)
+
+### 7. Robot Computer Visualization
+![Robot Computer Visualization](./asset/robot-computer-visualize.jpg)
+
+### 8. OpenCV & MediaPipe Computer Vision Processing
+![OpenCV MediaPipe Process](./asset/opencv_medipipe_webcam_process.jpg)
+
+
+
 
 ---
 
@@ -175,9 +202,9 @@ python -m pip install -r requirements.txt
 # Or:
 pip install -r requirements.txt 
 
-uvicorn main:app --reload --port 8889
-# Or:
 python -m uvicorn main:app --reload --port 8889
+# Or
+uvicorn main:app --reload --port 8889
 
 # AI Agent API runs at http://localhost:8889
 ```

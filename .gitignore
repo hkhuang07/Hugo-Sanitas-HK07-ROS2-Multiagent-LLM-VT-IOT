@@ -112,6 +112,10 @@ source/backend/.env
 source/backend/hk07-agent/.env
 source/backend/hk07-core/src/main/resources/application-local.yml
 
+# Credentials and Plan Temps
+source/backend/docker/mosquitto/passwd
+.active_plan.tmp
+
 # ─── Robotics / Webots / ROS2 ────────────────────────────────────────────────
 install/
 log/

@@ -7,10 +7,19 @@ spring:
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:HK040103}
     hikari:
-      maximum-pool-size: 5          # Limited pool — CPU 1.6GHz constraint
-      minimum-idle: 1
+      # [P2-2] Virtual Thread tuning: VT blocks OS thread on I/O — need more connections
+      # than traditional thread pool. Rule: (vCPU * 2) + spindle count, min 10.
+      maximum-pool-size: 10
+      minimum-idle: 2
       connection-timeout: 20000
       idle-timeout: 300000
+      keepalive-time: 60000         # Prevent idle connection drops from MariaDB
+      max-lifetime: 600000
+      # Virtual Threads are NOT compatible with connection acquisition on carrier thread
+      # HikariCP 5.1+ handles this automatically when VT executor is active
+      data-source-properties:
+        useServerPrepStmts: false    # Use client prep statements with rewriteBatchedStatements to avoid statement handler errors
+        rewriteBatchedStatements: true  # [P2-3] Enable true JDBC batch execution
   jpa:
     hibernate:
       ddl-auto: validate            # Flyway owns schema — JPA only validates
@@ -18,10 +27,11 @@ spring:
     open-in-view: false             # Disable OSIV — incompatible with Virtual Threads
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MariaDBDialect
         format_sql: false
         jdbc:
-          batch_size: 20            # Batch inserts for health_records (60Hz bursts)
+          batch_size: 50            # [P2-3] Increased batch size for 10Hz vitals bursts
+          order_inserts: true         # [P2-3] Sort inserts by entity type to maximize batch grouping
+          order_updates: true         # [P2-3] Same for updates
   # ─── Flyway (Database Migration Manager) ───
   flyway:
     enabled: true
@@ -54,9 +64,10 @@ hk07:
   mqtt:
     broker-url: ${MQTT_BROKER_URL:tcp://127.0.0.1:1883}
     client-id: hk07-core-backend
-    username: ${MQTT_USERNAME:}
-    password: ${MQTT_PASSWORD:}
+    username: ${MQTT_USERNAME:hk07core}
+    password: ${MQTT_PASSWORD:hk07mqtt2026}
   ai:
+    agent-url: ${AGENT_ENGINE_URL:http://127.0.0.1:8889}
     groq:
       api-key: ${GROQ_API_KEY:}     # Set via Docker env or .env file
     gemini:
@@ -73,8 +84,10 @@ hk07:
 logging:
   level:
     com.hk07: INFO
-    org.springframework.integration.mqtt: WARN
+    org.springframework.integration.mqtt: DEBUG
     org.hibernate: WARN
+    org.mariadb.jdbc: ERROR
+    org.flywaydb.core.internal.database.base.Database: ERROR
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{20} - %msg%n"
   file:

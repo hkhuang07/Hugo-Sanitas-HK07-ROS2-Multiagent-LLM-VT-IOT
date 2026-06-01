@@ -240,6 +240,7 @@ async function sendChat() {
       timestamp: getCurrentTimeString()
     })
   } catch (err) {
+    console.error("Agent Uplink Connection Failure Details:", err)
     chatLog.value.push({
       role: 'hugo',
       content: '[ERR_CONNECTION_TIMEOUT] Không thể thiết lập kênh giao tiếp với Agent Engine. Vui lòng kiểm tra cổng dịch vụ backend.',

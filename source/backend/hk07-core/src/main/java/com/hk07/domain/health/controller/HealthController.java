@@ -39,4 +39,21 @@ public class HealthController {
         UUID userId = UUID.fromString(auth.getName());
         return ResponseEntity.ok(ApiResponse.ok(healthService.getHourlySummary(userId, hours)));
     }
+
+    /**
+     * [HẠNCHẾ-#4 FIX] Endpoint for frontend to push offline cached vitals when network restores.
+     * The frontend's IndexedDB stores vitals if the WebSocket connection is dropped.
+     */
+    @PostMapping("/sync-offline")
+    public ResponseEntity<ApiResponse<String>> syncOfflineVitals(
+            Authentication auth,
+            @RequestBody List<com.hk07.domain.health.dto.VitalSignDto> offlineRecords) {
+        if (offlineRecords == null || offlineRecords.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.ok("No records to sync"));
+        }
+        UUID userId = UUID.fromString(auth.getName());
+        // Forward all records to HealthService (which uses Virtual Threads and Batching)
+        offlineRecords.forEach(healthService::processVitalSign);
+        return ResponseEntity.ok(ApiResponse.ok("Synced " + offlineRecords.size() + " offline records"));
+    }
 }
