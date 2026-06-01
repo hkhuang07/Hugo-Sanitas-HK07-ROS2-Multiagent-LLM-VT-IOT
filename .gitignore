@@ -124,3 +124,5 @@ source/robotics/install/
 source/robotics/log/
 .webots-project/
 *.wbt.bak
+
+.active_plan.tmp
