@@ -3,9 +3,8 @@ import { ref, computed } from 'vue'
 import axios from 'axios'
 
 export const useAuthStore = defineStore('auth', () => {
-  // In-memory tokens — NOT saved to localStorage for security
+  // In-memory token — NOT saved to localStorage for security
   const accessToken = ref<string | null>(null)
-  const refreshToken = ref<string | null>(null)
   
   // Minimal user info (can be saved securely or fetched on boot)
   const user = ref<{ id: string, email: string, role: string } | null>(null)
@@ -13,27 +12,21 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!accessToken.value)
   const isOwner = computed(() => user.value?.role === 'OWNER')
 
-  function setAuth(token: string, refresh: string, userData: any) {
+  function setAuth(token: string, userData: any) {
     accessToken.value = token
-    refreshToken.value = refresh
     user.value = userData
   }
 
   function clearAuth() {
     accessToken.value = null
-    refreshToken.value = null
     user.value = null
   }
 
   async function refreshSession(): Promise<boolean> {
-    if (!refreshToken.value) return false
     try {
-      const resp = await axios.post('/api/v1/auth/refresh', {
-        refreshToken: refreshToken.value
-      })
+      const resp = await axios.post('/api/v1/auth/refresh')
       const newToken = resp.data.data.accessToken
-      const newRefresh = resp.data.data.refreshToken
-      setAuth(newToken, newRefresh, user.value)
+      setAuth(newToken, user.value)
       return true
     } catch (err) {
       clearAuth()
@@ -42,14 +35,28 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function tryAutoLogin(): Promise<boolean> {
+    try {
+      const resp = await axios.post('/api/v1/auth/refresh')
+      const newToken = resp.data.data.accessToken
+      const userId = resp.data.data.userId
+      const role = resp.data.data.role
+      setAuth(newToken, { id: userId, email: '', role: role })
+      return true
+    } catch (err) {
+      clearAuth()
+      return false
+    }
+  }
+
   return {
     accessToken,
-    refreshToken,
     user,
     isAuthenticated,
     isOwner,
     setAuth,
     clearAuth,
-    refreshSession
+    refreshSession,
+    tryAutoLogin
   }
 })

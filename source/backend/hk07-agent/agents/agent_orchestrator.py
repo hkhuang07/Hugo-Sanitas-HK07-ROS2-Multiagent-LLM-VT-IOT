@@ -51,48 +51,64 @@ class AgentOrchestrator:
         }
 
         # Step 1: Classify intent via Router
-        target = "EMPATHETIC"
+        target = "EMPATHETIC_CHAT"
         try:
             route = await self.router_agent.classify_intent(user_message)
             # route is in the format "ROUTING_TARGET: TARGET"
-            for possible_target in ["SAFETY", "MEDICAL", "EMPATHETIC"]:
+            for possible_target in ["MEDICAL_ANALYSIS", "MEDICAL_ADVICE", "SYSTEM_QUERY", "EMPATHETIC_CHAT"]:
                 if possible_target in route:
                     target = possible_target
                     break
             state["current_agent"] = target
             log.info("[ORCHESTRATOR] Router directed message to: %s (Raw: %s)", target, route)
         except Exception as e:
-            log.error("[ORCHESTRATOR_ROUTING_ERROR] Failed to route: %s. Defaulting to EMPATHETIC.", e)
-            state["current_agent"] = "EMPATHETIC"
-            target = "EMPATHETIC"
+            log.error("[ORCHESTRATOR_ROUTING_ERROR] Failed to route: %s. Defaulting to EMPATHETIC_CHAT.", e)
+            state["current_agent"] = "EMPATHETIC_CHAT"
+            target = "EMPATHETIC_CHAT"
 
         # Step 2: Route to the target node agent
         try:
-            if target == "SAFETY":
-                res = await self.safety_agent.process_text_interaction(user_message)
-                try:
-                    res_json = json.loads(res)
-                    state["output"] = res_json.get("reason", res)
-                    state["alert_level"] = "WARNING" if res_json.get("status") == "DANGER" else "NORMAL"
-                    state["action"] = "INHIBIT_SYSTEM" if res_json.get("inhibit_activated") else "MONITOR"
-                except Exception:
-                    state["output"] = res
-                    state["alert_level"] = "WARNING"
-                    state["action"] = "CHECK_HARDWARE"
-                
-            elif target == "MEDICAL":
-                res = await self.medical_agent.process_text_interaction(user_message, current_vitals)
+            msg_lower = user_message.lower()
+            if any(k in msg_lower for k in ["quét tôi", "quét hình ảnh", "nhìn tôi", "chẩn đoán qua ảnh", "scan me", "visual scan", "look at me", "tôi trông thế nào"]):
+                log.info("[ORCHESTRATOR] Keyword matching visual scan. Routing to execute_visual_scan().")
+                res = await self.empathetic_agent.execute_visual_scan(current_vitals)
+                state["current_agent"] = "VISUAL_SCAN"
+                state["output"] = res
+                state["alert_level"] = "NORMAL"
+                state["action"] = "VISUAL_SCAN_DIAGNOSIS"
+            elif target == "SYSTEM_QUERY":
+                res = await self.empathetic_agent.process_system_query(user_message)
+                state["output"] = res
+                state["alert_level"] = "NORMAL"
+                state["action"] = "HARDWARE_STATUS_CHECK"
+
+            elif target == "MEDICAL_ANALYSIS":
+                res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ANALYSIS")
                 try:
                     res_json = json.loads(res)
                     state["output"] = res_json.get("summary", res)
-                    state["alert_level"] = res_json.get("alert_level", "WARNING")
+                    state["alert_level"] = res_json.get("alert_level", "NORMAL")
                     state["action"] = res_json.get("action", "CLINICAL_ADVICE")
                 except Exception:
                     state["output"] = res
                     state["alert_level"] = "WARNING"
                     state["action"] = "CLINICAL_ADVICE"
-                    
-            else:  # EMPATHETIC
+
+            elif target == "MEDICAL_ADVICE":
+                res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ADVICE")
+                try:
+                    res_json = json.loads(res)
+                    diagnosis = res_json.get("diagnosis", "")
+                    action_plan = res_json.get("action_plan", "")
+                    state["output"] = f"Chẩn đoán: {diagnosis}\nKế hoạch hành động: {action_plan}"
+                    state["alert_level"] = res_json.get("alert_level", "WARNING")
+                    state["action"] = "MEDICAL_FIRST_AID"
+                except Exception:
+                    state["output"] = res
+                    state["alert_level"] = "WARNING"
+                    state["action"] = "MEDICAL_FIRST_AID"
+
+            else:  # EMPATHETIC_CHAT
                 res = await self.empathetic_agent.process_text_interaction(user_message)
                 state["output"] = res
                 state["alert_level"] = "NORMAL"
@@ -100,7 +116,7 @@ class AgentOrchestrator:
                 
         except Exception as e:
             log.error("[ORCHESTRATOR_EXECUTION_ERROR] Failed to execute %s: %s", target, e)
-            state["output"] = "Tôi đang gặp chút sự cố xử lý thông tin. Có tôi ở đây bên bạn rồi."
+            state["output"] = "Tôi đang gặp chút sự cố xử lý thông tin. Hugo luôn ở đây đồng hành cùng bạn."
             state["alert_level"] = "WARNING"
             state["action"] = "COMPANION_CHAT"
 

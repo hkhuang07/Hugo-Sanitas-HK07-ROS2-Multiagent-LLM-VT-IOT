@@ -10,24 +10,40 @@
 /* ─── CSS Custom Properties (Design Tokens) ────────────────────────────────── */
 :root {
   /* Colors */
-  --color-bg-void: #000000;         /* True black — primary background */
-  --color-bg-surface: #0a0a0a;      /* Surface containers */
-  --color-bg-card: #0d0d0d;         /* Card backgrounds */
-  --color-border: #00FF66;          /* Primary neon border */
-  --color-border-dim: rgba(0, 255, 102, 0.15); /* Dim border for inactive elements */
-  --color-border-blue: #00D2FF;     /* Secondary accent blue */
-  --color-accent-green: #00FF66;    /* Neon emerald — success / primary text highlight */
-  --color-accent-cyan: #00E5FF;     /* Electric cyan — secondary accent */
-  --color-accent-orange: #FF6600;   /* Cyber orange — warning */
-  --color-accent-red: #FF3333;      /* Crimson — danger / critical */
-  --color-text-primary: #E0FFE8;    /* Near-white with green tint */
-  --color-text-dim: rgba(0, 255, 102, 0.5); /* Dim text */
-  --color-text-mono: #00FF66;       /* Monospace data values */
-  --color-stroke: #0D1F12;          /* Scanline stripe color */
+  --color-bg-void: #000000;
+  /* True black — primary background */
+  --color-bg-surface: #0a0a0a;
+  /* Surface containers */
+  --color-bg-card: #0d0d0d;
+  /* Card backgrounds */
+  --color-border: #00FF66;
+  /* Primary neon border */
+  --color-border-dim: rgba(0, 255, 102, 0.15);
+  /* Dim border for inactive elements */
+  --color-border-blue: #00D2FF;
+  /* Secondary accent blue */
+  --color-accent-green: #00FF66;
+  /* Neon emerald — success / primary text highlight */
+  --color-accent-cyan: #00E5FF;
+  /* Electric cyan — secondary accent */
+  --color-accent-orange: #FF6600;
+  /* Cyber orange — warning */
+  --color-accent-red: #FF3333;
+  /* Crimson — danger / critical */
+  --color-text-primary: #E0FFE8;
+  /* Near-white with green tint */
+  --color-text-dim: rgba(0, 255, 102, 0.5);
+  /* Dim text */
+  --color-text-mono: #00FF66;
+  /* Monospace data values */
+  --color-stroke: #0D1F12;
+  /* Scanline stripe color */
 
   /* Typography */
-  --font-hud: 'Orbitron', 'Share Tech Mono', monospace;    /* HUD labels, titles */
-  --font-data: 'Roboto Mono', 'Share Tech Mono', monospace; /* Data values, numbers */
+  --font-hud: 'Orbitron', 'Share Tech Mono', monospace;
+  /* HUD labels, titles */
+  --font-data: 'Roboto Mono', 'Share Tech Mono', monospace;
+  /* Data values, numbers */
   --font-body: 'Roboto Mono', monospace;
 
   /* Spacing */
@@ -48,9 +64,16 @@
 }
 
 /* ─── Reset & Base ──────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-html, body {
+html,
+body {
   width: 100%;
   height: 100%;
   background: var(--color-bg-void);
@@ -62,24 +85,28 @@ html, body {
   overflow: hidden;
 }
 
-#app { width: 100%; height: 100%; display: flex; flex-direction: column; }
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
 
 /* ─── Scanlines Effect (GPU-accelerated, pointer-events: none) ──────────────── */
 .cyber-scanlines {
   position: relative;
 }
+
 .cyber-scanlines::before {
   content: "";
   display: block;
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.08) 2px,
-    rgba(0, 0, 0, 0.08) 4px
-  );
+  background: repeating-linear-gradient(0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.08) 2px,
+      rgba(0, 0, 0, 0.08) 4px);
   z-index: 10;
   pointer-events: none;
 }
@@ -88,6 +115,7 @@ html, body {
 .corner-reticle {
   position: relative;
 }
+
 .corner-reticle::before,
 .corner-reticle::after {
   content: '+';
@@ -97,8 +125,16 @@ html, body {
   color: var(--color-border-dim);
   line-height: 1;
 }
-.corner-reticle::before { top: -4px; left: -4px; }
-.corner-reticle::after  { bottom: -4px; right: -4px; }
+
+.corner-reticle::before {
+  top: -4px;
+  left: -4px;
+}
+
+.corner-reticle::after {
+  bottom: -4px;
+  right: -4px;
+}
 
 /* ─── Header Status Strip ───────────────────────────────────────────────────── */
 .hud-header {
@@ -116,10 +152,22 @@ html, body {
   flex-shrink: 0;
   user-select: none;
 }
-.hud-header .terminal-id { color: var(--color-accent-green); }
-.hud-header .status-ok   { color: var(--color-accent-green); }
-.hud-header .status-warn { color: var(--color-accent-orange); }
-.hud-header .status-crit { color: var(--color-accent-red); }
+
+.hud-header .terminal-id {
+  color: var(--color-accent-green);
+}
+
+.hud-header .status-ok {
+  color: var(--color-accent-green);
+}
+
+.hud-header .status-warn {
+  color: var(--color-accent-orange);
+}
+
+.hud-header .status-crit {
+  color: var(--color-accent-red);
+}
 
 /* ─── Asymmetric 30/70 Grid Layout ─────────────────────────────────────────── */
 .main-grid {
@@ -158,6 +206,7 @@ html, body {
   padding: var(--space-sm) var(--space-md);
   position: relative;
 }
+
 .terminal-card-header {
   font-family: var(--font-hud);
   font-size: 9px;
@@ -178,6 +227,7 @@ html, body {
   filter: drop-shadow(0 0 6px rgba(0, 255, 102, 0.5));
   line-height: 1;
 }
+
 .vital-label {
   font-family: var(--font-hud);
   font-size: 9px;
@@ -186,6 +236,7 @@ html, body {
   color: var(--color-text-dim);
   margin-top: 4px;
 }
+
 .vital-unit {
   font-family: var(--font-data);
   font-size: 11px;
@@ -193,13 +244,27 @@ html, body {
 }
 
 /* ─── State Colors ──────────────────────────────────────────────────────────── */
-.state-normal   { color: var(--color-accent-green); }
-.state-warning  { color: var(--color-accent-orange); }
-.state-critical { color: var(--color-accent-red); }
-.state-stroke   { color: #FF0000; animation: blink-danger 0.5s step-end infinite; }
+.state-normal {
+  color: var(--color-accent-green);
+}
+
+.state-warning {
+  color: var(--color-accent-orange);
+}
+
+.state-critical {
+  color: var(--color-accent-red);
+}
+
+.state-stroke {
+  color: #FF0000;
+  animation: blink-danger 0.5s step-end infinite;
+}
 
 @keyframes blink-danger {
-  50% { opacity: 0; }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* ─── Segmented Progress Bar ────────────────────────────────────────────────── */
@@ -208,12 +273,14 @@ html, body {
   flex-direction: column;
   gap: 4px;
 }
+
 .seg-progress-label {
   font-family: var(--font-data);
   font-size: 10px;
   color: var(--color-accent-cyan);
   filter: drop-shadow(0 0 3px rgba(0, 229, 255, 0.5));
 }
+
 .seg-progress-track {
   display: flex;
   gap: 2px;
@@ -221,18 +288,22 @@ html, body {
   border: 1px solid var(--color-border-dim);
   padding: 1px;
 }
+
 .seg-progress-block {
   flex: 1;
   background: transparent;
   transition: background var(--transition-fast);
 }
+
 .seg-progress-block.active {
   background: var(--color-accent-green);
   filter: drop-shadow(0 0 2px rgba(0, 255, 102, 0.8));
 }
+
 .seg-progress-block.warning {
   background: var(--color-accent-orange);
 }
+
 .seg-progress-block.critical {
   background: var(--color-accent-red);
 }
@@ -250,11 +321,15 @@ html, body {
   transition: border-color var(--transition-mid);
   caret-color: var(--color-accent-green);
 }
+
 .tactical-input:focus {
   border-color: var(--color-accent-green);
   box-shadow: 0 0 0 1px rgba(0, 255, 102, 0.15);
 }
-.tactical-input::placeholder { color: var(--color-text-dim); }
+
+.tactical-input::placeholder {
+  color: var(--color-text-dim);
+}
 
 /* ─── Command Button ────────────────────────────────────────────────────────── */
 .cmd-btn {
@@ -270,18 +345,22 @@ html, body {
   transition: background var(--transition-fast), color var(--transition-fast);
   user-select: none;
 }
+
 .cmd-btn:hover {
   background: var(--color-accent-green);
   color: var(--color-bg-void);
 }
+
 .cmd-btn.danger {
   border-color: var(--color-accent-red);
   color: var(--color-accent-red);
 }
+
 .cmd-btn.danger:hover {
   background: var(--color-accent-red);
   color: var(--color-bg-void);
 }
+
 .cmd-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
@@ -296,6 +375,7 @@ html, body {
   border: 1px solid var(--color-border-dim);
   overflow: hidden;
 }
+
 .ecg-container canvas {
   position: absolute;
   inset: 0;
@@ -313,34 +393,101 @@ html, body {
   padding: 3px 8px;
   border: 1px solid;
 }
+
 .agent-badge.active {
   border-color: var(--color-accent-green);
   color: var(--color-accent-green);
 }
+
 .agent-badge.active::before {
   content: '●';
   font-size: 8px;
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.2;
+  }
 }
 
 /* ─── Scrollbar Styling ─────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: var(--color-bg-void); }
-::-webkit-scrollbar-thumb { background: var(--color-border-dim); }
-::-webkit-scrollbar-thumb:hover { background: var(--color-accent-green); }
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-void);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-dim);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent-green);
+}
 
 /* ─── Utility Classes ───────────────────────────────────────────────────────── */
-.mono { font-family: var(--font-data); }
-.hud  { font-family: var(--font-hud); }
-.text-green { color: var(--color-accent-green); }
-.text-cyan  { color: var(--color-accent-cyan); }
-.text-orange{ color: var(--color-accent-orange); }
-.text-red   { color: var(--color-accent-red); }
-.text-dim   { color: var(--color-text-dim); }
-.uppercase  { text-transform: uppercase; letter-spacing: 0.15em; }
-.glow-green { filter: drop-shadow(0 0 4px rgba(0, 255, 102, 0.6)); }
-.glow-cyan  { filter: drop-shadow(0 0 4px rgba(0, 229, 255, 0.5)); }
+.mono {
+  font-family: var(--font-data);
+}
+
+.hud {
+  font-family: var(--font-hud);
+}
+
+.text-green {
+  color: var(--color-accent-green);
+}
+
+.text-cyan {
+  color: var(--color-accent-cyan);
+}
+
+.text-orange {
+  color: var(--color-accent-orange);
+}
+
+.text-red {
+  color: var(--color-accent-red);
+}
+
+.text-dim {
+  color: var(--color-text-dim);
+}
+
+.uppercase {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+
+.glow-green {
+  filter: drop-shadow(0 0 4px rgba(0, 82, 255, 0.6));
+}
+
+.glow-cyan {
+  filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.5));
+}
+
+.text-success {
+  color: #00FF66;
+}
+
+.glow-success {
+  filter: drop-shadow(0 0 4px rgba(0, 255, 102, 0.6));
+}
+
+.text-emerald {
+  color: #00FF66;
+}
+
+.glow-emerald {
+  filter: drop-shadow(0 0 4px rgba(0, 255, 102, 0.6));
+}

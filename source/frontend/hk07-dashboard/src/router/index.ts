@@ -40,6 +40,18 @@ export const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/emergency',
+      name: 'Emergency',
+      component: () => import('../views/EmergencyView.vue'),
+      meta: { requiresAuth: false }
+    },
+    {
+      path: '/profile',
+      name: 'Profile',
+      component: () => import('../views/ProfileSettingsView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/'
     }

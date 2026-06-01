@@ -24,6 +24,9 @@
         <router-link to="/history" class="sidebar-nav-item" active-class="active">
           <span class="index text-dim">[04]</span> HISTORICAL_METRICS
         </router-link>
+        <router-link to="/profile" class="sidebar-nav-item" active-class="active">
+          <span class="index text-dim">[05]</span> PROFILE_SETTINGS
+        </router-link>
       </div>
     </div>
 

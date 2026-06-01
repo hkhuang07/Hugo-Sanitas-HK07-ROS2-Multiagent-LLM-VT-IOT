@@ -130,6 +130,13 @@ async def agents_status():
     }
 
 
+@app.post("/api/v1/memory/sync_profile")
+async def sync_profile(body: dict):
+    """Sync medical profile baseline into LanceDB vector memory"""
+    await memory.sync_medical_baseline(body)
+    return {"status": "success", "message": "Medical baseline memory synced"}
+
+
 @app.post("/agents/empathetic/interact")
 async def empathetic_interact(body: dict):
     """Unified interaction endpoint utilizing Supervisor Router and Agent Orchestrator"""

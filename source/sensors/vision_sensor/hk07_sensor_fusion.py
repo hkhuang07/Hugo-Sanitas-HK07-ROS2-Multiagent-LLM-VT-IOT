@@ -197,6 +197,12 @@ def blocking_vision_worker(loop):
                         log.warning("[VISION_WORKER] Video stream dropped.")
                         break
                     
+                    # Save frame immediately to shared file buffer
+                    try:
+                        cv2.imwrite("d:/Study/HK.Huang_Lab/hugo-sanitas-hk-07/hk-07/source/backend/hk07-agent/latest_frame.jpg", frame)
+                    except Exception as e:
+                        log.error(f"[VISION_WORKER] Failed to save frame: {e}")
+                    
                     # Resize frame to reduce CPU load and display a smaller window
                     h, w = frame.shape[:2]
                     scale = 0.5

@@ -135,7 +135,8 @@ class LanceMemory:
             count_before = await asyncio.to_thread(self._table.count_rows)
 
             # LanceDB delete by predicate (runs on thread to avoid event loop block)
-            predicate = f"timestamp_ms < {cutoff_ms}"
+            # Only prune emotional events to preserve the medical baseline indefinitely
+            predicate = f"type = 'emotional_event' AND timestamp_ms < {cutoff_ms}"
             await asyncio.to_thread(self._table.delete, predicate)
 
             count_after = await asyncio.to_thread(self._table.count_rows)
@@ -165,6 +166,72 @@ class LanceMemory:
             return f"Đã có {count} sự kiện được ghi nhớ về chủ nhân."
         except Exception:
             return ""
+
+    async def sync_medical_baseline(self, body: dict):
+        """
+        Sync medical profile baseline into LanceDB vector memory.
+        This represents the long-term static clinical profile of the owner.
+        """
+        if not self._initialized or not self._table:
+            log.warning("[LANCE_MEMORY] Skipped sync_medical_baseline — not initialized (mock mode)")
+            return
+
+        user_id = body.get("userId", "default_user")
+        
+        # Build a highly detailed, clean string format of the medical baseline
+        content = (
+            f"BỆNH NHÂN: {body.get('fullName', 'N/A')}\n"
+            f"Tuổi: {body.get('age', 'N/A')} | Giới tính: {body.get('gender', 'N/A')}\n"
+            f"Chiều cao: {body.get('height', 'N/A')} cm | Cân nặng: {body.get('weight', 'N/A')} kg\n"
+            f"Nhóm máu: {body.get('bloodType', 'N/A')}\n"
+            f"Tiền sử bệnh lý: {body.get('medicalHistory', 'Không có')}\n"
+            f"Tiền sử dị ứng: {body.get('allergies', 'Không dị ứng')}\n"
+            f"Người liên hệ khẩn cấp: {body.get('emergencyContactName', 'N/A')} ({body.get('emergencyContactPhone', 'N/A')})"
+        )
+
+        record_id = f"mb_{user_id}"
+        
+        # Perform an upsert (delete old one if exists, then add new one)
+        try:
+            # Delete any existing medical baseline for this user
+            predicate = f"id = '{record_id}'"
+            await asyncio.to_thread(self._table.delete, predicate)
+            
+            # Insert the new baseline
+            new_record = {
+                "id": record_id,
+                "type": "medical_baseline",
+                "content": content,
+                "timestamp_ms": int(time.time() * 1000),
+                "embedding": [0.0] * 384,
+            }
+            await asyncio.to_thread(self._table.add, [new_record])
+            log.info("[LANCE_MEMORY] Successfully synced medical baseline for user %s", user_id)
+        except Exception as e:
+            log.error("[LANCE_MEMORY_SYNC_ERROR] Failed to sync medical baseline: %s", e)
+
+    async def recall_medical_baseline(self) -> str:
+        """Retrieve the medical baseline string from LanceDB memory"""
+        if not self._initialized or not self._table:
+            return "Hồ sơ y tế: Chưa được thiết lập."
+        try:
+            # Query the table for records of type 'medical_baseline'
+            df = await asyncio.to_thread(self._table.to_pandas)
+            if df.empty:
+                return "Hồ sơ y tế: Chưa có thông tin cấu hình."
+            
+            # Filter rows with type = 'medical_baseline'
+            df_baseline = df[df["type"] == "medical_baseline"]
+            if df_baseline.empty:
+                return "Hồ sơ y tế: Chưa có thông tin cấu hình."
+            
+            # Return the content of the most recent medical baseline (latest timestamp)
+            df_sorted = df_baseline.sort_values(by="timestamp_ms", ascending=False)
+            content = df_sorted.iloc[0]["content"]
+            return content
+        except Exception as e:
+            log.error("[LANCE_MEMORY_RECALL_ERROR] %s", e)
+            return "Hồ sơ y tế: Lỗi truy xuất cơ sở dữ liệu."
 
     async def retrieve_recent_events(self, limit: int = 5) -> list:
         """Retrieve the most recent emotional events or preferences for RAG context"""

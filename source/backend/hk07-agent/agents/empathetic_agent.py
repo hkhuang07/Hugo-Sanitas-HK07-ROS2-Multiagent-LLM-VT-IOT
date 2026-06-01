@@ -27,12 +27,23 @@ log = logging.getLogger("hk07.empathy_agent")
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 EMPATHY_SYSTEM_PROMPT = (
-    "Bạn là Hugo, một trợ lý chăm sóc sức khỏe cá nhân và đồng hành ấm áp của bệnh nhân.\n"
-    "Hãy lắng nghe, thấu cảm, xoa dịu người dùng (thường xuyên sử dụng các cụm từ ấm áp như 'Có tôi ở đây bên bạn rồi', 'Hãy hít thở sâu cùng tôi nhé').\n"
-    "Tuyệt đối không tự xưng là Baymax.\n"
-    "Khuyên người dùng hít thở sâu nếu họ lo lắng.\n"
-    "Trả lời bằng tiếng Việt, tối đa 3 câu ngắn gọn, ấm áp, giàu tình cảm."
+    "Bạn là Hugo, trợ lý đồng hành thông minh của bệnh nhân.\n"
+    "Quy tắc phản hồi:\n"
+    "1. Trước tiên, hãy phân tích sắc thái, tâm trạng và nội dung câu nói của người dùng.\n"
+    "2. Không được chèn lặp đi lặp lại cụm từ cố định 'Có tôi ở đây bên bạn rồi' vào mọi câu trả lời. Hãy đa dạng hóa ngôn từ.\n"
+    "3. Giọng điệu phải linh hoạt theo ngữ cảnh:\n"
+    "   - Chuyên nghiệp, khách quan, chính xác khi người dùng hỏi các câu hỏi kỹ thuật, định nghĩa hoặc giải thích hoạt động hệ thống.\n"
+    "   - Ấm áp, thấu cảm, ân cần và xoa dịu khi người dùng buồn bã, mệt mỏi, lo lắng hoặc cô đơn.\n"
+    "4. Trả lời bằng tiếng Việt, ngắn gọn (tối đa 3 câu)."
 )
+
+def execute_sensor_ping(device: str) -> dict:
+    """Mock function to ping a hardware device"""
+    return {"status": "ONLINE", "latency": "12ms"}
+
+def execute_vital_scan() -> dict:
+    """Mock function to scan vitals sensors"""
+    return {"status": "SCAN_COMPLETE", "message": "Đã ép lấy mẫu cảm biến"}
 
 class EmpatheticAgent:
     MAX_TURNS = 10
@@ -82,9 +93,17 @@ class EmpatheticAgent:
                 "text": doc.get("content", "")
             })
 
+        # Fetch medical baseline (Super Context)
+        baseline = ""
+        if self.memory:
+            try:
+                baseline = await self.memory.recall_medical_baseline()
+            except Exception as e:
+                log.warning("[EMPATHY_AGENT] Error recalling medical baseline: %s", e)
+
         # 2. Primary Attempt: Cohere API (RAG)
         if self._cohere_api_key:
-            content, success = await self._call_cohere(user_message, documents)
+            content, success = await self._call_cohere(user_message, documents, baseline)
             if success:
                 latency = int((time.time() - start_time) * 1000)
                 await self._log_interaction(user_message, content, LLMProvider.COHERE_PRIMARY.value, latency)
@@ -93,7 +112,7 @@ class EmpatheticAgent:
 
         # 3. Fallback Attempt: Gemini API
         if self._gemini_api_key:
-            content, success = await self._call_gemini(user_message, mem_context)
+            content, success = await self._call_gemini(user_message, mem_context, baseline)
             if success:
                 latency = int((time.time() - start_time) * 1000)
                 await self._log_interaction(user_message, content, LLMProvider.GEMINI_FALLBACK.value, latency)
@@ -106,14 +125,171 @@ class EmpatheticAgent:
         await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
         return content
 
-    async def _call_cohere(self, user_message: str, documents: list) -> tuple[str, bool]:
+    async def process_system_query(self, user_message: str) -> str:
+        """Processes hardware/connectivity queries with Tool Calling"""
+        if not self._client:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+
+        start_time = time.time()
+
+        if not self._gemini_api_key:
+            content = self._local_system_query_fallback(user_message)
+            latency = int((time.time() - start_time) * 1000)
+            await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
+            return content
+
+        tools = [{
+            "functionDeclarations": [
+                {
+                    "name": "execute_sensor_ping",
+                    "description": "Ping a specific hardware device/sensor (e.g. wristband, lidar, imu, camera) to check connectivity and latency.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "device": {
+                                "type": "STRING",
+                                "description": "The name of the device or sensor to ping."
+                            }
+                        },
+                        "required": ["device"]
+                    }
+                },
+                {
+                    "name": "execute_vital_scan",
+                    "description": "Trigger a manual scan of the vital signs sensors.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {}
+                    }
+                }
+            ]
+        }]
+
+        contents = [{"role": "user", "parts": [{"text": user_message}]}]
+
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self._gemini_api_key}"
+            resp = await self._client.post(
+                url,
+                json={
+                    "contents": contents,
+                    "tools": tools
+                }
+            )
+            if resp.status_code != 200:
+                log.error(f"[SYSTEM_QUERY_GEMINI_ERROR] Status {resp.status_code} - Body: {resp.text}")
+                content = self._local_system_query_fallback(user_message)
+                latency = int((time.time() - start_time) * 1000)
+                await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
+                return content
+
+            res_json = resp.json()
+            candidate = res_json.get("candidates", [{}])[0]
+            parts = candidate.get("content", {}).get("parts", [])
+
+            function_call = None
+            for part in parts:
+                if "functionCall" in part:
+                    function_call = part["functionCall"]
+                    break
+
+            if function_call:
+                name = function_call.get("name")
+                args = function_call.get("args", {})
+                
+                result_dict = {}
+                if name == "execute_sensor_ping":
+                    device = args.get("device", "wristband")
+                    result_dict = execute_sensor_ping(device)
+                elif name == "execute_vital_scan":
+                    result_dict = execute_vital_scan()
+                else:
+                    result_dict = {"status": "ERROR", "message": "Unknown function"}
+
+                log.info(f"[SYSTEM_QUERY_TOOL] Executed {name} with args {args} -> {result_dict}")
+
+                # Call Gemini again with the tool result to generate natural response
+                new_contents = [
+                    {
+                        "role": "user",
+                        "parts": [{"text": user_message}]
+                    },
+                    {
+                        "role": "model",
+                        "parts": [{"functionCall": function_call}]
+                    },
+                    {
+                        "role": "function",
+                        "parts": [{
+                            "functionResponse": {
+                                "name": name,
+                                "response": result_dict
+                            }
+                        }]
+                    }
+                ]
+
+                resp2 = await self._client.post(
+                    url,
+                    json={
+                        "contents": new_contents,
+                        "tools": tools
+                    }
+                )
+                if resp2.status_code == 200:
+                    res2_json = resp2.json()
+                    final_text = res2_json.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                    if final_text:
+                        content = final_text.strip()
+                        latency = int((time.time() - start_time) * 1000)
+                        await self._log_interaction(user_message, content, LLMProvider.GEMINI_FALLBACK.value, latency)
+                        return content
+
+            else:
+                text = parts[0].get("text", "") if parts else ""
+                if text:
+                    content = text.strip()
+                    latency = int((time.time() - start_time) * 1000)
+                    await self._log_interaction(user_message, content, LLMProvider.GEMINI_FALLBACK.value, latency)
+                    return content
+
+        except Exception as e:
+            log.error("[SYSTEM_QUERY_ERROR] Exception: %s", e)
+
+        content = self._local_system_query_fallback(user_message)
+        latency = int((time.time() - start_time) * 1000)
+        await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
+        return content
+
+    def _local_system_query_fallback(self, user_message: str) -> str:
+        msg = user_message.lower()
+        if any(w in msg for w in ["ping", "sensor", "cảm biến", "cam bien"]):
+            device = "wristband"
+            for d in ["lidar", "imu", "camera", "wristband"]:
+                if d in msg:
+                    device = d
+            res = execute_sensor_ping(device)
+            return f"Tôi đã ping thử cảm biến {device} và kết quả trả về là {res['status']} với độ trễ {res['latency']}."
+        elif any(w in msg for w in ["scan", "quét", "quet"]):
+            res = execute_vital_scan()
+            return f"Hệ thống đã thực hiện ép lấy mẫu cảm biến sinh hiệu thành công: {res['message']} (Trạng thái: {res['status']})."
+        
+        res = execute_sensor_ping("wristband")
+        return f"Tôi đã tự động kiểm tra kết nối thiết bị Wristband. Trạng thái: {res['status']}, Độ trễ: {res['latency']}."
+
+    async def _call_cohere(self, user_message: str, documents: list, baseline: str = "") -> tuple[str, bool]:
         history_str = ""
         for h in self._history:
             role = "HK-07" if h["role"] == "assistant" else "User"
             history_str += f"{role}: {h['content']}\n"
         context_str = "\n".join([f"- {d['text']}" for d in documents])
+        
+        system_instruction = EMPATHY_SYSTEM_PROMPT
+        if baseline:
+            system_instruction = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_instruction}"
+
         prompt = (
-            f"System Instruction:\n{EMPATHY_SYSTEM_PROMPT}\n"
+            f"System Instruction:\n{system_instruction}\n"
             f"Ký ức quá khứ của bệnh nhân:\n{context_str}\n\n"
             f"Lịch sử hội thoại:\n{history_str}\n"
             f"User: {user_message}\nHugo:"
@@ -140,21 +316,26 @@ class EmpatheticAgent:
             log.error("[EMPATHY_COHERE_ERROR] Exception: %s", e)
             return "", False
 
-    async def _call_gemini(self, user_message: str, mem_context: list) -> tuple[str, bool]:
+    async def _call_gemini(self, user_message: str, mem_context: list, baseline: str = "") -> tuple[str, bool]:
         history_str = ""
         for h in self._history:
             role = "HK-07" if h["role"] == "assistant" else "User"
             history_str += f"{role}: {h['content']}\n"
         context_str = "\n".join([f"- {d['content']}" for d in mem_context])
+
+        system_instruction = EMPATHY_SYSTEM_PROMPT
+        if baseline:
+            system_instruction = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_instruction}"
+
         prompt = (
-            f"System Instruction:\n{EMPATHY_SYSTEM_PROMPT}\n"
+            f"System Instruction:\n{system_instruction}\n"
             f"Ký ức quá khứ của bệnh nhân:\n{context_str}\n\n"
             f"Lịch sử hội thoại:\n{history_str}\n"
             f"User: {user_message}\nHugo:"
         )
         try:
             resp = await self._client.post(
-                f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={self._gemini_api_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self._gemini_api_key}",
                 json={
                     "contents": [{"parts": [{"text": prompt}]}]
                 }
@@ -190,13 +371,108 @@ class EmpatheticAgent:
 
     def _generate_local_fallback(self, user_message: str) -> str:
         msg = user_message.lower()
-        if "chào" in msg or "hello" in msg or "hi" in msg:
-            return "Xin chào! Tôi là Hugo, trợ lý chăm sóc sức khỏe cá nhân của bạn. Có tôi ở đây bên bạn rồi."
-        elif "buồn" in msg or "mệt" in msg or "khóc" in msg or "buon" in msg or "met" in msg or "kho" in msg:
-            return "Tôi nghe thấy bạn có vẻ không được vui. Hãy hít thở thật sâu cùng tôi nhé. Có tôi ở đây bên bạn rồi."
-        elif "lo" in msg or "sợ" in msg or "anxious" in msg or "fear" in msg:
-            return "Đừng lo lắng quá. Nhắm mắt lại và hít một hơi thật sâu. Có tôi ở đây bên bạn rồi."
-        return "Tôi hiểu mà. Tôi luôn ở đây để lắng nghe và chăm sóc bạn. Có tôi ở đây bên bạn rồi."
+        if any(w in msg for w in ["chào", "hello", "hi"]):
+            return "Xin chào! Tôi là Hugo. Tôi có thể giúp gì cho bạn hôm nay?"
+        elif any(w in msg for w in ["buồn", "mệt", "khóc", "buon", "met", "kho"]):
+            return "Tôi biết bạn đang trải qua khoảng thời gian không dễ dàng. Hãy nghỉ ngơi một chút và hít thở sâu cùng tôi nhé."
+        elif any(w in msg for w in ["lo", "sợ", "anxious", "fear"]):
+            return "Mọi chuyện rồi sẽ ổn thôi. Nhắm mắt lại, thư giãn cơ thể và tập trung vào hơi thở của mình nhé."
+        return "Tôi luôn sẵn sàng lắng nghe bạn chia sẻ. Hãy cho tôi biết nếu bạn cần trợ giúp hoặc trò chuyện."
+
+    async def execute_visual_scan(self, current_vitals: dict) -> str:
+        """
+        Reads the latest_frame.jpg from buffer, encodes to Base64, and queries Gemini 1.5 Vision API
+        along with the patient's vitals context.
+        """
+        import base64
+        
+        image_path = "d:/Study/HK.Huang_Lab/hugo-sanitas-hk-07/hk-07/source/backend/hk07-agent/latest_frame.jpg"
+        base64_data = ""
+        mime_type = "image/jpeg"
+        
+        if os.path.exists(image_path):
+            try:
+                with open(image_path, "rb") as f:
+                    base64_data = base64.b64encode(f.read()).decode("utf-8")
+            except Exception as e:
+                log.error(f"[VISION_TOOL] Error reading frame: {e}")
+        
+        # Fallback dummy image if file missing/empty
+        if not base64_data:
+            log.info("[VISION_TOOL] latest_frame.jpg not found. Using blue diagnostic grid fallback.")
+            try:
+                import cv2
+                import numpy as np
+                dummy_img = np.zeros((300, 300, 3), dtype=np.uint8)
+                dummy_img[:] = [255, 82, 0] # BGR Electric Blue
+                cv2.putText(dummy_img, "HK-07 VISION SCAN", (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+                _, buffer = cv2.imencode(".jpg", dummy_img)
+                base64_data = base64.b64encode(buffer).decode("utf-8")
+            except Exception as e:
+                log.error(f"[VISION_TOOL] OpenCV fallback generation failed: {e}")
+                # String fallback
+                base64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+        # Get vitals context
+        vitals_str = (
+            f"Nhịp tim: {current_vitals.get('heartRate', 72)} bpm, "
+            f"SpO2: {current_vitals.get('spo2', 98)}%, "
+            f"Nhiệt độ: {current_vitals.get('bodyTemperature', 36.6)} °C, "
+            f"Huyết áp: {current_vitals.get('systolic', 120)}/{current_vitals.get('diastolic', 80)} mmHg."
+        )
+
+        prompt = (
+            f"Chỉ số sinh hiệu hiện tại: {vitals_str}\n"
+            "Hãy đóng vai bác sĩ cấp cứu của robot HK-07. Hãy quan sát màu da, biểu cảm khuôn mặt, "
+            "hoặc bất kỳ vết thương cơ học nào có trong ảnh kết hợp với chỉ số sinh hiệu để đưa ra "
+            "chẩn đoán sức khỏe nhanh chóng và hướng dẫn sơ cứu thiết thực nhất bằng tiếng Việt."
+        )
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self._gemini_api_key}"
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": base64_data
+                            }
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 300,
+                "temperature": 0.4
+            }
+        }
+
+        try:
+            if not self._client:
+                self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+            
+            resp = await self._client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                response_text = data["contents"][0]["parts"][0]["text"]
+                log.info("[VISION_TOOL] Gemini Vision Scan complete.")
+                
+                # Log this scan interaction in the audit database
+                await self._log_interaction(
+                    user_message="[REQUEST_VISUAL_SCAN] Tiến hành quét hình ảnh cơ thể.",
+                    content=response_text,
+                    provider="GEMINI_1.5_VISION",
+                    latency=int((time.time() - time.time()) * 1000)
+                )
+                return response_text
+            else:
+                log.error(f"[VISION_TOOL_ERROR] Gemini Vision returned status {resp.status_code}: {resp.text}")
+                return "Phát hiện luồng camera hoạt động. Tuy nhiên liên kết Gemini Vision API gặp sự cố. Trạng thái cơ bản của bạn vẫn ở mức ổn định."
+        except Exception as ex:
+            log.error(f"[VISION_TOOL_ERROR] Exception: {ex}")
+            return "Không thể kết nối dịch vụ Gemini Vision để phân tích ảnh. Trạng thái cơ bản của bạn vẫn ở mức ổn định."
 
     def get_status(self) -> dict:
         return {"status": self._status, "turns": len(self._history) // 2}

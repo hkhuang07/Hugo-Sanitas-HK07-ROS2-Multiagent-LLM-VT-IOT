@@ -24,7 +24,7 @@ import httpx
 
 log = logging.getLogger("hk07.agent_log_client")
 
-CORE_API_URL = os.getenv("CORE_API_URL", "http://localhost:8888")
+CORE_API_URL = os.getenv("CORE_API_URL") or os.getenv("HK07_CORE_URL") or "http://localhost:8888"
 AUTH_EMAIL = os.getenv("AGENT_AUTH_EMAIL", "owner@hk07.local")
 AUTH_PASSWORD = os.getenv("AGENT_AUTH_PASSWORD", "HK07-Admin-Change-Me!")
 

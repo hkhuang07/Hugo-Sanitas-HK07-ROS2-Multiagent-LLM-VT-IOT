@@ -35,7 +35,7 @@ export function initWebSocket(onReady?: () => void): void {
 
     beforeConnect: async () => {
       // Refresh JWT before each (re)connect attempt
-      if (authStore.refreshToken) {
+      if (authStore.isAuthenticated) {
         await authStore.refreshSession()
       }
       if (_client) {
@@ -67,6 +67,9 @@ export function initWebSocket(onReady?: () => void): void {
       _client!.subscribe('/topic/agent-events', (msg: IMessage) => {
         const ev = JSON.parse(msg.body)
         agentsStore.addEvent(ev)
+        if (ev.eventType === 'AI_EMERGENCY_WAKEUP') {
+          document.dispatchEvent(new CustomEvent('hk07:ai-emergency-wakeup', { detail: ev }))
+        }
       })
 
       // ── Subscribe: Safety alerts / Subsumption

@@ -42,6 +42,18 @@ MEDICAL_SYSTEM_PROMPT = (
     "}\n"
 )
 
+MEDICAL_ADVICE_SYSTEM_PROMPT = (
+    "Bạn là một bác sĩ chẩn đoán và sơ cứu chuyên nghiệp tích hợp trong robot HK-07.\n"
+    "Nhiệm vụ của bạn là kết hợp các chỉ số sinh tồn (nhịp tim, SpO2, nhiệt độ, huyết áp) và các triệu chứng người dùng khai báo để đưa ra chẩn đoán sơ bộ và hướng dẫn sơ cứu/kế hoạch hành động thực tế.\n"
+    "BẮT BUỘC TRẢ VỀ KẾT QUẢ DƯỚI ĐỊNH DẠNG JSON NGHIÊM NGẶT (Không chứa thêm bất kỳ đoạn text hội thoại nào bên ngoài JSON).\n"
+    "Cấu trúc JSON như sau:\n"
+    "{\n"
+    '  "diagnosis": "Chẩn đoán sơ bộ về tình trạng sức khỏe/triệu chứng của bệnh nhân bằng tiếng Việt, ngắn gọn.",\n'
+    '  "action_plan": "Kế hoạch hành động và hướng dẫn sơ cứu chi tiết thực tế bằng tiếng Việt.",\n'
+    '  "alert_level": "NORMAL" | "WARNING" | "CRITICAL"\n'
+    "}\n"
+)
+
 HR_MIN, HR_MAX = 50, 120
 SPO2_MIN = 92.0
 TEMP_MAX = 38.5
@@ -79,12 +91,15 @@ class CircuitBreaker:
         return True
 
 def safe_extract_json(text: str) -> dict:
+    fallback = {
+        "alert_level": "WARNING",
+        "summary": "Phát hiện chỉ số sinh tồn bất thường nhưng chẩn đoán tự động gặp lỗi định dạng.",
+        "action": "Vui lòng theo dõi sát sức khỏe của bản thân hoặc đo lại chỉ số sinh tồn.",
+        "diagnosis": "Đang theo dõi sức khỏe và kiểm tra triệu chứng.",
+        "action_plan": "Vui lòng theo dõi sát sức khỏe của bản thân hoặc đo lại chỉ số sinh tồn."
+    }
     if not text or not isinstance(text, str):
-        return {
-            "alert_level": "WARNING",
-            "summary": "Phát hiện chỉ số sinh tồn bất thường nhưng chẩn đoán tự động gặp lỗi định dạng.",
-            "action": "Vui lòng theo dõi sát sức khỏe của bản thân hoặc đo lại chỉ số sinh tồn."
-        }
+        return fallback
     text = text.strip()
     try:
         return json.loads(text)
@@ -108,11 +123,7 @@ def safe_extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    return {
-        "alert_level": "WARNING",
-        "summary": "Phát hiện chỉ số sinh tồn bất thường nhưng chẩn đoán tự động gặp lỗi định dạng.",
-        "action": "Vui lòng theo dõi sát sức khỏe của bản thân hoặc đo lại chỉ số sinh tồn."
-    }
+    return fallback
 
 class MedicalAgent:
     def __init__(self, memory, arbitrator):
@@ -232,12 +243,28 @@ class MedicalAgent:
                     self._last_analysis = analysis
                     latency = int((time.time() - start_time) * 1000)
 
-                    self._mqtt.publish("hk07/agents/medical/output", json.dumps(analysis), qos=1)
+                    # Build compliant payload
+                    triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    is_emergency = analysis.get("alert_level") == "CRITICAL"
+                    
+                    payload = {
+                        "id": f"evt-{int(time.time())}",
+                        "eventType": "AI_EMERGENCY_WAKEUP" if is_emergency else "AGENT_DECISION",
+                        "agentType": "MEDICAL",
+                        "alertLevel": analysis.get("alert_level", "NORMAL"),
+                        "inputContext": vitals_summary,
+                        "outputDecision": f"{analysis.get('summary', '')} LỜI KHUYÊN: {analysis.get('action', '')}",
+                        "llmProvider": "GROQ_PROACTIVE" if is_emergency else "GROQ_ANALYSIS",
+                        "latencyMs": latency,
+                        "triggeredAt": triggered_at
+                    }
+
+                    self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
 
                     await log_agent_decision(
                         agent_type="MEDICAL",
                         input_context=vitals_summary,
-                        output_decision=json.dumps(analysis),
+                        output_decision=json.dumps(payload),
                         llm_provider=LLMProvider.GROQ_OR_FALLBACK.value if self._circuit_breaker.state != "OPEN" else LLMProvider.LOCAL_RULE.value,
                         latency_ms=latency
                     )
@@ -266,42 +293,55 @@ class MedicalAgent:
             if self._client:
                 await self._client.aclose()
 
-    async def process_text_interaction(self, user_message: str, current_vitals: dict) -> str:
+    async def process_text_interaction(self, user_message: str, current_vitals: dict, mode: str = "MEDICAL_ANALYSIS") -> str:
         """Called by the supervisor orchestrator to analyze medical query & vitals"""
         if not self._client:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
 
         start_time = time.time()
-        prompt = self._build_chat_prompt(user_message, current_vitals)
+        prompt = self._build_chat_prompt(user_message, current_vitals, mode)
+        system_prompt = MEDICAL_ADVICE_SYSTEM_PROMPT if mode == "MEDICAL_ADVICE" else MEDICAL_SYSTEM_PROMPT
+
+        # Inject medical baseline profile (Super Context) if available
+        baseline = await self.memory.recall_medical_baseline()
+        if baseline:
+            system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
 
         # 1. Primary: Groq API
         if self._groq_api_key:
-            res_str, success = await self._call_groq_text(prompt)
+            res_str, success = await self._call_groq_text(prompt, system_prompt)
             if success:
                 latency = int((time.time() - start_time) * 1000)
-                await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.GROQ_PRIMARY.value, latency)
+                await log_agent_decision(mode, user_message, res_str, LLMProvider.GROQ_PRIMARY.value, latency)
                 return res_str
             log.warning("[MEDICAL_AGENT] Groq failed, switching to OpenRouter fallback")
 
         # 2. Fallback: OpenRouter API
         if self._openrouter_api_key:
-            res_str, success = await self._call_openrouter_text(prompt)
+            res_str, success = await self._call_openrouter_text(prompt, system_prompt)
             if success:
                 latency = int((time.time() - start_time) * 1000)
-                await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.OPENROUTER_FALLBACK.value, latency)
+                await log_agent_decision(mode, user_message, res_str, LLMProvider.OPENROUTER_FALLBACK.value, latency)
                 return res_str
             log.error("[MEDICAL_AGENT] Both Groq and OpenRouter failed")
 
         # 3. Local rules fallback (returns JSON string)
-        local_diag = self._generate_rule_based_diagnosis(current_vitals)
-        local_diag["summary"] = f"[Local Mode] {local_diag['summary']} {self._generate_local_text_fallback_reason(user_message)}"
+        if mode == "MEDICAL_ADVICE":
+            local_diag = {
+                "diagnosis": f"Phát hiện triệu chứng tự báo cáo: {user_message}",
+                "action_plan": self._generate_local_first_aid_plan(user_message),
+                "alert_level": "WARNING"
+            }
+        else:
+            local_diag = self._generate_rule_based_diagnosis(current_vitals)
+            local_diag["summary"] = f"[Local Mode] {local_diag['summary']} {self._generate_local_text_fallback_reason(user_message)}"
         res_str = json.dumps(local_diag, ensure_ascii=False)
         latency = int((time.time() - start_time) * 1000)
-        await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.LOCAL_RULE.value, latency)
+        await log_agent_decision(mode, user_message, res_str, LLMProvider.LOCAL_RULE.value, latency)
         return res_str
 
-    async def _call_groq_text(self, prompt: str) -> tuple[str, bool]:
-        combined_prompt = f"System: {MEDICAL_SYSTEM_PROMPT}\n\nUser request: {prompt}"
+    async def _call_groq_text(self, prompt: str, system_prompt: str) -> tuple[str, bool]:
+        combined_prompt = f"System: {system_prompt}\n\nUser request: {prompt}"
         try:
             resp = await self._client.post(
                 GROQ_API_URL,
@@ -326,8 +366,8 @@ class MedicalAgent:
             log.error("[MEDICAL_GROQ_ERROR] Exception: %s", e)
             return "", False
 
-    async def _call_openrouter_text(self, prompt: str) -> tuple[str, bool]:
-        combined_prompt = f"System: {MEDICAL_SYSTEM_PROMPT}\n\nUser request: {prompt}"
+    async def _call_openrouter_text(self, prompt: str, system_prompt: str) -> tuple[str, bool]:
+        combined_prompt = f"System: {system_prompt}\n\nUser request: {prompt}"
         try:
             resp = await self._client.post(
                 OPENROUTER_API_URL,
@@ -377,7 +417,11 @@ class MedicalAgent:
 
     async def _call_groq(self, vitals: dict) -> tuple[dict, bool]:
         prompt_str = self._build_prompt(vitals)
-        combined_prompt = f"System: {MEDICAL_SYSTEM_PROMPT}\n\nUser request: {prompt_str}"
+        system_prompt = MEDICAL_SYSTEM_PROMPT
+        baseline = await self.memory.recall_medical_baseline()
+        if baseline:
+            system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
+        combined_prompt = f"System: {system_prompt}\n\nUser request: {prompt_str}"
         try:
             resp = await self._client.post(
                 GROQ_API_URL,
@@ -404,7 +448,11 @@ class MedicalAgent:
 
     async def _call_openrouter(self, vitals: dict) -> tuple[dict, bool]:
         prompt_str = self._build_prompt(vitals)
-        combined_prompt = f"System: {MEDICAL_SYSTEM_PROMPT}\n\nUser request: {prompt_str}"
+        system_prompt = MEDICAL_SYSTEM_PROMPT
+        baseline = await self.memory.recall_medical_baseline()
+        if baseline:
+            system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
+        combined_prompt = f"System: {system_prompt}\n\nUser request: {prompt_str}"
         try:
             resp = await self._client.post(
                 OPENROUTER_API_URL,
@@ -437,18 +485,25 @@ class MedicalAgent:
             "Analyze and return JSON only."
         )
 
-    def _build_chat_prompt(self, message: str, vitals: dict) -> str:
+    def _build_chat_prompt(self, message: str, vitals: dict, mode: str = "MEDICAL_ANALYSIS") -> str:
         vitals_summary = (
             f"Nhịp tim: {vitals.get('heartRate', 72)} bpm, "
             f"SpO2: {vitals.get('spo2', 98)}%, "
             f"Nhiệt độ: {vitals.get('bodyTemperature', 36.6)} °C, "
             f"Huyết áp: {vitals.get('systolic', 120)}/{vitals.get('diastolic', 80)} mmHg."
         )
-        return (
-            f"Câu hỏi người dùng: '{message}'\n"
-            f"Chỉ số sinh tồn hiện tại của họ: {vitals_summary}\n"
-            "Hãy trả lời câu hỏi và đưa ra lời khuyên y tế/chẩn đoán phù hợp dưới cấu trúc JSON quy định."
-        )
+        if mode == "MEDICAL_ADVICE":
+            return (
+                f"Triệu chứng người dùng khai báo: '{message}'\n"
+                f"Chỉ số sinh tồn hiện tại của họ: {vitals_summary}\n"
+                "Hãy phân tích triệu chứng kết hợp sinh hiệu và đưa ra chẩn đoán cùng kế hoạch hành động/sơ cứu thực tế dưới cấu trúc JSON của MEDICAL_ADVICE."
+            )
+        else:
+            return (
+                f"Câu hỏi/Yêu cầu phân tích: '{message}'\n"
+                f"Chỉ số sinh tồn hiện tại của họ: {vitals_summary}\n"
+                "Hãy phân tích chỉ số sinh tồn và đưa ra tóm tắt cùng lời khuyên y tế phù hợp dưới cấu trúc JSON của MEDICAL_ANALYSIS."
+            )
 
     def _generate_rule_based_diagnosis(self, vitals: dict) -> dict:
         hr = vitals.get("heartRate", 72)
@@ -490,6 +545,18 @@ class MedicalAgent:
         elif "spo2" in msg or "oxy" in msg:
             return "Nồng độ oxy SpO2 cần duy trì trên 95% để đảm bảo hô hấp ổn định."
         return "Để an toàn, bạn nên tham khảo ý kiến bác sĩ chuyên khoa hoặc kiểm tra chỉ số sinh tồn trực tiếp."
+
+    def _generate_local_first_aid_plan(self, user_message: str) -> str:
+        msg = user_message.lower()
+        if "đau tay" in msg or "dau tay" in msg or "gãy" in msg or "gay" in msg:
+            return "Tránh vận động tay bị đau. Cố định tạm thời tay bằng nẹp hoặc khăn. Áp đá lạnh chườm giảm sưng và đến ngay cơ sở y tế gần nhất."
+        elif "đau đầu" in msg or "nhức đầu" in msg or "dau dau" in msg:
+            return "Nằm nghỉ ngơi ở phòng tối và yên tĩnh. Uống một cốc nước ấm. Nếu đau kéo dài, có thể sử dụng paracetamol theo chỉ dẫn và theo dõi thêm."
+        elif "bỏng" in msg or "bong" in msg:
+            return "Ngâm ngay vùng bị bỏng vào nước mát sạch trong 15-20 phút. Tuyệt đối không bôi kem đánh răng hay dầu mỡ lên vết bỏng. Băng nhẹ bằng gạc sạch."
+        elif "chảy máu" in msg or "chay mau" in msg:
+            return "Dùng một miếng gạc sạch hoặc khăn sạch ấn chặt trực tiếp lên vết thương để cầm máu. Giữ nguyên áp lực trong ít nhất 5-10 phút."
+        return "Hãy nghỉ ngơi tại chỗ, hít thở đều, tránh vận động mạnh. Theo dõi sát các biểu hiện và tìm kiếm sự trợ giúp y tế từ người thân hoặc bác sĩ."
 
     def get_status(self) -> dict:
         return {"status": self._status, "last_analysis": self._last_analysis}

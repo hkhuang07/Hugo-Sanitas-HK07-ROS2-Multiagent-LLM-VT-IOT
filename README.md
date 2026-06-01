@@ -151,80 +151,120 @@ source/
 
 ## Quick Start & Testing Guide
 
-The system supports two operating modes: **Full Docker Stack** (fully integrated simulation) or **Local Dev** (running individual modules locally).
+The system supports two operating modes: **Full Docker Stack** (highly integrated services) or **Local Dev** (manually starting each system component).
 
-### 1. Full Stack Mode (All Services in Docker)
-This mode automatically builds and starts: Mosquitto, Redis, MariaDB, Spring Boot Core, Python Agent, Vue Dashboard (behind Nginx), and the Webots simulation.
+### 1. Docker Deployment Mode (Docker Stack)
+In this mode, all key databases, message brokers, core APIs, and AI agent services run containerized.
 
 ```bash
 # 1. Configure environment variables
 cd source/backend
 cp .env.example .env
-# Open the .env file and fill in GROQ_API_KEY or GEMINI_API_KEY
+# Open .env and fill in GROQ_API_KEY or GEMINI_API_KEY
 
-# 2. Start the stack
-docker-compose up -d --build
+# 2. Build and start the infrastructure + application services
+docker compose up -d --build
 
-# 3. Access urls
-# Dashboard Frontend: http://localhost:4205 (Standard Port)
-# Backend Swagger: http://localhost:8888/swagger-ui.html
+# 3. Verify services are up
+docker ps
+# Dashboard Frontend: http://localhost:4205 (Nginx routing)
+# Backend Swagger Docs: http://localhost:8888/swagger-ui.html
+# AI Agent API: http://localhost:8889
+# Mosquitto MQTT Broker: http://localhost:1883 / Replica: http://localhost:1884
 ```
 
-### 2. Local Dev Mode (Independent Component Execution)
-
-To run components locally, backing infrastructure services (database, cache, broker) must still be active.
-
-**0. Start Docker Infrastructure Services:**
-Run the following command at the project root or inside `source/backend` to start the databases and brokers:
+To run simulation and robotics edge nodes against the Docker stack, configure the host environment variables to point to the exposed Docker broker, then execute:
 ```bash
-# From the project root:
-docker compose -f source/backend/docker-compose.yml up -d redis mariadb mosquitto
+# Configure environment (or use default values)
+export MQTT_BROKER_HOST=localhost
+export MQTT_BROKER_PORT=1883
+export MQTT_USERNAME=hk07sim
+export MQTT_PASSWORD=hk07mqtt2026
 
-# Or navigate to source/backend and run:
+# Start OpenCV Camera Sensor Fusion Node
+cd source/sensors/vision_sensor
+python hk07_sensor_fusion.py
+
+# Start Webots Edge Controller Robotics Node
+cd source/robotics/controllers
+python hk07_edge_controller.py
+
+# Start Vivo HTTP-MQTT Sensor Bridge
+cd source/sensors/mobile_gateway
+python vivo_http_mqtt_bridge.py
+```
+
+---
+
+### 2. Manual Dev Mode (Component-by-Component Startup)
+
+To run components locally in development mode, you can start the databases and MQTT brokers either via docker or manually.
+
+#### Step 0: Start Infrastructure Services (Brokers & Databases)
+```bash
+# Spin up MQTT, MariaDB, and Redis in the background:
 cd source/backend
 docker compose up -d redis mariadb mosquitto
 ```
+*Alternatively, you can run native local instances of Mosquitto broker (port 1883), Redis (port 6379), and MariaDB (port 3306) on your machine.*
 
-**A. Start Backend Core (Spring Boot):**
-*(Ensure step 0 is completed so MariaDB and Redis are available)*
+#### Step 1: Start Backend Core (Spring Boot)
 ```bash
 cd source/backend/hk07-core
 mvn clean install -DskipTests
 mvn spring-boot:run
-# Backend runs at http://localhost:8888
+# Running at http://localhost:8888
 ```
 
-**B. Start AI Engine (Python Multi-Agent):**
+#### Step 2: Start AI Engine Node (Python Multi-Agent FastAPI)
 ```bash
 cd source/backend/hk07-agent
-
-python -m pip install -r requirements.txt
-# Or:
-pip install -r requirements.txt 
-
+pip install -r requirements.txt
 python -m uvicorn main:app --reload --port 8889
-# Or
-uvicorn main:app --reload --port 8889
-
-# AI Agent API runs at http://localhost:8889
+# Running at http://localhost:8889
 ```
 
-**C. Start Frontend Dashboard (Vue 3):**
+#### Step 3: Start Frontend Dashboard Node (Vue 3)
 ```bash
 cd source/frontend/hk07-dashboard
 npm install
 npm run dev
-# Dashboard Frontend runs at http://localhost:5173 (Vite dev)
+# Running at http://localhost:5173 (Vite dev server)
 ```
 
-**D. Execute Simulation Test Scripts:**
+#### Step 4: Start Webots Simulation Edge Controller Node (Robotics Node)
+This node simulates the physical robot chassis, subscribing to inhibition commands and managing drive wheel velocities.
 ```bash
-cd source/robotics/scripts
-./run_full_simulation.sh
+cd source/robotics/controllers
+# Make sure Webots controllers path is configured or run with fallback mock
+python hk07_edge_controller.py
+```
 
-# Emit simulated emergency vital signs via MQTT
+#### Step 5: Start OpenCV & MediaPipe Sensor Fusion Node (Vision Node)
+Processes local webcam video streams to cache diagnostic frame buffers (`latest_frame.jpg`) and track body postures for fall detection.
+```bash
+cd source/sensors/vision_sensor
+python hk07_sensor_fusion.py
+```
+
+#### Step 6: Start Vivo HTTP-MQTT Sensor Bridge Node (Mobile Ingestion)
+Listens on port 8080 to receive real-time accelerometer and telemetry streams pushed from mobile sensor applications.
+```bash
+cd source/sensors/mobile_gateway
+python vivo_http_mqtt_bridge.py
+```
+
+#### Step 7: Launch Simulation Testing Tools
+Use the interactive simulation CLI to test emergencies, fall events, and critical alerts:
+```bash
+cd source/robotics/simulation
+./run_full_simulation.sh
+# Or trigger specific events directly:
+python trigger_normal_vitals.py
 python trigger_heart_attack.py
+python trigger_fall.py
 python trigger_obstacle.py
+python trigger_emergency_button.py
 ```
 
 ---

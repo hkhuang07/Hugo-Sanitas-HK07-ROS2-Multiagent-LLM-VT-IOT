@@ -146,10 +146,10 @@ source/
 
 ## Quick Start & Testing Guide
 
-Hệ thống hỗ trợ 2 chế độ chạy: **Full Docker Stack** (Môi trường giả lập tích hợp) hoặc **Local Dev** (Chạy từng module rời để code).
+Hệ thống hỗ trợ 2 chế độ chạy: **Full Docker Stack** (Môi trường dịch vụ tích hợp Docker) hoặc **Local Dev** (Khởi động thủ công từng module rời).
 
-### 1. Chế độ Full Stack (Chạy toàn bộ bằng Docker 1 lệnh)
-Cấu trúc này sẽ tự động build và chạy: Mosquitto, Redis, Postgres, Spring Boot Core, Python Agent, Vue Dashboard (qua Nginx) và giả lập Robot.
+### 1. Chế độ Docker Deployment (Docker Stack)
+Trong chế độ này, tất cả cơ sở dữ liệu nền, các cổng MQTT Broker, API chính của Spring Boot và Động cơ AI Multi-Agent đều được đóng gói và chạy dưới dạng Container.
 
 ```bash
 # 1. Cấu hình biến môi trường
@@ -157,69 +157,109 @@ cd source/backend
 cp .env.example .env
 # Mở file .env và điền GROQ_API_KEY hoặc GEMINI_API_KEY
 
-# 2. Khởi động toàn bộ stack
-docker-compose up -d --build
+# 2. Khởi động toàn bộ stack dịch vụ
+docker compose up -d --build
 
-# 3. Truy cập
-# Dashboard Frontend: http://localhost:4205 (Port quy chuẩn)
-# Backend Swagger: http://localhost:8888/swagger-ui.html
+# 3. Kiểm tra các dịch vụ đang chạy
+docker ps
+# Dashboard Frontend: http://localhost:4205 (Được định tuyến qua Nginx)
+# Backend Swagger Docs: http://localhost:8888/swagger-ui.html
+# AI Agent API: http://localhost:8889
+# Mosquitto MQTT Broker: http://localhost:1883 / Bản sao Replica: http://localhost:1884
 ```
 
-### 2. Chế độ Local Dev (Khởi động riêng lẻ để test)
-
-Để chạy các dự án cục bộ (Local Dev), hệ thống vẫn yêu cầu các dịch vụ cơ sở hạ tầng (Database, Cache, MQTT) hoạt động. Bạn hãy làm theo các bước sau:
-
-**0. Khởi động cơ sở hạ tầng nền (Docker Infrastructure Services):**
-Chạy lệnh sau tại thư mục gốc của dự án hoặc thư mục `source/backend` để chỉ khởi động các dịch vụ nền (MariaDB, Redis, Mosquitto):
+Để khởi chạy các node robot điều khiển và cảm biến kết nối đến Docker stack, hãy thiết lập biến môi trường và chạy thủ công trên máy chủ (host) hoặc WSL:
 ```bash
-# Từ thư mục gốc dự án:
-docker compose -f source/backend/docker-compose.yml up -d redis mariadb mosquitto
+# Cấu hình biến kết nối đến Broker MQTT Docker
+export MQTT_BROKER_HOST=localhost
+export MQTT_BROKER_PORT=1883
+export MQTT_USERNAME=hk07sim
+export MQTT_PASSWORD=hk07mqtt2026
 
-# Hoặc di chuyển vào thư mục backend và chạy:
+# Khởi động Node Sensor Fusion (OpenCV Camera)
+cd source/sensors/vision_sensor
+python hk07_sensor_fusion.py
+
+# Khởi động Node Robotics Edge Controller (Webots Robot)
+cd source/robotics/controllers
+python hk07_edge_controller.py
+
+# Khởi động Node Vivo HTTP-MQTT Sensor Bridge
+cd source/sensors/mobile_gateway
+python vivo_http_mqtt_bridge.py
+```
+
+---
+
+### 2. Chế độ Local Dev (Khởi động thủ công từng Node hệ thống)
+
+Để phát triển mã nguồn cục bộ, bạn có thể khởi động các cơ sở hạ tầng nền và từng module một cách độc lập.
+
+#### Bước 0: Khởi động các dịch vụ hạ tầng (Broker & Database)
+```bash
+# Chạy MQTT, MariaDB và Redis ở chế độ nền:
 cd source/backend
 docker compose up -d redis mariadb mosquitto
 ```
+*Hoặc bạn có thể cài đặt chạy dịch vụ Mosquitto (port 1883), Redis (port 6379), MariaDB (port 3306) trực tiếp trên máy cục bộ.*
 
-**A. Khởi động Backend Core (Spring Boot):**
-*(Yêu cầu bước 0 đã hoàn thành để kết nối MariaDB và Redis)*
+#### Bước 1: Khởi động Backend Core (Spring Boot)
 ```bash
 cd source/backend/hk07-core
 mvn clean install -DskipTests
 mvn spring-boot:run
-# Chạy ở cổng http://localhost:8888
+# Chạy tại cổng http://localhost:8888
 ```
 
-**B. Khởi động Động cơ AI (Python Multi-Agent):**
+#### Bước 2: Khởi động Node AI Engine (Python Multi-Agent FastAPI)
 ```bash
 cd source/backend/hk07-agent
-
-python -m pip install -r requirements.txt
-# hoặc:
-pip install -r requirements.txt 
-
-uvicorn main:app --reload --port 8889
-# hoặc
+pip install -r requirements.txt
 python -m uvicorn main:app --reload --port 8889
-
-# Agent API chạy ở cổng http://localhost:8889
+# Chạy tại cổng http://localhost:8889
 ```
 
-**C. Khởi động Frontend Dashboard (Vue 3):**
+#### Bước 3: Khởi động Node Frontend Dashboard (Vue 3)
 ```bash
 cd source/frontend/hk07-dashboard
 npm install
 npm run dev
-# Dashboard Frontend chạy ở cổng http://localhost:5173 (Vite dev)
+# Chạy tại cổng http://localhost:5173 (Vite Dev Server)
 ```
 
-**D. Chạy kịch bản giả lập kiểm thử (Simulation):**
+#### Bước 4: Khởi động Node Webots Edge Controller (Robotics Node)
+Node này giả lập phần khung gầm robot di động, lắng nghe các lệnh phanh khẩn cấp từ cơ chế an toàn và điều chỉnh tốc độ bánh xe.
 ```bash
-cd source/robotics/scripts
-./run_full_simulation.sh
+cd source/robotics/controllers
+# Đảm bảo đường dẫn thư viện Webots đã được cấu hình hoặc chạy mock-fallback
+python hk07_edge_controller.py
+```
 
-# Bắn dữ liệu mô phỏng nhịp tim khẩn cấp qua MQTT
+#### Bước 5: Khởi động Node OpenCV Sensor Fusion (Vision Node)
+Quét và xử lý hình ảnh luồng camera nội bộ nhằm cập nhật tệp buffer ảnh `latest_frame.jpg` cho Gemini Vision và nhận diện tư thế ngã.
+```bash
+cd source/sensors/vision_sensor
+python hk07_sensor_fusion.py
+```
+
+#### Bước 6: Khởi động Node Vivo HTTP-MQTT Sensor Bridge (Mobile Ingestion)
+Lắng nghe tại cổng 8080 để tiếp nhận luồng dữ liệu gia tốc và thông số sinh tồn đẩy từ ứng dụng cảm biến di động.
+```bash
+cd source/sensors/mobile_gateway
+python vivo_http_mqtt_bridge.py
+```
+
+#### Bước 7: Khởi chạy các công cụ kiểm thử giả lập
+Sử dụng giao diện dòng lệnh giả lập tương tác để kiểm tra cơ chế cảnh báo ngã, chướng ngại vật hay tình huống khẩn cấp:
+```bash
+cd source/robotics/simulation
+./run_full_simulation.sh
+# Hoặc phát trực tiếp từng sự kiện y tế cụ thể:
+python trigger_normal_vitals.py
 python trigger_heart_attack.py
+python trigger_fall.py
 python trigger_obstacle.py
+python trigger_emergency_button.py
 ```
 
 ---

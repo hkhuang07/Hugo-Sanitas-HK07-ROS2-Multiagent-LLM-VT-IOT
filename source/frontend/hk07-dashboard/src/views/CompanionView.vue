@@ -63,6 +63,19 @@
 
         <!-- Chat input bar -->
         <div class="chat-input-bar">
+          <button 
+            type="button" 
+            class="cmd-btn mic-btn"
+            :class="{ active: isRecording }"
+            @mousedown="startRecording"
+            @mouseup="stopRecording"
+            @mouseleave="cancelRecording"
+            @touchstart.prevent="startRecording"
+            @touchend.prevent="stopRecording"
+            title="Hold to speak / Nhấn giữ để nói"
+          >
+            {{ isRecording ? '🎤 RECORDING...' : '🎤 SPEAK' }}
+          </button>
           <input v-model="userInput" 
                  class="tactical-input font-mono w-full" 
                  placeholder="ENTER TACTICAL COMMAND OR INQUIRY TO AGENT HUGO..."
@@ -165,6 +178,9 @@ import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
 import EcgWaveform from '../components/EcgWaveform.vue'
 
+const isRecording = ref(false)
+let recognition: any = null
+
 const vitalsStore = useVitalsStore()
 const authStore = useAuthStore()
 
@@ -239,17 +255,101 @@ async function sendChat() {
       content: reply,
       timestamp: getCurrentTimeString()
     })
+    speakResponse(reply)
   } catch (err) {
     console.error("Agent Uplink Connection Failure Details:", err)
+    const errText = '[ERR_CONNECTION_TIMEOUT] Không thể thiết lập kênh giao tiếp với Agent Engine. Vui lòng kiểm tra cổng dịch vụ backend.'
     chatLog.value.push({
       role: 'hugo',
-      content: '[ERR_CONNECTION_TIMEOUT] Không thể thiết lập kênh giao tiếp với Agent Engine. Vui lòng kiểm tra cổng dịch vụ backend.',
+      content: errText,
       timestamp: getCurrentTimeString()
     })
+    speakResponse(errText)
   } finally {
     chatLoading.value = false
     await nextTick()
     scrollChatToBottom()
+  }
+}
+
+// ── Web Speech API Integration ──
+
+function speakResponse(text: string) {
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel()
+    const cleanText = text.replace(/\[.*?\]/g, '').trim() // Strip brackets for cleaner readout
+    const utterance = new SpeechSynthesisUtterance(cleanText)
+    
+    // Choose warm Vietnamese or standard voice
+    const voices = window.speechSynthesis.getVoices()
+    const viVoice = voices.find(v => v.lang.includes('vi') || v.lang.includes('VI'))
+    if (viVoice) {
+      utterance.voice = viVoice
+    }
+    utterance.rate = 0.95
+    utterance.pitch = 0.95
+    window.speechSynthesis.speak(utterance)
+  }
+}
+
+function initSpeechRecognition() {
+  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    recognition = new SpeechRec()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = 'vi-VN'
+
+    recognition.onstart = () => {
+      isRecording.value = true
+    }
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript
+      userInput.value = transcript
+      sendChat()
+    }
+
+    recognition.onerror = (event: any) => {
+      console.error('[SPEECH_RECOGNITION_ERROR]', event.error)
+      isRecording.value = false
+    }
+
+    recognition.onend = () => {
+      isRecording.value = false
+    }
+  }
+}
+
+function startRecording() {
+  if (!recognition) {
+    initSpeechRecognition()
+  }
+  if (recognition && !isRecording.value) {
+    if ('speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance('')
+      window.speechSynthesis.speak(u)
+    }
+    try {
+      recognition.start()
+    } catch (e) {
+      console.warn('Recognition start caught error:', e)
+    }
+  } else if (!recognition) {
+    console.warn('Speech recognition not supported')
+  }
+}
+
+function stopRecording() {
+  if (recognition && isRecording.value) {
+    recognition.stop()
+  }
+}
+
+function cancelRecording() {
+  if (recognition && isRecording.value) {
+    recognition.abort()
+    isRecording.value = false
   }
 }
 
@@ -506,6 +606,27 @@ onMounted(() => {
   font-family: var(--font-hud);
   font-size: 10px;
   padding: 0 16px;
+}
+
+.mic-btn {
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 10px;
+  padding: 0 12px;
+  background: rgba(0, 82, 255, 0.05);
+  border-color: var(--color-border-dim);
+  transition: all 0.2s;
+  user-select: none;
+}
+.mic-btn.active {
+  background: rgba(255, 51, 51, 0.2);
+  border-color: var(--color-accent-red);
+  color: var(--color-accent-red);
+  animation: pulse-mic 1s infinite alternate;
+}
+@keyframes pulse-mic {
+  0% { box-shadow: 0 0 2px rgba(255, 51, 51, 0.2); }
+  100% { box-shadow: 0 0 8px rgba(255, 51, 51, 0.6); }
 }
 
 /* Right side panel */

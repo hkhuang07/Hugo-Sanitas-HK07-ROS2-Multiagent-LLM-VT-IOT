@@ -26,12 +26,13 @@ HF_API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mn
 
 ROUTER_SYSTEM_PROMPT = (
     "You are the Router Agent of the HK-07 companion robot. "
-    "Classify the user query into exactly one category: 'SAFETY', 'MEDICAL', or 'EMPATHETIC'.\n"
+    "Classify the user query into exactly one category: 'MEDICAL_ANALYSIS', 'MEDICAL_ADVICE', 'SYSTEM_QUERY', or 'EMPATHETIC_CHAT'.\n"
     "Categories:\n"
-    "- 'SAFETY': Only use this for reports of immediate physical danger, emergency commands, or raw sensor telemetry input/checks (e.g. reporting obstacle distances, reporting falls, reporting blinding lights). Do NOT select this for general/informational questions or explanations about Lidar, safety systems, or how things work.\n"
-    "- 'MEDICAL': Vital signs (heart rate, SpO2, temp), symptoms, cardiovascular health, medical advice, medication reminders.\n"
-    "- 'EMPATHETIC': Greetings, small talk, general chat, questions asking for explanations, definitions, or how systems work (including questions asking how Lidar or safety systems work, or wristband connection state inquiries).\n"
-    "Respond with ONLY a single word: 'SAFETY', 'MEDICAL', or 'EMPATHETIC'."
+    "- 'MEDICAL_ANALYSIS': Checking, reading, or analyzing the user's current vitals, heart rate, SpO2, blood pressure, or temperature.\n"
+    "- 'MEDICAL_ADVICE': When the user reports symptoms (e.g. pain, fever, cough, sickness) or asks for first-aid/medical/clinical advice.\n"
+    "- 'SYSTEM_QUERY': When the user asks to check hardware status, wristband connection, ping devices, or perform vitals/sensor scans.\n"
+    "- 'EMPATHETIC_CHAT': Greetings, small talk, general conversation, explanations of concepts, or emotional expressions of feelings (sadness, anxiety, tiredness).\n"
+    "Respond with ONLY a single phrase: 'MEDICAL_ANALYSIS', 'MEDICAL_ADVICE', 'SYSTEM_QUERY', or 'EMPATHETIC_CHAT'."
 )
 
 class RouterAgent:
@@ -72,7 +73,7 @@ class RouterAgent:
                 headers={"Authorization": f"Bearer {self._hf_api_key}"},
                 json={
                     "inputs": user_message,
-                    "parameters": {"candidate_labels": ["SAFETY", "MEDICAL", "EMPATHETIC"]}
+                    "parameters": {"candidate_labels": ["MEDICAL_ANALYSIS", "MEDICAL_ADVICE", "SYSTEM_QUERY", "EMPATHETIC_CHAT"]}
                 }
             )
             if resp.status_code != 200:
@@ -82,7 +83,7 @@ class RouterAgent:
             data = resp.json()
             if isinstance(data, dict) and "labels" in data and len(data["labels"]) > 0:
                 top_label = data["labels"][0].upper()
-                if top_label in ["SAFETY", "MEDICAL", "EMPATHETIC"]:
+                if top_label in ["MEDICAL_ANALYSIS", "MEDICAL_ADVICE", "SYSTEM_QUERY", "EMPATHETIC_CHAT"]:
                     return f"ROUTING_TARGET: {top_label}", True
             return "", False
         except Exception as e:
@@ -109,23 +110,23 @@ class RouterAgent:
                 return "", False
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"].strip().upper()
-            for cat in ["SAFETY", "MEDICAL", "EMPATHETIC"]:
+            for cat in ["MEDICAL_ANALYSIS", "MEDICAL_ADVICE", "SYSTEM_QUERY", "EMPATHETIC_CHAT"]:
                 if cat in content:
                     return f"ROUTING_TARGET: {cat}", True
-            return "ROUTING_TARGET: EMPATHETIC", True
+            return "ROUTING_TARGET: EMPATHETIC_CHAT", True
         except Exception as e:
             log.error("[ROUTER_GROQ_ERROR] Exception: %s", e)
             return "", False
 
     def _local_classify(self, user_message: str) -> str:
         msg = user_message.lower()
-        if any(w in msg for w in ["làm thế nào", "lam the nao", "giải thích", "giai thich", "tại sao", "tai sao", "how", "explain", "why"]):
-            return "ROUTING_TARGET: EMPATHETIC"
-        if any(w in msg for w in ["lidar", "va chạm", "ngăn chặn", "ngã", "fall", "obstacle", "va cham", "an toan", "an toàn", "ánh sáng", "anh sang", "lux", "light"]):
-            return "ROUTING_TARGET: SAFETY"
-        elif any(w in msg for w in ["vital", "sinh tồn", "nhịp tim", "tim mạch", "huyết áp", "sốt", "đau", "bệnh", "thuốc", "y tế", "nhip tim", "huyet ap", "sot", "dau", "benh", "thuoc", "y te"]):
-            return "ROUTING_TARGET: MEDICAL"
-        return "ROUTING_TARGET: EMPATHETIC"
+        if any(w in msg for w in ["ping", "sensor", "cảm biến", "cam bien", "kết nối", "ket noi", "scan", "thiết bị", "thiet bi", "hardware", "phần cứng"]):
+            return "ROUTING_TARGET: SYSTEM_QUERY"
+        if any(w in msg for w in ["đau", "sốt", "ho", "mệt", "bệnh", "chấn thương", "bị thương", "first aid", "sơ cứu", "dau", "sot", "benh", "phát ban", "phat ban", "bỏng", "bong"]):
+            return "ROUTING_TARGET: MEDICAL_ADVICE"
+        if any(w in msg for w in ["chỉ số", "nhịp tim", "spo2", "huyết áp", "nhiệt độ", "sinh hiệu", "vitals", "chi so", "nhip tim", "huyet ap", "nhiep do"]):
+            return "ROUTING_TARGET: MEDICAL_ANALYSIS"
+        return "ROUTING_TARGET: EMPATHETIC_CHAT"
 
     async def close(self):
         if self._client:
