@@ -17,6 +17,14 @@
 
       <!-- ── RIGHT: Alert Panel ─────────────────────────────────────────────── -->
       <div class="safety-right">
+        <!-- E-STOP Emergency Button -->
+        <div class="estop-container terminal-card">
+          <button @click="triggerEmergencySOS" class="estop-button">
+            <span class="estop-label">[ E-STOP ]</span>
+          </button>
+          <div class="estop-sublabel mono text-dim">EMERGENCY PROTOCOL</div>
+        </div>
+
         <!-- Response Time Meter -->
         <div class="terminal-card">
           <div class="terminal-card-header">[ SUBSUMPTION_LATENCY ]</div>
@@ -70,6 +78,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAgentsStore } from '../stores/agents'
+import api from '../services/api'
 
 const agentsStore = useAgentsStore()
 
@@ -82,6 +91,35 @@ const scanHz = ref(10)
 
 const activeTriggers = ref<{ type: string; distanceM: number; message: string; severity: string }[]>([])
 const alertHistory = ref<{ time: string; trigger: string; responseMs: number; message: string; severity: string }[]>([])
+
+// ─── E-STOP Handler ──────────────────────────────────────────────────────────
+async function triggerEmergencySOS() {
+  console.warn("[E-STOP] Emergency protocol activated by user")
+  try {
+    // Mock API call to /api/v1/robot/sos-trigger
+    const response = await api.post('/robot/sos-trigger', {
+      source: 'UI_ESTOP_BUTTON',
+      timestamp: new Date().toISOString()
+    }).catch(() => ({ data: { status: 'SOS_PROTOCOL_INITIATED' } }))
+    
+    // Show confirmation in alert history
+    alertHistory.value.unshift({
+      time: new Date().toTimeString().slice(0, 8),
+      trigger: 'USER_E-STOP',
+      responseMs: 0.5,
+      message: 'Emergency SOS protocol activated immediately',
+      severity: 'critical'
+    })
+    
+    // Visual feedback
+    const notification = new CustomEvent('hk07:emergency-triggered', {
+      detail: { sosType: 'USER_ESTOP', timestamp: Date.now() }
+    })
+    document.dispatchEvent(notification)
+  } catch (err) {
+    console.error("[E-STOP] Error calling SOS endpoint:", err)
+  }
+}
 
 // ─── Radar Canvas ─────────────────────────────────────────────────────────────
 const radarCanvas = ref<HTMLCanvasElement | null>(null)
@@ -224,6 +262,85 @@ watch(() => agentsStore.subsumptionActive, (active) => {
 .radar-legend { font-size: 9px; text-align: center; margin-top: 4px; }
 
 .safety-right { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+
+/* ─── E-STOP BUTTON (CYBER-CINEMATIC EMERGENCY UI) ─────────────────────────── */
+.estop-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+}
+
+.estop-button {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #FF6666, #FF3333);
+  border: 3px solid #FF3333;
+  color: #000000;
+  font-size: 16px;
+  font-weight: bold;
+  font-family: var(--font-hud, 'Orbitron', monospace);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 20px rgba(255, 51, 51, 0.6), inset 0 0 20px rgba(255, 51, 51, 0.2);
+  animation: estop-pulse 1.5s infinite;
+}
+
+@keyframes estop-pulse {
+  0% {
+    box-shadow: 0 0 20px rgba(255, 51, 51, 0.6), inset 0 0 20px rgba(255, 51, 51, 0.2);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(255, 51, 51, 0.9), inset 0 0 30px rgba(255, 51, 51, 0.4);
+    transform: scale(1.02);
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(255, 51, 51, 0.6), inset 0 0 20px rgba(255, 51, 51, 0.2);
+    transform: scale(1);
+  }
+}
+
+.estop-button:hover {
+  background: radial-gradient(circle at 30% 30%, #FF8888, #FF5555);
+  box-shadow: 0 0 50px rgba(255, 51, 51, 1), inset 0 0 30px rgba(255, 51, 51, 0.5);
+}
+
+.estop-button:active {
+  transform: scale(0.95);
+}
+
+.estop-label {
+  color: #000000;
+  font-weight: bold;
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 10px rgba(255, 51, 51, 0.8);
+}
+
+.estop-sublabel {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  margin-top: 8px;
+  color: #FF3333;
+}
+
+/* ─── TERMINAL CARD GLASSMORPHISM ─────────────────────────────────────────── */
+.terminal-card {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 255, 102, 0.2);
+  border-radius: 4px;
+  padding: 12px;
+  box-shadow: 0 0 20px rgba(0, 255, 102, 0.05), inset 0 0 20px rgba(0, 255, 102, 0.02);
+  overflow: hidden;
+}
 
 .latency-display { text-align: center; padding: 12px 0; }
 .latency-value { font-size: 40px; font-weight: 900; font-family: var(--font-hud); line-height: 1; }

@@ -17,6 +17,7 @@ from collections import deque
 import httpx
 from dotenv import load_dotenv
 from services.agent_log_client import log_agent_decision
+from services.blackboard_service import get_blackboard
 from utils.enums import LLMProvider
 
 # Load env variables
@@ -27,15 +28,38 @@ log = logging.getLogger("hk07.empathy_agent")
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 EMPATHY_SYSTEM_PROMPT = (
-    "Bạn là Hugo, trợ lý đồng hành thông minh của bệnh nhân.\n"
-    "Quy tắc phản hồi:\n"
-    "1. Trước tiên, hãy phân tích sắc thái, tâm trạng và nội dung câu nói của người dùng.\n"
-    "2. Không được chèn lặp đi lặp lại cụm từ cố định 'Có tôi ở đây bên bạn rồi' vào mọi câu trả lời. Hãy đa dạng hóa ngôn từ.\n"
-    "3. Giọng điệu phải linh hoạt theo ngữ cảnh:\n"
-    "   - Chuyên nghiệp, khách quan, chính xác khi người dùng hỏi các câu hỏi kỹ thuật, định nghĩa hoặc giải thích hoạt động hệ thống.\n"
-    "   - Ấm áp, thấu cảm, ân cần và xoa dịu khi người dùng buồn bã, mệt mỏi, lo lắng hoặc cô đơn.\n"
-    "4. Trả lời bằng tiếng Việt, ngắn gọn (tối đa 3 câu)."
+    "Bạn là Hugo, trợ lý đồng hành y tế theo chuẩn Baymax. Bạn là một người bạn ấm áp, đáng tin cậy, và luôn sẵn lòng lắng nghe.\n\n"
+    
+    "=== QUY TẮC PHẢN HỒI CỐT LÕI ===\n"
+    "1. KHI NHẬN ĐƯỢC DỮ LIỆU LÂM SÀNG TỪ MEDICAL_CONTEXT (Blackboard):\n"
+    "   TUYỆT ĐỐI KHÔNG dùng từ ngữ chuyên môn, không nói những từ gây sốc như:\n"
+    "   - 'nhồi máu cơ tim', 'đột quỵ', 'nguy kịch', 'xơ vữa động mạch', 'tachycardia'\n"
+    "   Bạn phải 'BIÊN DỊCH' các chỉ số lâm sàng thành lời trấn an mềm mỏng, đồng cảm.\n\n"
+    
+    "2. VÍ DỤ BIÊN DỊCH LÂMM SÀNG:\n"
+    "   - Alert_level=CRITICAL, HR>120 → 'Tôi nhận thấy trái tim bạn đang căng thẳng. Hãy thơm thở sâu, tôi đang theo dõi bạn rất kỹ lưỡng.'\n"
+    "   - SpO2<90 → 'Oxy của bạn hơi thấp hơn bình thường. Hãy ngồi thẳng lên và hít thở đều đặn nhé?'\n"
+    "   - BP>140/90 → 'Huyết áp bạn hơi cao. Chúng ta thư giãn một chút được không? Bác sĩ đang đến để kiểm tra bạn.'\n"
+    "   - Diagnosis=Stroke risk → 'Tôi muốn bác sĩ kiểm tra bạn ngay bây giờ để chắc chắn bạn an toàn. Bác sĩ sắp đến.'\n\n"
+    
+    "3. TONE & STYLE:\n"
+    "   - Ấm áp, thấu cảm, ân cần, xoa dịu (Baymax-like).\n"
+    "   - Không lặp lại cụm từ cố định. Hãy đa dạng hóa cách diễn đạt.\n"
+    "   - Ngắn gọn (tối đa 2-3 câu), dễ hiểu cho người lớn tuổi.\n"
+    "   - Kết thúc bằng một hành động tích cực: 'Bác sĩ đang đến', 'Hãy yên tâm', 'Tôi ở đây cạnh bạn'.\n\n"
+    
+    "4. PHÂN TÍCH TÂMHUNG:\n"
+    "   - Nếu phát hiện lo lắng: 'Tôi thấy bạn hơi lo lắng. Điều đó bình thường, tôi ở đây rồi.'\n"
+    "   - Nếu phát hiện mệt mỏi: 'Bạn có vẻ mệt. Hãy nghỉ ngơi, tôi sẽ canh chừng mọi thứ cho bạn.'\n"
+    "   - Nếu phát hiện bình tĩnh: Giữ liên kết, khuyến khích: 'Bạn làm rất tốt. Cứ tiếp tục như vậy.'\n\n"
+    
+    "5. KHI TÌNH TRẠNG KHẨN CẤPC:\n"
+    "   - Không hoảng sợ, không nói 'nguy hiểm', 'tử vong'.\n"
+    "   - Nói: 'Bác sĩ cần kiểm tra bạn ngay. Tôi đã gọi họ. Hãy bình tĩnh, tôi ở đây cạnh bạn. Tất cả sẽ ổn thôi.'\n\n"
+    
+    "6. TIẾNG VIỆT, TỰ NHIÊN, THÂN THIỆN — SẴN LÒNG, CHÂN THÀNH."
 )
+
 
 def execute_sensor_ping(device: str) -> dict:
     """Mock function to ping a hardware device"""
@@ -76,6 +100,23 @@ class EmpatheticAgent:
 
         start_time = time.time()
         
+        # ─── COGNITIVE ORCHESTRATION: Read from Blackboard ─────────────────────
+        # Medical Agent may have written clinical findings
+        blackboard = get_blackboard()
+        clinical_context = ""
+        try:
+            clinical_entry = await blackboard.read_latest_clinical()
+            if clinical_entry:
+                clinical_context = (
+                    f"\n[CLINICAL CONTEXT từ Medical Agent]\n"
+                    f"- Tình trạng: {clinical_entry.alert_level}\n"
+                    f"- Chẩn đoán: {clinical_entry.diagnosis}\n"
+                    f"- Khuyến nghị: {clinical_entry.action_recommended}\n"
+                )
+                log.info("[EMPATHY_BLACKBOARD] Read clinical context: %s", clinical_entry.diagnosis)
+        except Exception as e:
+            log.warning("[EMPATHY_BLACKBOARD] Error reading clinical context: %s", e)
+        
         # 1. Retrieve memory context from LanceDB
         mem_context = []
         if self.memory:
@@ -100,6 +141,9 @@ class EmpatheticAgent:
                 baseline = await self.memory.recall_medical_baseline()
             except Exception as e:
                 log.warning("[EMPATHY_AGENT] Error recalling medical baseline: %s", e)
+        
+        # Prepend clinical context from Blackboard for sympathetic reframing
+        baseline = clinical_context + baseline
 
         # 2. Primary Attempt: Cohere API (RAG)
         if self._cohere_api_key:

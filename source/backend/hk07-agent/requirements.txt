@@ -16,3 +16,7 @@ anyio==4.4.0
 opencv-python-headless==4.10.0.82
 # MediaPipe for face landmark detection (CPU-only, optimized for i5-6300U)
 mediapipe==0.10.14
+# Redis async support for Blackboard Service
+redis==5.0.1
+# LiteLLM for unified LLM provider interface & Tool Calling
+litellm==1.35.0

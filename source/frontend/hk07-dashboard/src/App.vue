@@ -184,6 +184,26 @@ onUnmounted(() => {
   50% { opacity: 0.6; }
 }
 
+/* ─── GLOBAL GLASSMORPHISM STYLING ──────────────────────────────────────────── */
+.terminal-card {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 255, 102, 0.2);
+  border-radius: 4px;
+  box-shadow: 0 0 20px rgba(0, 255, 102, 0.05), inset 0 0 20px rgba(0, 255, 102, 0.02);
+}
+
+.terminal-card-header {
+  font-family: var(--font-hud, 'Orbitron', monospace);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #00FF66;
+  text-transform: uppercase;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0, 255, 102, 0.15);
+  margin-bottom: 8px;
+}
+
 /* SOS Overlay */
 .sos-overlay-modal {
   position: fixed;

@@ -20,6 +20,7 @@ import httpx
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from services.agent_log_client import log_agent_decision
+from services.blackboard_service import get_blackboard, ClinicalEntry
 from utils.enums import LLMProvider
 
 # Load env variables
@@ -260,6 +261,20 @@ class MedicalAgent:
                     }
 
                     self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
+
+                    # ─── COGNITIVE ORCHESTRATION: Write to Blackboard ──────────────────
+                    # Empathetic Agent will read this to compose sympathetic responses
+                    blackboard = get_blackboard()
+                    clinical_entry = ClinicalEntry(
+                        timestamp=triggered_at,
+                        alert_level=analysis.get("alert_level", "NORMAL"),
+                        vitals=agg,
+                        diagnosis=analysis.get("summary", ""),
+                        action_recommended=analysis.get("action", ""),
+                        confidence_score=0.85
+                    )
+                    await blackboard.write_clinical(clinical_entry)
+                    log.info("[MEDICAL_BLACKBOARD] Wrote clinical findings: %s", clinical_entry.diagnosis)
 
                     await log_agent_decision(
                         agent_type="MEDICAL",

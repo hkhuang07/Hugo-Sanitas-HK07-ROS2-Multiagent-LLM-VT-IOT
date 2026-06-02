@@ -24,7 +24,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from agents.agent_orchestrator import AgentOrchestrator
+from agents.agent_orchestrator_v2 import AgentOrchestratorV2
 from arbitrator.arbitrator import Arbitrator
 from memory.lance_memory import LanceMemory
 from services.agent_log_client import start_log_client, stop_log_client
@@ -46,7 +46,7 @@ log = logging.getLogger("hk07.main")
 # ─── Global Orchestrator & Memory Setup ─────────────────────────────────────
 memory = LanceMemory()
 arbitrator = Arbitrator()
-orchestrator = AgentOrchestrator(memory=memory, arbitrator=arbitrator)
+orchestrator = AgentOrchestratorV2(memory=memory, arbitrator=arbitrator)
 
 
 @asynccontextmanager
@@ -139,22 +139,39 @@ async def sync_profile(body: dict):
 
 @app.post("/agents/empathetic/interact")
 async def empathetic_interact(body: dict):
-    """Unified interaction endpoint utilizing Supervisor Router and Agent Orchestrator"""
+    """Unified interaction endpoint utilizing Cognitive Orchestrator with Tool Calling"""
     message = body.get("message", "")
     if not message:
         return {"error": "message field is required"}
     
-    # Retrieve current cached vitals to pass for medical/routing context
+    # Retrieve current cached vitals to pass for orchestration context
     latest_vitals = orchestrator.medical_agent.latest_vitals
     
-    # Run orchestrator routing and state processing
+    # Run cognitive orchestrator with Tool Calling
     state = await orchestrator.route_and_execute(message, latest_vitals)
     
+    # Compose response aggregating all agent outputs
+    agent_responses = []
+    for tool_name, output in state["outputs"].items():
+        if tool_name != "_error":
+            agent_responses.append({
+                "agent": tool_name,
+                "response": output
+            })
+    
+    # Primary response: prefer medical findings if available
+    primary_response = state["outputs"].get("analyze_clinical_symptoms", 
+                       state["outputs"].get("speak_empathetic_response",
+                       state["outputs"].get("search_medical_guidelines",
+                       state["outputs"].get("fallback", "Unable to process"))))
+    
     return {
-        "agent": state["current_agent"],
-        "response": state["output"],
+        "agents_invoked": state["current_agents"],
+        "primary_response": primary_response,
+        "all_responses": agent_responses,
         "alert_level": state["alert_level"],
-        "action": state["action"]
+        "actions": state["actions"],
+        "orchestration_note": state["raw_orchestration_response"]
     }
 
 
