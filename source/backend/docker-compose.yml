@@ -22,10 +22,10 @@ services:
     restart: unless-stopped
     networks: [hk07-net]
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-HK040103}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD not set (see .env.example)}
       MYSQL_DATABASE: ${DB_DATABASE:-hk07db}
       MYSQL_USER: ${DB_USERNAME:-hk07user}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-HK040103}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set (see .env.example)}
     volumes:
       - mariadb-data:/var/lib/mysql
     ports:
@@ -68,16 +68,19 @@ services:
     container_name: hk07-mosquitto
     restart: unless-stopped
     networks: [hk07-net]
+    environment:
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
+    entrypoint: ["/bin/sh", "/mosquitto/config/docker-entrypoint.sh"]
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./docker/mosquitto/passwd:/mosquitto/config/passwd
+      - ./docker/mosquitto/docker-entrypoint.sh:/mosquitto/config/docker-entrypoint.sh
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
     ports:
       - "1883:1883"
       - "9001:9001"
     healthcheck:
-      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-u", "hk07core", "-P", "hk07mqtt2026", "-i", "healthcheck", "-W", "3"]
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-u", "hk07core", "-P", "${MQTT_PASSWORD}", "-i", "healthcheck", "-W", "3"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -92,9 +95,12 @@ services:
     container_name: hk07-mosquitto-replica
     restart: unless-stopped
     networks: [hk07-net]
+    environment:
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
+    entrypoint: ["/bin/sh", "/mosquitto/config/docker-entrypoint.sh"]
     volumes:
       - ./docker/mosquitto/replica.conf:/mosquitto/config/mosquitto.conf
-      - ./docker/mosquitto/passwd:/mosquitto/config/passwd
+      - ./docker/mosquitto/docker-entrypoint.sh:/mosquitto/config/docker-entrypoint.sh
     ports:
       - "1884:1883"
     depends_on:
@@ -119,16 +125,16 @@ services:
       DB_PORT: 3306
       DB_DATABASE: ${DB_DATABASE:-hk07db}
       DB_USERNAME: ${DB_USERNAME:-hk07user}
-      DB_PASSWORD: ${DB_PASSWORD:-HK040103}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set (see .env.example)}
       REDIS_HOST: hk07-redis
       REDIS_PORT: 6379
       MQTT_BROKER_URL: tcp://hk07-mosquitto:1883
       MQTT_USERNAME: hk07core
-      MQTT_PASSWORD: hk07mqtt2026
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
       AGENT_ENGINE_URL: http://hk07-agent:8889
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      JWT_SECRET: ${JWT_SECRET:-hk07-dev-secret-change-in-production-min-32-chars}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET not set (see .env.example)}
       JAVA_OPTS: "-Xmx512m -Xms128m -XX:+UseZGC -XX:+UseStringDeduplication"
     # [P0-2] depends_on with condition: service_healthy (not just started)
     depends_on:
@@ -157,7 +163,7 @@ services:
       MQTT_BROKER_HOST: hk07-mosquitto
       MQTT_BROKER_PORT: 1883
       MQTT_USERNAME: hk07agent
-      MQTT_PASSWORD: hk07mqtt2026
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       HK07_CORE_URL: http://hk07-core:8888

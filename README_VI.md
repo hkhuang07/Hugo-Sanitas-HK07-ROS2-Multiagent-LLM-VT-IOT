@@ -138,7 +138,7 @@ source/
 ├── backend/
 │   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
 │   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
-│   └── docker/             ← Mosquitto + PostgreSQL configs
+│   └── docker/             ← Mosquitto + MariaDB configs
 ├── frontend/
 │   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
 └── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
@@ -174,7 +174,7 @@ docker ps
 export MQTT_BROKER_HOST=localhost
 export MQTT_BROKER_PORT=1883
 export MQTT_USERNAME=hk07sim
-export MQTT_PASSWORD=hk07mqtt2026
+export MQTT_PASSWORD=...   # dùng đúng giá trị MQTT_PASSWORD đã khai báo trong source/backend/.env
 
 # Khởi động Node Sensor Fusion (OpenCV Camera)
 cd source/sensors/vision_sensor
@@ -283,7 +283,7 @@ python trigger_emergency_button.py
 |---------|-----------|---------|
 | Mosquitto | 32MB | MQTT Broker |
 | Redis | 64MB | Lag Compensation Buffer |
-| PostgreSQL | 128MB | Persistent Health Records |
+| MariaDB | 128MB | Persistent Health Records |
 | hk07-core | 512MB | Spring Boot (JVM: -Xmx512m) |
 | hk07-agent | 256MB | Python Multi-Agent |
 | **Total** | **~615MB** | ✅ Safe on WSL2 4GB |

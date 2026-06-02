@@ -9,7 +9,7 @@
 **Solution**: Bổ sung cờ `isUnmounted` và kiểm tra `if (isUnmounted) return` ngay đầu hàm `drawEcg()` và `drawRadar()`.
 
 ## 2. Race Conditions & Connection Bottleneck (Agent Log Pipeline)
-**Vulnerability**: `AgentLogService.java` sử dụng `@Async` cho từng Log riêng lẻ. Khi Python Agent Client xả (flush) 10 logs cùng lúc, Spring Boot sinh ra 10 Virtual Threads đồng thời truy cập DB. Với connection pool giới hạn của PostgreSQL (20 connections), nếu nhiều Agents cùng xả rác, pool sẽ cạn kiệt, gây thắt cổ chai và Transaction Timeout. 
+**Vulnerability**: `AgentLogService.java` sử dụng `@Async` cho từng Log riêng lẻ. Khi Python Agent Client xả (flush) 10 logs cùng lúc, Spring Boot sinh ra 10 Virtual Threads đồng thời truy cập DB. Với connection pool giới hạn của MariaDB (HikariCP), nếu nhiều Agents cùng xả rác, pool sẽ cạn kiệt, gây thắt cổ chai và Transaction Timeout. 
 Thêm vào đó, ở phía Python, `_flush_buffer` đang dùng vòng lặp `for entry in batch: await self._http.post(...)` tuần tự, làm tắc nghẽn luồng Async Event Loop nếu backend chậm.
 **Solution**: 
 - (Spring Boot) Thay thế lưu đơn lẻ bằng `saveAll(logs)` theo Batch. 

@@ -34,10 +34,10 @@ log = logging.getLogger("hk07_fusion")
 IP_DIEN_THOAI = "10.129.151.70"
 CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
 
-MQTT_BROKER = "localhost"
-MQTT_PORT = 1883
-MQTT_USER = "hk07sim"
-MQTT_PASS = "hk07mqtt2026"
+MQTT_BROKER = os.getenv("MQTT_BROKER_HOST", "localhost")
+MQTT_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
+MQTT_USER = os.getenv("MQTT_USERNAME", "hk07sim")
+MQTT_PASS = os.getenv("MQTT_PASSWORD", "")
 
 PRIMARY_TOPIC = "hk07/vitals/wristband"
 COMPAT_TOPIC = "hk07/sensors/wristband/wristband-sim-001/vitals"

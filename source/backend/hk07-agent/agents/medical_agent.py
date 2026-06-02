@@ -152,7 +152,7 @@ class MedicalAgent:
         broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
         self._mqtt = mqtt.Client(client_id="medical-agent", protocol=mqtt.MQTTv311)
         mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
-        mqtt_pass = os.getenv("MQTT_PASSWORD", "hk07mqtt2026")
+        mqtt_pass = os.getenv("MQTT_PASSWORD", "")
         if mqtt_user:
             self._mqtt.username_pw_set(mqtt_user, mqtt_pass)
         self._mqtt.connect_async(broker_host, broker_port, keepalive=30)

@@ -36,12 +36,22 @@
 ### Infrastructure (Docker)
 - [x] `docker-compose.yml` — 5 services, total RAM budget ~615MB
 - [x] `mosquitto.conf` — max_queued_messages=100, persistence=false
-- [x] `init.sql` — PostgreSQL schema: users, health_records, agent_logs, safety_alerts
+- [x] `init.sql` — MariaDB schema: users, health_records, agent_logs, safety_alerts
 
 ### System Design Docs
 - [x] `shared/dto-definitions.md` — Java + TypeScript DTOs
 - [x] `shared/enums.md` — All system enums
 - [x] `backend/api-design.md` — REST + WebSocket + MQTT topology
+
+---
+
+## 🅜0 Foundation Hardening (2026-06-02)
+Milestone bảo mật & nhất quán nền tảng (không đổi logic chức năng):
+- [x] **Thống nhất DB = MariaDB** trong toàn bộ docs/diagram (gỡ nhầm lẫn PostgreSQL).
+- [x] **Gỡ secret hardcode** (`DB_PASSWORD=HK040103`, MQTT password, JWT dev secret) khỏi `application.yml`, `docker-compose.yml`, agent & sensor scripts → biến môi trường.
+- [x] **`.env.example`** cho backend + frontend (mọi biến đều có template, `.env` đã được gitignore).
+- [x] **MQTT auth bắt buộc** — `docker-entrypoint.sh` sinh `passwd` từ `$MQTT_PASSWORD` lúc khởi động (primary + replica), `allow_anonymous false`. Đã test: auth pub/sub OK, anonymous & sai mật khẩu bị từ chối.
+- [x] **Externalize frontend endpoints** — xác nhận code dùng `VITE_API_URL` / `VITE_WS_URL`, bổ sung `.env.example`.
 
 ---
 
