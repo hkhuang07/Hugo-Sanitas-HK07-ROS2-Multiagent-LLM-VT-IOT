@@ -15,7 +15,7 @@ The identity and medical baseline management flow follows a secure, high-integri
        v
 [Java Spring Boot Backend (Source of Truth)]
        |
-       |-- 2. Validate & Persist (PostgreSQL)
+       |-- 2. Validate & Persist (MariaDB)
        |-- 3. Generate Recovery Codes
        |-- 4. Push Real-time Webhook
        v

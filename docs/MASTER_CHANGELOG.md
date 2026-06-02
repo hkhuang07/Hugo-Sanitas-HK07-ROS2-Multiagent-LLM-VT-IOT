@@ -108,7 +108,7 @@
 ### DevOps & Deployment
 - [x] `Dockerfile` (Frontend): Multi-stage Vite build into an Alpine Nginx container.
 - [x] `nginx.conf`: Proxies `/api` and `/ws` to the Spring Boot core, handles Vue history mode routing.
-- [x] `docker-compose.yml`: Fully unified deployment script. Launches Mosquitto, Redis, Postgres, Spring Boot Core, Python Agent Engine, Vue Dashboard (Nginx), and Headless Webots Simulation with a single command.
+- [x] `docker-compose.yml`: Fully unified deployment script. Launches Mosquitto, Redis, MariaDB, Spring Boot Core, Python Agent Engine, Vue Dashboard (Nginx), and Headless Webots Simulation with a single command.
 
 ## System Evolution & Red Teaming (Auto-Patching)
 **Thực thi:** 2026-05-31 — EVOLUTION PROTOCOL

@@ -60,7 +60,7 @@ A next-generation healthcare robot companion — assisting in daily life through
          │  WebSocket/REST │   MQTT/WebSocket     │ MQTT
          ▼                 ▼                      ▼
 ┌────────────────┐  ┌─────────────┐  ┌───────────────────────┐
-│   PostgreSQL   │  │    Redis    │  │  Eclipse Mosquitto    │
+│    MariaDB     │  │    Redis    │  │  Eclipse Mosquitto    │
 │   (Persist)    │  │  (Buffer)   │  │  MQTT Broker :1883    │
 └────────────────┘  └─────────────┘  └───────────────────────┘
                                               ▲
@@ -141,7 +141,7 @@ source/
 ├── backend/
 │   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
 │   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
-│   └── docker/             ← Mosquitto + PostgreSQL configs
+│   └── docker/             ← Mosquitto + MariaDB configs
 ├── frontend/
 │   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
 └── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
@@ -179,7 +179,7 @@ To run simulation and robotics edge nodes against the Docker stack, configure th
 export MQTT_BROKER_HOST=localhost
 export MQTT_BROKER_PORT=1883
 export MQTT_USERNAME=hk07sim
-export MQTT_PASSWORD=hk07mqtt2026
+export MQTT_PASSWORD=...   # use the same MQTT_PASSWORD value defined in source/backend/.env
 
 # Start OpenCV Camera Sensor Fusion Node
 cd source/sensors/vision_sensor

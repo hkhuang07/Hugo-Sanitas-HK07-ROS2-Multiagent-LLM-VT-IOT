@@ -21,8 +21,8 @@ app = Flask(__name__)
 # Configurations
 MQTT_BROKER = os.getenv("MQTT_BROKER_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-MQTT_USER = "hk07sim"
-MQTT_PASS = "hk07mqtt2026"
+MQTT_USER = os.getenv("MQTT_USERNAME", "hk07sim")
+MQTT_PASS = os.getenv("MQTT_PASSWORD", "")
 
 DEVICE_ID = "wristband-sim-001"
 VITALS_TOPIC = f"hk07/sensors/wristband/{DEVICE_ID}/vitals"

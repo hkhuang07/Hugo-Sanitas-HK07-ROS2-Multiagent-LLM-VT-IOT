@@ -545,7 +545,7 @@ Laptop của bạn không có GPU NVIDIA rời (Chỉ có card onboard Intel HD 
 
 ### 5. Tầng Hạ tầng & Triển khai (Infrastructure & Devops)
 
-* **Docker & Docker Compose:** Cực kỳ hữu ích. Bạn dùng Docker trên WSL2 để đóng gói các dịch vụ bổ trợ như: **Eclipse Mosquitto** (Làm MQTT Broker nhận dữ liệu từ mạch ảo Wokwi), **Redis** (Làm bộ nhớ đệm lưu trạng thái robot), và Database nhẹ như **PostgreSQL** hoặc **SQLite**.
+* **Docker & Docker Compose:** Cực kỳ hữu ích. Bạn dùng Docker trên WSL2 để đóng gói các dịch vụ bổ trợ như: **Eclipse Mosquitto** (Làm MQTT Broker nhận dữ liệu từ mạch ảo Wokwi), **Redis** (Làm bộ nhớ đệm lưu trạng thái robot), và Database nhẹ. *(Triển khai thực tế của HK-07 dùng **MariaDB 11.2** — nhẹ RAM, tối ưu cho ràng buộc phần cứng.)*
 * **Kubernetes (K8s) & Terraform/GitOps:** Ở giai đoạn R&D trên máy 8GB RAM này, **tuyệt đối không cài Minikube hay K8s Local**. Thay vào đó, bạn hãy viết sẵn các file cấu hình cấu trúc hạ tầng dưới dạng mã nguồn (**Infrastructure as Code**): Viết file **Terraform**, file cấu hình **Helm Chart**, **ArgoCD** manifest. Bạn lưu trữ chúng trong Repo Git. Bản chất các file này chỉ là text, không tốn tài nguyên máy để chạy, nhưng nó chứng minh tư duy DevOps hệ thống vẹn toàn của bạn cho dự án khi cần mang đi thuyết trình.
 
 ---
