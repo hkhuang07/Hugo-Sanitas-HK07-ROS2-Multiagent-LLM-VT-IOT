@@ -1,6 +1,18 @@
 <template>
   <header class="hud-header">
     <div class="header-left">
+      <!-- Hamburger Toggle — emits 'toggle-sidebar' to App.vue -->
+      <button
+        class="hamburger-btn"
+        @click="emit('toggle-sidebar')"
+        :title="'Toggle Sidebar'"
+        aria-label="Toggle sidebar navigation"
+      >
+        <span class="ham-bar"></span>
+        <span class="ham-bar"></span>
+        <span class="ham-bar"></span>
+      </button>
+
       <img src="/images/main_logo.jpg" alt="Logo" class="logo-img" />
       <img src="/images/logo_name.jpg" alt="Logo Name" class="logo-name-img" />
       <span class="terminal-id">[ TERMINAL: HUGO-SANITAS-HK07 ]</span>
@@ -40,6 +52,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useVitalsStore } from '../stores/vitals'
 import { useAgentsStore } from '../stores/agents'
+
+const emit = defineEmits<{ (e: 'toggle-sidebar'): void }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -192,5 +206,37 @@ function handleLogout() {
 .logout-btn:hover {
   background: var(--color-accent-red);
   color: var(--color-bg-void);
+}
+
+/* ─── Hamburger Button ─────────────────────────────────────────────────────── */
+.hamburger-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  height: 30px;
+  width: 30px;
+}
+.hamburger-btn:hover {
+  border-color: var(--color-border-dim);
+  background: rgba(0, 82, 255, 0.08);
+  box-shadow: 0 0 6px rgba(0, 82, 255, 0.3);
+}
+.hamburger-btn:hover .ham-bar {
+  background: var(--color-border-blue);
+}
+.ham-bar {
+  display: block;
+  width: 16px;
+  height: 2px;
+  background: var(--color-text-dim);
+  transition: background 0.2s ease;
+  flex-shrink: 0;
 }
 </style>

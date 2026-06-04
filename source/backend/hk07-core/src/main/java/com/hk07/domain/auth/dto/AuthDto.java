@@ -79,4 +79,11 @@ public class AuthDto {
         @NotBlank @Size(min = 8, max = 128)
         private String newPassword;
     }
+
+    @Data
+    public static class PinLoginRequest {
+        @NotBlank @Size(min = 8, max = 8)
+        private String pin;
+    }
 }
+

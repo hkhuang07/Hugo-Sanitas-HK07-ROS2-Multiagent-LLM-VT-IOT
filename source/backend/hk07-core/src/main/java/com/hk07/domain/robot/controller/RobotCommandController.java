@@ -72,6 +72,17 @@ public class RobotCommandController {
     @PostMapping("/command/sos")
     @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OWNER','OPERATOR','EMERGENCY_CONTACT')")
     public ResponseEntity<ApiResponse<Void>> dispatchSos(Authentication auth, HttpServletRequest request) {
+        return dispatchSosInternal(auth, request);
+    }
+
+    /** E-STOP uplink from SafetyView — same SOS dispatch as /command/sos */
+    @PostMapping("/sos-trigger")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('OWNER','OPERATOR','EMERGENCY_CONTACT')")
+    public ResponseEntity<ApiResponse<Void>> sosTrigger(Authentication auth, HttpServletRequest request) {
+        return dispatchSosInternal(auth, request);
+    }
+
+    private ResponseEntity<ApiResponse<Void>> dispatchSosInternal(Authentication auth, HttpServletRequest request) {
         UUID actorId = UUID.fromString(auth.getName());
         String role = auth.getAuthorities().stream().findFirst().map(GrantedAuthority::getAuthority).orElse("UNKNOWN").replace("ROLE_", "");
         robotCommandService.recordSosDispatch(actorId, role, request.getRemoteAddr());

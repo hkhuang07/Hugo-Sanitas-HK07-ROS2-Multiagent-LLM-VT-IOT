@@ -12,4 +12,6 @@ import java.util.UUID;
 public interface RecoveryCodeRepository extends JpaRepository<RecoveryCodeEntity, UUID> {
     List<RecoveryCodeEntity> findByUserId(UUID userId);
     Optional<RecoveryCodeEntity> findByUserIdAndCodeAndUsed(UUID userId, String code, boolean used);
+    Optional<RecoveryCodeEntity> findFirstByCodeAndUsed(String code, boolean used);
 }
+

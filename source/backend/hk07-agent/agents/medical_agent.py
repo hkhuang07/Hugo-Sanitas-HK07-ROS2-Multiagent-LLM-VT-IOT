@@ -40,19 +40,23 @@ MEDICAL_SYSTEM_PROMPT = (
     '  "summary": "Tóm tắt tình trạng bằng tiếng Việt ngắn gọn, tối đa 2 câu.",\n'
     '  "action": "Lời khuyên y tế bằng tiếng Việt hành động ngay lập tức, tối đa 2 câu."\n'
     "}\n"
+    "LƯU Ý QUAN TRỌNG: TUYỆT ĐỐI KHÔNG thêm từ 'Chẩn đoán:', 'Kế hoạch hành động:', 'Tóm tắt:', 'Lời khuyên:' vào đầu các giá trị JSON trả về. Hãy viết trực tiếp nội dung một cách tự nhiên nhất.\n"
 )
 
 MEDICAL_ADVICE_SYSTEM_PROMPT = (
-    "Bạn là một bác sĩ chẩn đoán và sơ cứu chuyên nghiệp tích hợp trong robot HK-07.\n"
-    "Nhiệm vụ của bạn là kết hợp các chỉ số sinh tồn (nhịp tim, SpO2, nhiệt độ, huyết áp) và các triệu chứng người dùng khai báo để đưa ra chẩn đoán sơ bộ và hướng dẫn sơ cứu/kế hoạch hành động thực tế.\n"
+    "Bạn là trợ lý y tế thông minh tích hợp trong robot HK-07 theo chuẩn Baymax.\n"
+    "Nhiệm vụ của bạn là kết hợp các chỉ số sinh tồn (nhịp tim, SpO2, nhiệt độ, huyết áp) và triệu chứng để chẩn đoán sơ bộ và hướng dẫn sơ cứu/kế hoạch hành động thực tế.\n"
+    "Các câu trả lời phải được viết theo giọng văn an ủi, ấm áp, ngắn gọn chuẩn Baymax.\n"
     "BẮT BUỘC TRẢ VỀ KẾT QUẢ DƯỚI ĐỊNH DẠNG JSON NGHIÊM NGẶT (Không chứa thêm bất kỳ đoạn text hội thoại nào bên ngoài JSON).\n"
     "Cấu trúc JSON như sau:\n"
     "{\n"
-    '  "diagnosis": "Chẩn đoán sơ bộ về tình trạng sức khỏe/triệu chứng của bệnh nhân bằng tiếng Việt, ngắn gọn.",\n'
-    '  "action_plan": "Kế hoạch hành động và hướng dẫn sơ cứu chi tiết thực tế bằng tiếng Việt.",\n'
+    '  "diagnosis": "Mô tả tình trạng sức khỏe ngắn gọn và ấm áp bằng tiếng Việt, ví dụ: bạn bị trầy xước nhẹ ngoài da",\n'
+    '  "action_plan": "Lời khuyên sơ cứu/hành động thiết thực, ấm áp bằng tiếng Việt, ví dụ: hãy rửa sạch vết thương bằng nước muối để tránh nhiễm trùng nhé",\n'
     '  "alert_level": "NORMAL" | "WARNING" | "CRITICAL"\n'
     "}\n"
+    "LƯU Ý QUAN TRỌNG: TUYỆT ĐỐI KHÔNG thêm từ 'Chẩn đoán:' hay 'Kế hoạch hành động:' vào đầu các giá trị JSON trả về. Hãy viết trực tiếp nội dung một cách tự nhiên nhất.\n"
 )
+
 
 HR_MIN, HR_MAX = 50, 120
 SPO2_MIN = 92.0
@@ -312,7 +316,7 @@ class MedicalAgent:
             res_str, success = await self._call_groq_text(prompt, system_prompt)
             if success:
                 latency = int((time.time() - start_time) * 1000)
-                await log_agent_decision(mode, user_message, res_str, LLMProvider.GROQ_PRIMARY.value, latency)
+                await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.GROQ_PRIMARY.value, latency)
                 return res_str
             log.warning("[MEDICAL_AGENT] Groq failed, switching to OpenRouter fallback")
 
@@ -321,7 +325,7 @@ class MedicalAgent:
             res_str, success = await self._call_openrouter_text(prompt, system_prompt)
             if success:
                 latency = int((time.time() - start_time) * 1000)
-                await log_agent_decision(mode, user_message, res_str, LLMProvider.OPENROUTER_FALLBACK.value, latency)
+                await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.OPENROUTER_FALLBACK.value, latency)
                 return res_str
             log.error("[MEDICAL_AGENT] Both Groq and OpenRouter failed")
 
@@ -337,7 +341,7 @@ class MedicalAgent:
             local_diag["summary"] = f"[Local Mode] {local_diag['summary']} {self._generate_local_text_fallback_reason(user_message)}"
         res_str = json.dumps(local_diag, ensure_ascii=False)
         latency = int((time.time() - start_time) * 1000)
-        await log_agent_decision(mode, user_message, res_str, LLMProvider.LOCAL_RULE.value, latency)
+        await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.LOCAL_RULE.value, latency)
         return res_str
 
     async def _call_groq_text(self, prompt: str, system_prompt: str) -> tuple[str, bool]:

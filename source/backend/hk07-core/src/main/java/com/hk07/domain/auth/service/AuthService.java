@@ -70,6 +70,27 @@ public class AuthService {
         return buildTokenResponse(user);
     }
 
+    /** Authenticate with device PIN (recovery code) */
+    @Transactional
+    public AuthDto.TokenResponse pinLogin(AuthDto.PinLoginRequest req) {
+        RecoveryCodeEntity codeEntity = recoveryCodeRepository
+                .findFirstByCodeAndUsed(req.getPin(), false)
+                .orElseThrow(() -> new BadCredentialsException("Invalid or expired PIN code"));
+
+        codeEntity.setUsed(true);
+        recoveryCodeRepository.save(codeEntity);
+
+        UserEntity user = codeEntity.getUser();
+
+        // Update last seen timestamp
+        userRepository.updateLastSeen(user.getId(), LocalDateTime.now());
+
+        log.info("[AUTH_PIN_LOGIN] Successful PIN login for user: {}", user.getEmail());
+
+        return buildTokenResponse(user);
+    }
+
+
     /** Register a new user (OWNER role by default) */
     @Transactional
     public AuthDto.TokenResponse register(AuthDto.RegisterRequest req) {

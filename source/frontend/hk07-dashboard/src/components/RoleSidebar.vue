@@ -1,59 +1,95 @@
 <template>
   <aside class="sidebar-panel corner-reticle">
+
+    <!-- ─── SIDEBAR HEADER (always visible) ──────────────────────────── -->
     <div class="sidebar-header">
       <span class="text-cyan font-bold text-xs">[ TACTICAL_CONSOLE ]</span>
-      <span class="role-badge">{{ authStore.user?.role }}</span>
+      <span v-if="authStore.isAuthenticated" class="role-badge">{{ authStore.user?.role }}</span>
+      <span v-else class="role-badge role-badge--locked">LOCKED</span>
     </div>
 
-    <!-- Minimal Tactical Navigation -->
-    <div class="terminal-card">
-      <div class="terminal-card-header">[ MENU_NAVIGATION ]</div>
-      <div class="nav-links">
-        <router-link to="/" class="sidebar-nav-item" active-class="active">
-          <span class="index text-dim">[00]</span> DYNAMIC_TELEMETRY
-        </router-link>
-        <router-link to="/companion" class="sidebar-nav-item" active-class="active">
-          <span class="index text-dim">[01]</span> COMPANION_UPLINK
-        </router-link>
-        <router-link to="/agents" class="sidebar-nav-item" active-class="active">
-          <span class="index text-dim">[02]</span> AGENT_SYSTEM_LOG
-        </router-link>
-        <router-link to="/safety" class="sidebar-nav-item" active-class="active">
-          <span class="index text-dim">[03]</span> SAFETY_COORDINATES
-        </router-link>
-        <router-link to="/history" class="sidebar-nav-item" active-class="active">
-          <span class="index text-dim">[04]</span> HISTORICAL_METRICS
-        </router-link>
-        <router-link to="/profile" class="sidebar-nav-item" active-class="active">
-          <span class="index text-dim">[05]</span> PROFILE_SETTINGS
-        </router-link>
+    <!-- ─── NOT AUTHENTICATED — Public / Login prompt ────────────────── -->
+    <div v-if="!authStore.isAuthenticated" class="auth-required-block terminal-card">
+      <div class="terminal-card-header text-orange">
+        [ AUTH_REQUIRED ]
       </div>
-    </div>
-
-    <!-- Active Session & Uptime Status -->
-    <div class="terminal-card">
-      <div class="terminal-card-header">[ SYSTEM_STATUS ]</div>
-      <div class="status-grid mono text-[9px]">
-        <div class="status-row">
-          <span class="label">NODE:</span>
-          <span class="val text-cyan">HK07_STATION</span>
+      <div class="auth-msg mono">
+        <div class="text-dim text-[9px] mb-2">
+          &gt;&gt;&gt; [ACCESS_DENIED] System console locked.<br />
+          &gt;&gt;&gt; Authentication required to access tactical menu.
         </div>
-        <div class="status-row">
-          <span class="label">LATENCY:</span>
-          <span class="val text-green">1.2ms (SLA)</span>
-        </div>
-        <div class="status-row">
-          <span class="label">UPLINK:</span>
-          <span :class="vitalsStore.isConnected ? 'text-green' : 'text-orange'">
-            {{ vitalsStore.isConnected ? 'CONNECTED' : 'STANDBY' }}
-          </span>
+        <div class="auth-nav-links">
+          <router-link to="/login" class="sidebar-nav-item auth-cta">
+            <span class="index text-orange">[--]</span> LOGIN_UPLINK
+          </router-link>
+          <router-link to="/emergency" class="sidebar-nav-item auth-emergency">
+            <span class="index text-red">[!!]</span> EMERGENCY_ACCESS
+          </router-link>
         </div>
       </div>
     </div>
 
+    <!-- ─── AUTHENTICATED — Full system menu ─────────────────────────── -->
+    <template v-else>
+      <!-- Navigation Menu -->
+      <div class="terminal-card">
+        <div class="terminal-card-header">[ MENU_NAVIGATION ]</div>
+        <div class="nav-links">
+          <router-link to="/" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[00]</span> DYNAMIC_TELEMETRY
+          </router-link>
+          <router-link to="/companion" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[01]</span> COMPANION_UPLINK
+          </router-link>
+          <router-link to="/agents" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[02]</span> AGENT_SYSTEM_LOG
+          </router-link>
+          <router-link to="/safety" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[03]</span> SAFETY_COORDINATES
+          </router-link>
+          <router-link to="/history" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[04]</span> HISTORICAL_METRICS
+          </router-link>
+          <router-link to="/profile" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[05]</span> PROFILE_SETTINGS
+          </router-link>
+        </div>
+      </div>
+
+      <!-- Active Session & Uptime Status -->
+      <div class="terminal-card">
+        <div class="terminal-card-header">[ SYSTEM_STATUS ]</div>
+        <div class="status-grid mono text-[9px]">
+          <div class="status-row">
+            <span class="label">NODE:</span>
+            <span class="val text-cyan">HK07_STATION</span>
+          </div>
+          <div class="status-row">
+            <span class="label">OPERATOR:</span>
+            <span class="val text-cyan" style="font-size:8px; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              {{ authStore.user?.email || 'N/A' }}
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="label">LATENCY:</span>
+            <span class="val text-green">1.2ms (SLA)</span>
+          </div>
+          <div class="status-row">
+            <span class="label">UPLINK:</span>
+            <span :class="vitalsStore.isConnected ? 'text-green' : 'text-orange'">
+              {{ vitalsStore.isConnected ? 'CONNECTED' : 'STANDBY' }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Footer status (always visible) -->
     <div class="sidebar-status-block">
-      <span class="text-dim text-[8px]">[ CONSOLE_ACTIVE ]</span>
-      <span class="blink-dot text-green text-[8px]">●</span>
+      <span class="text-dim text-[8px]">
+        {{ authStore.isAuthenticated ? '[ CONSOLE_ACTIVE ]' : '[ CONSOLE_LOCKED ]' }}
+      </span>
+      <span :class="['blink-dot text-[8px]', authStore.isAuthenticated ? 'text-green' : 'text-orange']">●</span>
     </div>
   </aside>
 </template>
@@ -96,6 +132,40 @@ const vitalsStore = useVitalsStore()
   border-radius: 2px;
   font-weight: bold;
   font-size: 8px;
+}
+.role-badge--locked {
+  color: var(--color-accent-orange) !important;
+  background: rgba(255, 102, 0, 0.15) !important;
+  border: 1px solid rgba(255, 102, 0, 0.3);
+}
+
+/* AUTH REQUIRED block */
+.auth-required-block {
+  border: 1px solid rgba(255, 102, 0, 0.3);
+  background: rgba(255, 102, 0, 0.04);
+}
+.auth-msg {
+  margin-top: 6px;
+  line-height: 1.6;
+}
+.auth-nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+.auth-cta {
+  color: var(--color-accent-orange) !important;
+  border-color: rgba(255, 102, 0, 0.3) !important;
+}
+.auth-cta:hover {
+  background: rgba(255, 102, 0, 0.08) !important;
+}
+.auth-emergency {
+  color: var(--color-accent-red) !important;
+}
+.auth-emergency:hover {
+  background: rgba(255, 51, 51, 0.08) !important;
 }
 .nav-links {
   display: flex;

@@ -97,12 +97,39 @@ class AgentOrchestrator:
             elif target == "MEDICAL_ADVICE":
                 res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ADVICE")
                 try:
+                    import re
                     res_json = json.loads(res)
                     diagnosis = res_json.get("diagnosis", "")
                     action_plan = res_json.get("action_plan", "")
-                    state["output"] = f"Chẩn đoán: {diagnosis}\nKế hoạch hành động: {action_plan}"
                     state["alert_level"] = res_json.get("alert_level", "WARNING")
                     state["action"] = "MEDICAL_FIRST_AID"
+
+                    # Strip technical prefix labels (e.g. "Chẩn đoán:", "Kế hoạch hành động:")
+                    def clean_medical_text(text: str) -> str:
+                        if not text:
+                            return ""
+                        text = re.sub(r'^(chẩn đoán|kế hoạch hành động|kế hoạch|chẩn đoán y tế|chỉ số|lời khuyên|sơ cứu|diagnosis|action_plan|action|plan|advice|warning|critical|normal|hướng dẫn|chăm sóc|chăm sóc y tế|chú ý)[:\-\s]*', '', text, flags=re.IGNORECASE)
+                        return text.strip()
+
+                    diag = clean_medical_text(diagnosis)
+                    act = clean_medical_text(action_plan)
+
+                    if diag and act:
+                        if not (diag.startswith("Ồ") or diag.startswith("Ôi") or diag.startswith("Tôi")):
+                            diag_prefix = "Ồ, "
+                        else:
+                            diag_prefix = ""
+                        diag_clean = diag_prefix + diag[0].lower() + diag[1:] if len(diag) > 1 else diag
+                        act_clean = act[0].upper() + act[1:] if len(act) > 1 else act
+                        state["output"] = f"{diag_clean}. {act_clean} Tôi ở đây nếu bạn cần."
+                    elif act:
+                        act_clean = act[0].upper() + act[1:] if len(act) > 1 else act
+                        state["output"] = f"{act_clean} Tôi ở đây nếu bạn cần."
+                    elif diag:
+                        diag_clean = diag[0].upper() + diag[1:] if len(diag) > 1 else diag
+                        state["output"] = f"{diag_clean}. Tôi ở đây nếu bạn cần."
+                    else:
+                        state["output"] = "Tôi ở đây nếu bạn cần."
                 except Exception:
                     state["output"] = res
                     state["alert_level"] = "WARNING"

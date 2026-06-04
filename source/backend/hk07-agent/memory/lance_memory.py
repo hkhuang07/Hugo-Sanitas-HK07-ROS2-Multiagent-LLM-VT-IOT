@@ -248,3 +248,45 @@ class LanceMemory:
             log.error("[LANCE_MEMORY_RETRIEVE_ERROR] %s", e)
             return []
 
+    async def search_similar_patterns(self, query: str, limit: int = 3) -> list[dict]:
+        """
+        Search for similar patterns in owner memory using text-based matching.
+        Avoids heavy embedding models to preserve memory and CPU resource limits.
+        """
+        if not self._initialized or not self._table:
+            return []
+        try:
+            df = await asyncio.to_thread(self._table.to_pandas)
+            if df.empty:
+                return []
+            
+            # Simple keyword matching on the content field (case-insensitive)
+            keywords = [kw for kw in query.lower().split() if len(kw) > 1]
+            if not keywords:
+                return []
+                
+            # Score each row based on keyword frequency
+            def calculate_score(content: str) -> int:
+                if not content:
+                    return 0
+                content_lower = content.lower()
+                return sum(1 for kw in keywords if kw in content_lower)
+                
+            df["score"] = df["content"].apply(calculate_score)
+            
+            # Filter matches and sort by score descending, then timestamp_ms descending
+            df_matches = df[df["score"] > 0]
+            if df_matches.empty:
+                return []
+                
+            df_sorted = df_matches.sort_values(
+                by=["score", "timestamp_ms"], 
+                ascending=[False, False]
+            ).head(limit)
+            
+            return df_sorted.to_dict(orient="records")
+        except Exception as e:
+            log.error("[LANCE_MEMORY_SEARCH_ERROR] %s", e)
+            return []
+
+

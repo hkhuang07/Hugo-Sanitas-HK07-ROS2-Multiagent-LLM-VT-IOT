@@ -2,11 +2,7 @@
 EmpatheticAgent — Tầng 2 trong Subsumption Architecture
 
 Giao tiếp thấu cảm và chăm sóc tâm lý với chủ nhân.
-Mô hình sử dụng:
-- Primary: Cohere API (Lợi thế cực mạnh về RAG) truy vấn từ LanceDB memory
-- Fallback: Gemini API (Gemini 1.5 Flash)
-- Cuối cùng: Local Rule-based
-System Prompt đóng vai Hugo (Trợ lý y tế), giọng điệu ấm áp, ngắn gọn.
+Giọng điệu linh hoạt theo ngữ cảnh (ấm áp khi trò chuyện, chuyên nghiệp khi trả lời kỹ thuật).
 """
 
 import asyncio
@@ -14,17 +10,11 @@ import logging
 import os
 import time
 from collections import deque
-import httpx
-from dotenv import load_dotenv
 from services.agent_log_client import log_agent_decision
 from utils.enums import LLMProvider
-
-# Load env variables
-load_dotenv()
+from services.llm_client import LLMClient, EMPATHY_TIERS, SYSTEM_QUERY_TIERS, VISION_TIERS
 
 log = logging.getLogger("hk07.empathy_agent")
-
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 EMPATHY_SYSTEM_PROMPT = (
     "Bạn là Hugo, trợ lý đồng hành thông minh của bệnh nhân.\n"
@@ -37,6 +27,7 @@ EMPATHY_SYSTEM_PROMPT = (
     "4. Trả lời bằng tiếng Việt, ngắn gọn (tối đa 3 câu)."
 )
 
+
 def execute_sensor_ping(device: str) -> dict:
     """Mock function to ping a hardware device"""
     return {"status": "ONLINE", "latency": "12ms"}
@@ -44,6 +35,7 @@ def execute_sensor_ping(device: str) -> dict:
 def execute_vital_scan() -> dict:
     """Mock function to scan vitals sensors"""
     return {"status": "SCAN_COMPLETE", "message": "Đã ép lấy mẫu cảm biến"}
+
 
 class EmpatheticAgent:
     MAX_TURNS = 10
@@ -53,27 +45,17 @@ class EmpatheticAgent:
         self.arbitrator = arbitrator
         self._status = "INITIALIZING"
         self._history = deque(maxlen=self.MAX_TURNS * 2)
-        self._cohere_api_key = os.getenv("COHERE_API_KEY", "")
-        self._gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-        self._client = None
 
     async def run_loop(self):
         self._status = "ACTIVE"
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         log.info("[EMPATHY_AGENT] Active — Tầng 2")
         try:
             while True:
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             pass
-        finally:
-            if self._client:
-                await self._client.aclose()
 
     async def process_text_interaction(self, user_message: str) -> str:
-        if not self._client:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-
         start_time = time.time()
         
         # 1. Retrieve memory context from LanceDB
@@ -101,101 +83,114 @@ class EmpatheticAgent:
             except Exception as e:
                 log.warning("[EMPATHY_AGENT] Error recalling medical baseline: %s", e)
 
-        # 2. Primary Attempt: Cohere API (RAG)
-        if self._cohere_api_key:
-            content, success = await self._call_cohere(user_message, documents, baseline)
-            if success:
-                latency = int((time.time() - start_time) * 1000)
-                await self._log_interaction(user_message, content, LLMProvider.COHERE_PRIMARY.value, latency)
-                return content
-            log.warning("[EMPATHY_AGENT] Cohere failed — switching to Gemini fallback")
+        # Construct prompt history
+        history_str = ""
+        for h in self._history:
+            role = "HK-07" if h["role"] == "assistant" else "User"
+            history_str += f"{role}: {h['content']}\n"
+        context_str = "\n".join([f"- {d['text']}" for d in documents])
+        
+        system_instruction = EMPATHY_SYSTEM_PROMPT
+        if baseline:
+            system_instruction = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_instruction}"
 
-        # 3. Fallback Attempt: Gemini API
-        if self._gemini_api_key:
-            content, success = await self._call_gemini(user_message, mem_context, baseline)
-            if success:
-                latency = int((time.time() - start_time) * 1000)
-                await self._log_interaction(user_message, content, LLMProvider.GEMINI_FALLBACK.value, latency)
-                return content
-            log.error("[EMPATHY_AGENT] Both Cohere and Gemini unavailable")
+        # Fetch latest clinical data from Blackboard (Shared Context)
+        from services.blackboard_service import get_blackboard
+        latest_clinical = await get_blackboard().read_latest_clinical()
+        if latest_clinical:
+            diag_clean = latest_clinical.diagnosis
+            act_clean = latest_clinical.action_recommended
+            system_instruction = (
+                f"Thông tin y tế thô mới nhận từ Medical Agent:\n"
+                f"- Mức độ cảnh báo (Alert): {latest_clinical.alert_level}\n"
+                f"- Chẩn đoán (Diagnosis): {diag_clean}\n"
+                f"- Hướng dẫn/Kế hoạch (Action plan): {act_clean}\n\n"
+                f"BẮT BUỘC:\n"
+                f"1. Lồng ghép thông tin sức khỏe trên một cách khéo léo vào câu trả lời để tạo thành một lời phản hồi duy nhất, liền mạch, ấm áp và tự nhiên (chuẩn trợ lý chăm sóc Baymax).\n"
+                f"2. TUYỆT ĐỐI KHÔNG sử dụng các từ tiêu đề kỹ thuật hay nhãn như 'Chẩn đoán:', 'Kế hoạch hành động:', 'Tình trạng:', 'Hướng dẫn:' trong câu trả lời.\n"
+                f"3. TUYỆT ĐỐI KHÔNG thêm các câu chuyển tiếp vụng về hoặc thừa thãi, lặp đi lặp lại (như 'Bạn đang gặp phải tình trạng bình thường...'). Câu trả lời phải trôi chảy, tự nhiên và an ủi.\n"
+                f"4. Nếu chỉ số sinh tồn hoàn toàn bình thường, hãy thông báo ngắn gọn một cách nhẹ nhàng, ấm áp mà không quá cường điệu.\n\n"
+                f"{system_instruction}"
+            )
+
+        prompt = (
+            f"Ký ức quá khứ của bệnh nhân:\n{context_str}\n\n"
+            f"Lịch sử hội thoại:\n{history_str}\n"
+            f"User: {user_message}\nHugo:"
+        )
+
+        content, provider = await LLMClient.generate_completion(
+            prompt=prompt,
+            tiers=EMPATHY_TIERS,
+            system_prompt=system_instruction,
+            temperature=0.3,
+            max_tokens=1024,
+            timeout=12
+        )
+
+        if content:
+            import re
+            content = re.sub(r'^(chẩn đoán|kế hoạch hành động|kế hoạch|chẩn đoán y tế|chỉ số|lời khuyên|sơ cứu|diagnosis|action_plan|action|plan|advice|warning|critical|normal|hướng dẫn|chăm sóc|chăm sóc y tế|chú ý)[:\-\s]*', '', content.strip(), flags=re.IGNORECASE)
+            latency = int((time.time() - start_time) * 1000)
+            await self._log_interaction(user_message, content, provider, latency)
+            return content
 
         # 4. Local Rule-Based fallback
         content = self._generate_local_fallback(user_message)
         latency = int((time.time() - start_time) * 1000)
-        await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
+        await self._log_interaction(user_message, content, "LOCAL_RULES", latency)
         return content
 
     async def process_system_query(self, user_message: str) -> str:
         """Processes hardware/connectivity queries with Tool Calling"""
-        if not self._client:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-
         start_time = time.time()
 
-        if not self._gemini_api_key:
-            content = self._local_system_query_fallback(user_message)
-            latency = int((time.time() - start_time) * 1000)
-            await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
-            return content
-
-        tools = [{
-            "functionDeclarations": [
-                {
+        tools_schema = [
+            {
+                "type": "function",
+                "function": {
                     "name": "execute_sensor_ping",
                     "description": "Ping a specific hardware device/sensor (e.g. wristband, lidar, imu, camera) to check connectivity and latency.",
                     "parameters": {
-                        "type": "OBJECT",
+                        "type": "object",
                         "properties": {
                             "device": {
-                                "type": "STRING",
+                                "type": "string",
                                 "description": "The name of the device or sensor to ping."
                             }
                         },
                         "required": ["device"]
                     }
-                },
-                {
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "execute_vital_scan",
                     "description": "Trigger a manual scan of the vital signs sensors.",
                     "parameters": {
-                        "type": "OBJECT",
+                        "type": "object",
                         "properties": {}
                     }
                 }
-            ]
-        }]
+            }
+        ]
 
-        contents = [{"role": "user", "parts": [{"text": user_message}]}]
+        result, provider = await LLMClient.generate_tool_call(
+            prompt=user_message,
+            tiers=SYSTEM_QUERY_TIERS,
+            tools=tools_schema,
+            temperature=0.1,
+            max_tokens=256,
+            timeout=10
+        )
 
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self._gemini_api_key}"
-            resp = await self._client.post(
-                url,
-                json={
-                    "contents": contents,
-                    "tools": tools
-                }
-            )
-            if resp.status_code != 200:
-                log.error(f"[SYSTEM_QUERY_GEMINI_ERROR] Status {resp.status_code} - Body: {resp.text}")
-                content = self._local_system_query_fallback(user_message)
-                latency = int((time.time() - start_time) * 1000)
-                await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
-                return content
-
-            res_json = resp.json()
-            candidate = res_json.get("candidates", [{}])[0]
-            parts = candidate.get("content", {}).get("parts", [])
-
-            function_call = None
-            for part in parts:
-                if "functionCall" in part:
-                    function_call = part["functionCall"]
-                    break
-
-            if function_call:
-                name = function_call.get("name")
-                args = function_call.get("args", {})
+        if result:
+            tool_calls = result.get("tool_calls", [])
+            if tool_calls:
+                tc = tool_calls[0]
+                name = tc.get("tool_name")
+                args = tc.get("parameters", {})
                 
                 result_dict = {}
                 if name == "execute_sensor_ping":
@@ -206,63 +201,55 @@ class EmpatheticAgent:
                 else:
                     result_dict = {"status": "ERROR", "message": "Unknown function"}
 
-                log.info(f"[SYSTEM_QUERY_TOOL] Executed {name} with args {args} -> {result_dict}")
+                log.info(f"[SYSTEM_QUERY_TOOL] Centralized LLM executed {name} with args {args} -> {result_dict}")
 
-                # Call Gemini again with the tool result to generate natural response
-                new_contents = [
-                    {
-                        "role": "user",
-                        "parts": [{"text": user_message}]
-                    },
-                    {
-                        "role": "model",
-                        "parts": [{"functionCall": function_call}]
-                    },
-                    {
-                        "role": "function",
-                        "parts": [{
-                            "functionResponse": {
-                                "name": name,
-                                "response": result_dict
-                            }
-                        }]
-                    }
-                ]
-
-                resp2 = await self._client.post(
-                    url,
-                    json={
-                        "contents": new_contents,
-                        "tools": tools
-                    }
+                # Call LLM again to generate a natural conversational presentation of the result
+                prompt_followup = (
+                    f"Người dùng hỏi: '{user_message}'.\n"
+                    f"Kết quả thực thi phần cứng: {result_dict}.\n"
+                    "Hãy trả lời người dùng một cách tự nhiên bằng tiếng Việt dựa trên kết quả trên, an ủi nếu có sự cố."
                 )
-                if resp2.status_code == 200:
-                    res2_json = resp2.json()
-                    final_text = res2_json.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-                    if final_text:
-                        content = final_text.strip()
-                        latency = int((time.time() - start_time) * 1000)
-                        await self._log_interaction(user_message, content, LLMProvider.GEMINI_FALLBACK.value, latency)
-                        return content
+                final_text, provider_text = await LLMClient.generate_completion(
+                    prompt=prompt_followup,
+                    tiers=SYSTEM_QUERY_TIERS,
+                    temperature=0.3,
+                    max_tokens=256,
+                    timeout=8
+                )
+                if final_text:
+                    latency = int((time.time() - start_time) * 1000)
+                    await self._log_interaction(user_message, final_text, provider_text, latency)
+                    return final_text
 
             else:
-                text = parts[0].get("text", "") if parts else ""
-                if text:
-                    content = text.strip()
+                raw_text = result.get("raw_response", "")
+                if raw_text:
                     latency = int((time.time() - start_time) * 1000)
-                    await self._log_interaction(user_message, content, LLMProvider.GEMINI_FALLBACK.value, latency)
-                    return content
+                    await self._log_interaction(user_message, raw_text, provider, latency)
+                    return raw_text
 
-        except Exception as e:
-            log.error("[SYSTEM_QUERY_ERROR] Exception: %s", e)
-
+        # Fallback to local rule based classification
         content = self._local_system_query_fallback(user_message)
         latency = int((time.time() - start_time) * 1000)
-        await self._log_interaction(user_message, content, LLMProvider.LOCAL_RULE.value, latency)
+        await self._log_interaction(user_message, content, "LOCAL_RULES", latency)
         return content
 
     def _local_system_query_fallback(self, user_message: str) -> str:
         msg = user_message.lower()
+        conceptual_kws = [
+            "như thế nào", "nhu the nao", "hoạt động thế nào", "hoat dong the nao",
+            "là gì", "la gi", "what is", "how does", "tại sao", "tai sao", "why",
+            "hoạt động ra sao", "hoat dong ra sao", "giải thích", "giai thich",
+            "tác dụng", "tac dung", "như nào", "nhu nao", "để làm gì", "de lam gi",
+            "thế nào", "the nao", "work", "explain", "about", "về", "info", "thông tin"
+        ]
+        is_concept = any(w in msg for w in conceptual_kws) or (
+            any(w in msg for w in ["lidar", "imu", "wristband", "camera"]) and
+            not any(w in msg for w in ["ping", "status", "check", "kiểm tra", "kiem tra", "kết nối", "ket noi", "trạng thái", "trang thai"])
+        )
+        if is_concept:
+            return "Tôi có thể giải thích về cảm biến này, nhưng hiện tại kết nối LLM đang gián đoạn nên tôi chưa thể trả lời chi tiết khái niệm này được."
+
         if any(w in msg for w in ["ping", "sensor", "cảm biến", "cam bien"]):
             device = "wristband"
             for d in ["lidar", "imu", "camera", "wristband"]:
@@ -276,79 +263,6 @@ class EmpatheticAgent:
         
         res = execute_sensor_ping("wristband")
         return f"Tôi đã tự động kiểm tra kết nối thiết bị Wristband. Trạng thái: {res['status']}, Độ trễ: {res['latency']}."
-
-    async def _call_cohere(self, user_message: str, documents: list, baseline: str = "") -> tuple[str, bool]:
-        history_str = ""
-        for h in self._history:
-            role = "HK-07" if h["role"] == "assistant" else "User"
-            history_str += f"{role}: {h['content']}\n"
-        context_str = "\n".join([f"- {d['text']}" for d in documents])
-        
-        system_instruction = EMPATHY_SYSTEM_PROMPT
-        if baseline:
-            system_instruction = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_instruction}"
-
-        prompt = (
-            f"System Instruction:\n{system_instruction}\n"
-            f"Ký ức quá khứ của bệnh nhân:\n{context_str}\n\n"
-            f"Lịch sử hội thoại:\n{history_str}\n"
-            f"User: {user_message}\nHugo:"
-        )
-        try:
-            resp = await self._client.post(
-                "https://api.cohere.com/v1/chat",
-                headers={
-                    "Authorization": f"Bearer {self._cohere_api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "command-r-08-2024",
-                    "message": prompt
-                }
-            )
-            if resp.status_code != 200:
-                log.error(f"[EMPATHY_COHERE_ERROR] Status {resp.status_code} - Body: {resp.text}")
-                return "", False
-            resp.raise_for_status()
-            content = resp.json()["text"]
-            return content.strip(), True
-        except Exception as e:
-            log.error("[EMPATHY_COHERE_ERROR] Exception: %s", e)
-            return "", False
-
-    async def _call_gemini(self, user_message: str, mem_context: list, baseline: str = "") -> tuple[str, bool]:
-        history_str = ""
-        for h in self._history:
-            role = "HK-07" if h["role"] == "assistant" else "User"
-            history_str += f"{role}: {h['content']}\n"
-        context_str = "\n".join([f"- {d['content']}" for d in mem_context])
-
-        system_instruction = EMPATHY_SYSTEM_PROMPT
-        if baseline:
-            system_instruction = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_instruction}"
-
-        prompt = (
-            f"System Instruction:\n{system_instruction}\n"
-            f"Ký ức quá khứ của bệnh nhân:\n{context_str}\n\n"
-            f"Lịch sử hội thoại:\n{history_str}\n"
-            f"User: {user_message}\nHugo:"
-        )
-        try:
-            resp = await self._client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self._gemini_api_key}",
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}]
-                }
-            )
-            if resp.status_code != 200:
-                log.error(f"[EMPATHY_GEMINI_ERROR] Status {resp.status_code} - Body: {resp.text}")
-                return "", False
-            resp.raise_for_status()
-            content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return content.strip(), True
-        except Exception as e:
-            log.error("[EMPATHY_GEMINI_ERROR] Exception: %s", e)
-            return "", False
 
     async def _log_interaction(self, user_message: str, content: str, provider: str, latency: int):
         self._history.append({"role": "user", "content": user_message})
@@ -371,6 +285,22 @@ class EmpatheticAgent:
 
     def _generate_local_fallback(self, user_message: str) -> str:
         msg = user_message.lower()
+        
+        # Conceptual hardware queries check
+        conceptual_kws = [
+            "như thế nào", "nhu the nao", "hoạt động thế nào", "hoat dong the nao",
+            "là gì", "la gi", "what is", "how does", "tại sao", "tai sao", "why",
+            "hoạt động ra sao", "hoat dong ra sao", "giải thích", "giai thich",
+            "tác dụng", "tac dung", "như nào", "nhu nao", "để làm gì", "de lam gi",
+            "thế nào", "the nao", "work", "explain", "about", "về", "info", "thông tin"
+        ]
+        is_concept = any(w in msg for w in conceptual_kws) or (
+            any(w in msg for w in ["lidar", "imu", "wristband", "camera", "subsumption"]) and
+            not any(w in msg for w in ["ping", "status", "check", "kiểm tra", "kiem tra", "kết nối", "ket noi", "trạng thái", "trang thai"])
+        )
+        if is_concept and any(w in msg for w in ["lidar", "imu", "wristband", "camera", "subsumption", "phần cứng", "phan cung", "cảm biến", "cam bien", "hệ thống", "he thong"]):
+            return "Tôi có thể giải thích về cảm biến này, nhưng hiện tại kết nối LLM đang gián đoạn nên tôi chưa thể trả lời chi tiết khái niệm này được."
+
         if any(w in msg for w in ["chào", "hello", "hi"]):
             return "Xin chào! Tôi là Hugo. Tôi có thể giúp gì cho bạn hôm nay?"
         elif any(w in msg for w in ["buồn", "mệt", "khóc", "buon", "met", "kho"]):
@@ -381,14 +311,13 @@ class EmpatheticAgent:
 
     async def execute_visual_scan(self, current_vitals: dict) -> str:
         """
-        Reads the latest_frame.jpg from buffer, encodes to Base64, and queries Gemini 1.5 Vision API
-        along with the patient's vitals context.
+        Reads the latest_frame.jpg from buffer, encodes to Base64, and queries the Vision API
+        using the centralized LLM client.
         """
         import base64
         
         image_path = "d:/Study/HK.Huang_Lab/hugo-sanitas-hk-07/hk-07/source/backend/hk07-agent/latest_frame.jpg"
         base64_data = ""
-        mime_type = "image/jpeg"
         
         if os.path.exists(image_path):
             try:
@@ -410,9 +339,8 @@ class EmpatheticAgent:
                 base64_data = base64.b64encode(buffer).decode("utf-8")
             except Exception as e:
                 log.error(f"[VISION_TOOL] OpenCV fallback generation failed: {e}")
-                # String fallback
                 base64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-
+ 
         # Get vitals context
         vitals_str = (
             f"Nhịp tim: {current_vitals.get('heartRate', 72)} bpm, "
@@ -420,7 +348,7 @@ class EmpatheticAgent:
             f"Nhiệt độ: {current_vitals.get('bodyTemperature', 36.6)} °C, "
             f"Huyết áp: {current_vitals.get('systolic', 120)}/{current_vitals.get('diastolic', 80)} mmHg."
         )
-
+ 
         prompt = (
             f"Chỉ số sinh hiệu hiện tại: {vitals_str}\n"
             "Hãy đóng vai bác sĩ cấp cứu của robot HK-07. Hãy quan sát màu da, biểu cảm khuôn mặt, "
@@ -428,54 +356,40 @@ class EmpatheticAgent:
             "chẩn đoán sức khỏe nhanh chóng và hướng dẫn sơ cứu thiết thực nhất bằng tiếng Việt."
         )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self._gemini_api_key}"
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inlineData": {
-                                "mimeType": mime_type,
-                                "data": base64_data
-                            }
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "maxOutputTokens": 300,
-                "temperature": 0.4
-            }
-        }
+        start_time = time.time()
+        response_text, provider = await LLMClient.generate_vision_completion(
+            prompt=prompt,
+            tiers=VISION_TIERS,
+            image_base64=base64_data,
+            max_tokens=300,
+            temperature=0.4,
+            timeout=15
+        )
 
-        try:
-            if not self._client:
-                self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-            
-            resp = await self._client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                response_text = data["contents"][0]["parts"][0]["text"]
-                log.info("[VISION_TOOL] Gemini Vision Scan complete.")
-                
-                # Log this scan interaction in the audit database
-                await self._log_interaction(
-                    user_message="[REQUEST_VISUAL_SCAN] Tiến hành quét hình ảnh cơ thể.",
-                    content=response_text,
-                    provider="GEMINI_1.5_VISION",
-                    latency=int((time.time() - time.time()) * 1000)
-                )
-                return response_text
-            else:
-                log.error(f"[VISION_TOOL_ERROR] Gemini Vision returned status {resp.status_code}: {resp.text}")
-                return "Phát hiện luồng camera hoạt động. Tuy nhiên liên kết Gemini Vision API gặp sự cố. Trạng thái cơ bản của bạn vẫn ở mức ổn định."
-        except Exception as ex:
-            log.error(f"[VISION_TOOL_ERROR] Exception: {ex}")
-            return "Không thể kết nối dịch vụ Gemini Vision để phân tích ảnh. Trạng thái cơ bản của bạn vẫn ở mức ổn định."
+        if response_text:
+            log.info(f"[VISION_TOOL] Centralized Vision scan completed via {provider}.")
+            latency = int((time.time() - start_time) * 1000)
+            await self._log_interaction(
+                user_message="[REQUEST_VISUAL_SCAN] Tiến hành quét hình ảnh cơ thể.",
+                content=response_text,
+                provider=provider,
+                latency=latency
+            )
+            return response_text
+        
+        # Unified error handling fallback response
+        err_msg = "Phát hiện luồng camera hoạt động. Tuy nhiên dịch vụ Vision API gặp sự cố. Trạng thái cơ bản của bạn vẫn ở mức ổn định."
+        latency = int((time.time() - start_time) * 1000)
+        await self._log_interaction(
+            user_message="[REQUEST_VISUAL_SCAN] Tiến hành quét hình ảnh cơ thể.",
+            content=err_msg,
+            provider="LOCAL_RULES",
+            latency=latency
+        )
+        return err_msg
 
     def get_status(self) -> dict:
-        return {"status": self._status, "turns": len(self._history) // 2}
+        return {"status": "ACTIVE", "turns": len(self._history) // 2}
 
     def clear_volatile_context(self):
         self._history.clear()

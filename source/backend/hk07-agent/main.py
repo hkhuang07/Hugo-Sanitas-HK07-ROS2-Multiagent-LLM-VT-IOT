@@ -14,7 +14,11 @@ import asyncio
 import logging
 import os
 import sys
+import warnings
 from contextlib import asynccontextmanager
+
+# Suppress unavoidable third-party Pydantic model namespace warnings
+warnings.filterwarnings("ignore", message='Field "model_name" has conflict with protected namespace "model_"')
 
 from dotenv import load_dotenv
 # Load environment variables
@@ -28,6 +32,9 @@ from agents.agent_orchestrator import AgentOrchestrator
 from arbitrator.arbitrator import Arbitrator
 from memory.lance_memory import LanceMemory
 from services.agent_log_client import start_log_client, stop_log_client
+from services.blackboard_service import get_blackboard
+
+
 
 # ─── Logging Configuration ──────────────────────────────────────────────────
 logging.basicConfig(
@@ -43,10 +50,21 @@ logging.basicConfig(
 )
 log = logging.getLogger("hk07.main")
 
+# ─── Feature Flags ────────────────────────────────────────────────────────────
+# Set USE_ORCHESTRATOR_V2=true in .env to enable parallel tool-calling router
+USE_ORCHESTRATOR_V2 = os.getenv("USE_ORCHESTRATOR_V2", "true").lower() == "true"
+
+if USE_ORCHESTRATOR_V2:
+    from agents.agent_orchestrator_v2 import AgentOrchestratorV2
+    log.info("[ENGINE] Feature flag USE_ORCHESTRATOR_V2=true — Cognitive Tool-Calling Router ACTIVE")
+
 # ─── Global Orchestrator & Memory Setup ─────────────────────────────────────
 memory = LanceMemory()
 arbitrator = Arbitrator()
 orchestrator = AgentOrchestrator(memory=memory, arbitrator=arbitrator)
+
+# Orchestrator V2 (parallel tool-calling) — instantiated only when flag is on
+orchestrator_v2 = AgentOrchestratorV2(memory=memory, arbitrator=arbitrator) if USE_ORCHESTRATOR_V2 else None
 
 
 @asynccontextmanager
@@ -147,15 +165,100 @@ async def empathetic_interact(body: dict):
     # Retrieve current cached vitals to pass for medical/routing context
     latest_vitals = orchestrator.medical_agent.latest_vitals
     
-    # Run orchestrator routing and state processing
-    state = await orchestrator.route_and_execute(message, latest_vitals)
+    # Run orchestrator routing and state processing based on V2 feature flag
+    if USE_ORCHESTRATOR_V2 and orchestrator_v2 is not None:
+        state = await orchestrator_v2.route_and_execute(message, latest_vitals)
+    else:
+        state = await orchestrator.route_and_execute(message, latest_vitals)
     
     return {
-        "agent": state["current_agent"],
-        "response": state["output"],
-        "alert_level": state["alert_level"],
-        "action": state["action"]
+        "agent": state.get("current_agent", "EMPATHETIC_CHAT"),
+        "response": state.get("output", ""),
+        "alert_level": state.get("alert_level", "NORMAL"),
+        "action": state.get("action", "COMPANION_CHAT")
     }
+
+
+# ─── Orchestrator V2 Endpoint ─────────────────────────────────────────────────
+@app.post("/api/v1/agents/v2/orchestrate")
+async def orchestrate_v2(body: dict):
+    """
+    Cognitive Orchestrator V2 — Parallel Tool-Calling Router.
+    Requires USE_ORCHESTRATOR_V2=true.
+    Body: { "message": str, "vitals": dict (optional) }
+    """
+    if not USE_ORCHESTRATOR_V2 or orchestrator_v2 is None:
+        return {"error": "Orchestrator V2 is disabled. Set USE_ORCHESTRATOR_V2=true in .env"}
+
+    message = body.get("message", "")
+    vitals  = body.get("vitals", {})
+    if not message:
+        return {"error": "message field is required"}
+
+    try:
+        state = await orchestrator_v2.route_and_execute(message, vitals)
+        return {
+            "orchestrator": "V2_TOOL_CALLING",
+            "agent": state.get("current_agent"),
+            "response": state.get("output"),
+            "alert_level": state.get("alert_level"),
+            "tools_invoked": state.get("tools_invoked", []),
+            "provider": state.get("provider", "UNKNOWN"),
+        }
+    except Exception as exc:
+        log.error("[V2_ORCHESTRATE] Error: %s", exc)
+        return {"error": str(exc)}
+
+
+# ─── Blackboard Inspect Endpoint ──────────────────────────────────────────────
+@app.get("/api/v1/agents/blackboard/inspect")
+async def blackboard_inspect():
+    """
+    Debug endpoint: inspect current Blackboard state.
+    Returns latest clinical, emotional and context entries + backend stats.
+    """
+    bb = get_blackboard()
+    stats = await bb.get_stats()
+
+    clinical  = await bb.read_latest_clinical()
+    emotional = await bb.read_latest_emotional()
+    context   = await bb.read_latest_context()
+
+    def _entry_to_dict(entry) -> dict:
+        if entry is None:
+            return None
+        from dataclasses import asdict
+        return asdict(entry)
+
+    return {
+        "backend": "redis" if bb._use_redis else "in_memory",
+        "stats": stats,
+        "latest_clinical":  _entry_to_dict(clinical),
+        "latest_emotional": _entry_to_dict(emotional),
+        "latest_context":   _entry_to_dict(context),
+    }
+
+
+# ─── Test Orchestrator Endpoint ───────────────────────────────────────────────
+@app.post("/api/v1/agents/test/orchestrator")
+async def test_orchestrator(body: dict):
+    """
+    Integration test endpoint: feed a synthetic message + vitals, get full
+    orchestrator state back (useful for frontend demo of MoA behavior).
+    Body: { "message": str, "vitals": dict (optional), "use_v2": bool }
+    """
+    message  = body.get("message", "Xin chào Hugo!")
+    vitals   = body.get("vitals", {})
+    use_v2   = body.get("use_v2", USE_ORCHESTRATOR_V2)
+
+    if use_v2 and orchestrator_v2 is not None:
+        state = await orchestrator_v2.route_and_execute(message, vitals)
+        state["orchestrator_version"] = "V2"
+    else:
+        state = await orchestrator.route_and_execute(message, vitals)
+        state["orchestrator_version"] = "V1"
+
+    return state
 
 
 if __name__ == "__main__":

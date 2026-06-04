@@ -3,11 +3,13 @@
     <NotificationToast />
     
     <!-- Standardized Header (Common Navbar) -->
-    <HeaderStatusStrip />
+    <HeaderStatusStrip @toggle-sidebar="toggleSidebar" />
     
     <!-- Main Area: Sidebar + Page Content -->
     <div :class="['app-layout-body', showSidebar ? 'has-sidebar' : '']">
-      <RoleSidebar v-if="showSidebar" />
+      <transition name="sidebar-slide">
+        <RoleSidebar v-if="showSidebar" />
+      </transition>
       <main class="app-main-content">
         <!-- Emergency banner visible on all pages when critical -->
         <div v-if="authStore.isAuthenticated && vitalsStore.isEmergency" class="emergency-banner">
@@ -61,8 +63,19 @@ const route = useRoute()
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
 
+// ── Sidebar Toggle State ───────────────────────────────────────────────────
+const sidebarOpen = ref(true)   // default open
+
+function toggleSidebar() {
+  sidebarOpen.value = !sidebarOpen.value
+}
+
+// Sidebar is visible when:
+//  - Not on the Login page (route name !== 'Login')
+//  - sidebarOpen toggle is true
+//  - NOTE: Sidebar itself handles auth gating internally (shows locked state when not authed)
 const showSidebar = computed(() => {
-  return authStore.isAuthenticated && route.name !== 'Login'
+  return route.name !== 'Login' && sidebarOpen.value
 })
 
 watch(() => authStore.isAuthenticated, (authed) => {
@@ -211,5 +224,21 @@ onUnmounted(() => {
   background: #ff3333;
   color: #000;
   box-shadow: 0 0 15px rgba(255, 51, 51, 0.8);
+}
+
+/* ─── Sidebar Slide Transition ──────────────────────────────────────────── */
+.sidebar-slide-enter-active,
+.sidebar-slide-leave-active {
+  transition: width 0.22s ease, opacity 0.18s ease;
+  overflow: hidden;
+}
+.sidebar-slide-enter-from,
+.sidebar-slide-leave-to {
+  width: 0 !important;
+  opacity: 0;
+}
+.sidebar-slide-enter-to,
+.sidebar-slide-leave-from {
+  opacity: 1;
 }
 </style>

@@ -126,3 +126,5 @@ source/robotics/log/
 *.wbt.bak
 
 .active_plan.tmp
+.aider*
+.command.md

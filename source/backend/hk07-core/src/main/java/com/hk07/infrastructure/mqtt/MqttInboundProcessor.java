@@ -2,8 +2,13 @@ package com.hk07.infrastructure.mqtt;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.hk07.domain.health.dto.VitalSignDto;
 import com.hk07.domain.health.service.HealthService;
+import com.hk07.domain.robot.service.RobotCommandService;
+import com.hk07.domain.safety.dto.LidarScanSnapshotDto;
+import com.hk07.domain.safety.service.SafetyTelemetryService;
+import com.hk07.common.enums.SystemState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.integration.annotation.MessageEndpoint;
@@ -31,6 +36,8 @@ public class MqttInboundProcessor {
 
     private final ObjectMapper objectMapper;
     private final HealthService healthService;
+    private final SafetyTelemetryService safetyTelemetryService;
+    private final RobotCommandService robotCommandService;
     private final SimpMessagingTemplate wsTemplate;
 
     @ServiceActivator(inputChannel = "mqttInboundChannel")
@@ -52,6 +59,8 @@ public class MqttInboundProcessor {
                 handleLidarScan(payload);
             } else if (topic.equals("hk07/sensors/imu/state")) {
                 handleImuState(payload);
+            } else if (topic.equals("hk07/control/subsumption/inhibit")) {
+                handleSubsumptionInhibit(payload);
             } else if (topic.startsWith("hk07/agents/")) {
                 handleAgentOutput(topic, payload);
             } else if (topic.equals("hk07/system/heartbeat")) {
@@ -86,16 +95,42 @@ public class MqttInboundProcessor {
     }
 
     private void handleLidarScan(String payload) {
-        log.debug("[LIDAR_SCAN] Received scan data ({}B)", payload.length());
-        // Phase-01 Safety: Forward to SafetyService → Subsumption check
-        // Broadcast raw scan to safety dashboard
-        wsTemplate.convertAndSend("/topic/safety-scan", payload);
+        LidarScanSnapshotDto snap = safetyTelemetryService.ingestScan(payload);
+        log.debug("[LIDAR_SCAN] min={}m threat={} live={}", snap.getMinDistanceM(), snap.getThreatLevel(), snap.isLive());
+        try {
+            wsTemplate.convertAndSend("/topic/safety-scan", objectMapper.writeValueAsString(snap));
+        } catch (JsonProcessingException e) {
+            wsTemplate.convertAndSend("/topic/safety-scan", payload);
+        }
     }
 
     private void handleImuState(String payload) {
         log.debug("[IMU_STATE] {}", payload);
-        // Phase-01 Safety: Fall detection logic
         wsTemplate.convertAndSend("/topic/safety-imu", payload);
+    }
+
+    /**
+     * Bridges SafetyAgent MQTT inhibit → WebSocket safety-alerts for dashboard.
+     */
+    private void handleSubsumptionInhibit(String payload) throws JsonProcessingException {
+        JsonNode data = objectMapper.readTree(payload);
+        String trigger = data.has("trigger") ? data.get("trigger").asText("UNKNOWN") : "UNKNOWN";
+        boolean active = !"CLEAR".equalsIgnoreCase(trigger);
+
+        if (active) {
+            robotCommandService.updateFromSubsumption(SystemState.SAFE_HOLD);
+        }
+
+        var alert = new java.util.LinkedHashMap<String, Object>();
+        alert.put("subsumptionActivated", active);
+        alert.put("triggerType", trigger);
+        if (data.has("distance_m")) alert.put("distanceM", data.get("distance_m").asDouble());
+        if (data.has("message")) alert.put("message", data.get("message").asText());
+        if (data.has("acceleration_g")) alert.put("accelerationG", data.get("acceleration_g").asDouble());
+        if (data.has("lux")) alert.put("lux", data.get("lux").asDouble());
+
+        wsTemplate.convertAndSend("/topic/safety-alerts", objectMapper.writeValueAsString(alert));
+        log.info("[SUBSUMPTION_INHIBIT] active={} trigger={}", active, trigger);
     }
 
     private void handleAgentOutput(String topic, String payload) {

@@ -31,7 +31,7 @@ log = logging.getLogger("hk07_fusion")
 # ─────────────────────────────────────────────────────────────────────────────
 # NETWORK & CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-IP_DIEN_THOAI = "10.129.151.70"
+IP_DIEN_THOAI = "10.95.238.125"
 CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
 
 MQTT_BROKER = os.getenv("MQTT_BROKER_HOST", "localhost")

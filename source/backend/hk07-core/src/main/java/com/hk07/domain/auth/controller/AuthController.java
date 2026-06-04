@@ -135,4 +135,33 @@ public class AuthController {
     public ResponseEntity<ApiResponse<String>> ping() {
         return ResponseEntity.ok(ApiResponse.ok("pong"));
     }
+
+    /**
+     * POST /api/v1/auth/pin-login
+     *
+     * Device PIN authentication — validates 8-character alphanumeric device PIN
+     * against the owner's stored recovery codes (same format: XXXXXXXX).
+     * If the PIN matches a recovery code, it is consumed and a token pair is returned.
+     *
+     * Body: { "pin": "0J6MLZNJ" }
+     */
+    @PostMapping("/pin-login")
+    public ResponseEntity<ApiResponse<AuthDto.TokenResponse>> pinLogin(
+            @RequestBody AuthDto.PinLoginRequest req,
+            HttpServletResponse response) {
+        AuthDto.TokenResponse tokenResponse = authService.pinLogin(req);
+        String refreshToken = tokenResponse.getRefreshToken();
+        tokenResponse.setRefreshToken(null);
+
+        ResponseCookie cookie = ResponseCookie.from("hk07_refresh_token", refreshToken)
+                .httpOnly(true)
+                .secure(false)
+                .sameSite("Strict")
+                .path("/api/v1/auth")
+                .maxAge(Duration.ofDays(7))
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+
+        return ResponseEntity.ok(ApiResponse.ok("Device PIN authentication successful", tokenResponse));
+    }
 }

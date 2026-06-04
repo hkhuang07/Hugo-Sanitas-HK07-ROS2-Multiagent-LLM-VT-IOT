@@ -56,4 +56,14 @@ api.interceptors.response.use(
   }
 )
 
+/** E-STOP — triggers emergency SOS protocol on the robot core */
+export function triggerRobotSosTrigger() {
+  return api.post('/robot/sos-trigger')
+}
+
+/** Latest LiDAR snapshot (360 bearings) from MQTT pipeline */
+export function fetchLidarSnapshot() {
+  return api.get<{ data: import('../types/safety').LidarScanSnapshot }>('/safety/lidar/snapshot')
+}
+
 export default api

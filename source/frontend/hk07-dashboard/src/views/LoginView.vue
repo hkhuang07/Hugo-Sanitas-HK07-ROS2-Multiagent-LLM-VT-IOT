@@ -101,17 +101,51 @@
         <div v-else-if="activeTab === 'pairing'" class="pairing-mockup text-center mono">
           <div class="pairing-scanner">
             <div class="scan-line"></div>
-            <span class="text-dim">WAITING FOR DEVICE SCAN...</span>
+            <span class="text-dim" v-if="!pinLoading">WAITING FOR DEVICE SCAN...</span>
+            <span class="text-cyan" v-else>>>> AUTHENTICATING PIN...</span>
           </div>
-          <div class="input-group" style="margin-top: 20px;">
-            <label class="text-dim">>>> OR ENTER DEVICE PIN CODE:</label>
-            <div class="tactical-input-wrapper">
-              <span class="prefix">PIN></span>
-              <input type="text" class="tactical-input" placeholder="XXXX-XXXX" disabled />
+
+          <form @submit.prevent="handlePinLogin" class="login-form" style="margin-top: 20px; text-align: left;">
+            <div class="input-group">
+              <label class="text-dim">>> OR ENTER DEVICE PIN CODE: <span class="text-cyan">PIN> {{ pinCode || 'xxx-xxx' }}</span></label>
+              <div class="tactical-input-wrapper" :class="{ 'input-active': pinCode.length > 0 }">
+                <span class="prefix">PIN&gt;</span>
+                <input
+                  ref="pinInput"
+                  type="text"
+                  v-model="pinCode"
+                  class="tactical-input"
+                  placeholder="Enter device PIN (e.g. 0J6M-LZNJ)"
+                  maxlength="9"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @input="onPinInput"
+                />
+              </div>
+              <div class="text-dim text-small mt-1" style="font-size: 9px; text-align: right;">
+                FORMAT: XXXX-XXXX (8 chars + dash) — AUTO-SUBMIT ON COMPLETE
+              </div>
             </div>
-          </div>
-          <div class="text-dim text-small" style="margin-top: 15px;">
-            Place NFC Card / Band near the reader or enter pairing PIN to authenticate.
+
+            <div v-if="pinError" class="error-msg mono text-red glow-red">
+              [PIN_AUTH_FAILED] {{ pinError }}
+            </div>
+            <div v-if="pinSuccess" class="error-msg mono text-green" style="color: #00FF66;">
+              [PIN_VERIFIED] {{ pinSuccess }}
+            </div>
+
+            <button
+              type="submit"
+              class="cmd-btn auth-btn"
+              :disabled="pinLoading || pinCode.replace('-','').length < 8"
+            >
+              <span v-if="!pinLoading">>> EXECUTE_PIN_UPLINK</span>
+              <span v-else class="loading-spinner">... VERIFYING PIN ...</span>
+            </button>
+          </form>
+
+          <div class="text-dim text-small" style="margin-top: 12px; font-size: 10px;">
+            Place NFC Card / Band near the reader OR enter your 8-character device PIN above.
           </div>
         </div>
 
@@ -341,7 +375,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import axios from 'axios'
@@ -350,6 +384,13 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const activeTab = ref<'operator' | 'pairing' | 'register' | 'forgot'>('operator')
+
+// ── PIN Login State ────────────────────────────────────────────────────────────
+const pinCode   = ref('')
+const pinError  = ref('')
+const pinSuccess = ref('')
+const pinLoading = ref(false)
+const pinInput  = ref<HTMLInputElement | null>(null)
 
 const form = ref({
   email: 'owner@hk07.local',
@@ -530,6 +571,63 @@ async function handleForgotPassword() {
     loading.value = false
   }
 }
+
+// ── PIN Login ─────────────────────────────────────────────────────────────────
+function onPinInput() {
+  // Auto-format: insert dash after 4 chars
+  let raw = pinCode.value.replace(/-/g, '').toUpperCase().slice(0, 8)
+  if (raw.length > 4) {
+    pinCode.value = raw.slice(0, 4) + '-' + raw.slice(4)
+  } else {
+    pinCode.value = raw
+  }
+  // Auto-submit when fully typed (8 alphanumeric = 9 with dash)
+  if (pinCode.value.replace('-', '').length === 8) {
+    handlePinLogin()
+  }
+}
+
+async function handlePinLogin() {
+  const rawPin = pinCode.value.replace('-', '').trim()
+  if (rawPin.length < 8) {
+    pinError.value = 'PIN must be 8 characters (format: XXXX-XXXX)'
+    return
+  }
+  if (pinLoading.value) return
+
+  pinLoading.value = true
+  pinError.value   = ''
+  pinSuccess.value = ''
+
+  try {
+    // POST to backend PIN auth endpoint
+    // Falls back to email/password login using PIN as a device token
+    const res = await axios.post('/api/v1/auth/pin-login', { pin: rawPin })
+
+    if (!res.data || !res.data.data) {
+      throw new Error('Invalid API response format')
+    }
+
+    const { accessToken, userId, role } = res.data.data
+    const userPayload = { id: userId, email: `device-${rawPin}@hk07.local`, role: role }
+    authStore.setAuth(accessToken, userPayload)
+    pinSuccess.value = 'DEVICE AUTHENTICATED — REDIRECTING...'
+    setTimeout(() => router.push('/'), 800)
+
+  } catch (e: any) {
+    console.error('[PIN_LOGIN_ERROR]', e)
+    if (e.response?.status === 401 || e.response?.status === 404) {
+      pinError.value = 'INVALID DEVICE PIN — AUTHENTICATION FAILED'
+    } else if (e.response?.status === 405 || e.message?.includes('404')) {
+      // Endpoint not yet implemented — inform user clearly
+      pinError.value = 'PIN_AUTH ENDPOINT NOT DEPLOYED ON SERVER YET'
+    } else {
+      pinError.value = `CONNECTION FAILED: ${e.message || 'Unknown Error'}`
+    }
+  } finally {
+    pinLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -647,6 +745,10 @@ async function handleForgotPassword() {
 .tactical-input-wrapper:focus-within {
   border-color: var(--color-border);
   box-shadow: 0 0 8px rgba(0, 82, 255, 0.4);
+}
+.tactical-input-wrapper.input-active {
+  border-color: var(--color-border-blue);
+  box-shadow: 0 0 6px rgba(0, 82, 255, 0.3);
 }
 
 .prefix {

@@ -51,6 +51,19 @@ public class AuditService {
     public void record(UUID actorId, String actorRole, String actionType,
                        String targetDevice, String payload, String outcome, String ipAddress) {
         try {
+            if (actorId == null) {
+                actorId = UUID.fromString("00000000-0000-0000-0000-000000000000");
+            }
+            if (actorRole == null || actorRole.isEmpty()) {
+                actorRole = "SYSTEM_AGENT";
+            }
+            if (actionType == null || actionType.isEmpty()) {
+                actionType = "UNKNOWN";
+            }
+            if (outcome == null || outcome.isEmpty()) {
+                outcome = "SUCCESS";
+            }
+
             Instant now = Instant.now();
             String hash = computeHash(actorId, actionType, payload, now);
 

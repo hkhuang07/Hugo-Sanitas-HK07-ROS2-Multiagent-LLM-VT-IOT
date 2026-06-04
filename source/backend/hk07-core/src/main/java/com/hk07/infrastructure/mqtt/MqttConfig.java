@@ -82,6 +82,7 @@ public class MqttConfig {
                 "hk07/sensors/wristband/+/vitals",
                 "hk07/sensors/lidar/scan",
                 "hk07/sensors/imu/state",
+                "hk07/control/subsumption/inhibit",
                 "hk07/agents/+/output",
                 "hk07/system/heartbeat"
             );

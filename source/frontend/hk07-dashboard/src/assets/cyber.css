@@ -201,7 +201,9 @@ body {
 
 /* ─── Terminal Card (BaseTerminalCard equivalent) ───────────────────────────── */
 .terminal-card {
-  background: var(--color-bg-card);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.6);
   border: 1px solid var(--color-border-dim);
   padding: var(--space-sm) var(--space-md);
   position: relative;

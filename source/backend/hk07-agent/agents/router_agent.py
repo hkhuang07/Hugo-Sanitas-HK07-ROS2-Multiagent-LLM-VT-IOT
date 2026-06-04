@@ -40,13 +40,22 @@ class RouterAgent:
         self._hf_api_key = os.getenv("HUGGINGFACE_API_KEY", "")
         self._groq_api_key = os.getenv("GROQ_API_KEY", "")
         self._client = None
+        self._hf_circuit_broken = False
+        self._hf_broken_until = 0.0
 
     async def classify_intent(self, user_message: str) -> str:
         if not self._client:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
 
         # Attempt 1: HuggingFace Inference API (Zero-Shot Text Classification)
-        if self._hf_api_key:
+        use_hf = self._hf_api_key and self._hf_api_key.strip()
+        if use_hf:
+            import time
+            if self._hf_circuit_broken and time.time() < self._hf_broken_until:
+                log.debug("[ROUTER_AGENT] HuggingFace circuit breaker is active. Bypassing HF.")
+                use_hf = False
+
+        if use_hf:
             res, success = await self._call_huggingface(user_message)
             if success:
                 log.info("[ROUTER_AGENT] Routed via HuggingFace: %s", res)
@@ -86,8 +95,17 @@ class RouterAgent:
                 if top_label in ["MEDICAL_ANALYSIS", "MEDICAL_ADVICE", "SYSTEM_QUERY", "EMPATHETIC_CHAT"]:
                     return f"ROUTING_TARGET: {top_label}", True
             return "", False
+        except httpx.RequestError as e:
+            import time
+            self._hf_circuit_broken = True
+            self._hf_broken_until = time.time() + 300.0  # Cool down for 5 minutes
+            log.warning(
+                "[ROUTER_HF_ERROR] Connection/DNS failure. Tripping circuit breaker, bypassing HuggingFace for 300 seconds. "
+                "Detail: %s", e
+            )
+            return "", False
         except Exception as e:
-            log.error("[ROUTER_HF_ERROR] Exception: %s", e)
+            log.error("[ROUTER_HF_ERROR] Unexpected Exception: %s", e)
             return "", False
 
     async def _call_groq(self, user_message: str) -> tuple[str, bool]:
@@ -120,7 +138,18 @@ class RouterAgent:
 
     def _local_classify(self, user_message: str) -> str:
         msg = user_message.lower()
-        if any(w in msg for w in ["ping", "sensor", "cảm biến", "cam bien", "kết nối", "ket noi", "scan", "thiết bị", "thiet bi", "hardware", "phần cứng"]):
+        conceptual_kws = [
+            "như thế nào", "nhu the nao", "hoạt động thế nào", "hoat dong the nao",
+            "là gì", "la gi", "what is", "how does", "tại sao", "tai sao", "why",
+            "hoạt động ra sao", "hoat dong ra sao", "giải thích", "giai thich",
+            "tác dụng", "tac dung", "như nào", "nhu nao", "để làm gì", "de lam gi",
+            "thế nào", "the nao", "work", "explain", "about", "về", "info", "thông tin"
+        ]
+        is_concept = any(w in msg for w in conceptual_kws) or (
+            any(w in msg for w in ["lidar", "imu", "wristband", "camera"]) and
+            not any(w in msg for w in ["ping", "status", "check", "kiểm tra", "kiem tra", "kết nối", "ket noi", "trạng thái", "trang thai"])
+        )
+        if any(w in msg for w in ["ping", "sensor", "cảm biến", "cam bien", "kết nối", "ket noi", "scan", "thiết bị", "thiet bi", "hardware", "phần cứng"]) and not is_concept:
             return "ROUTING_TARGET: SYSTEM_QUERY"
         if any(w in msg for w in ["đau", "sốt", "ho", "mệt", "bệnh", "chấn thương", "bị thương", "first aid", "sơ cứu", "dau", "sot", "benh", "phát ban", "phat ban", "bỏng", "bong"]):
             return "ROUTING_TARGET: MEDICAL_ADVICE"

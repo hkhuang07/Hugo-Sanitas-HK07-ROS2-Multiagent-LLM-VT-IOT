@@ -2,7 +2,9 @@ import { Client, type IMessage } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
 import { useVitalsStore } from '../stores/vitals'
 import { useAgentsStore } from '../stores/agents'
+import { useSafetyStore } from '../stores/safety'
 import { useAuthStore } from '../stores/auth'
+import type { SafetyInhibitAlert } from '../types/safety'
 
 let _client: Client | null = null
 let _reconnectAttempts = 0
@@ -53,6 +55,7 @@ export function initWebSocket(onReady?: () => void): void {
 
       const vitalsStore = useVitalsStore()
       const agentsStore = useAgentsStore()
+      const safetyStore = useSafetyStore()
 
       // [P1-2] Reconnected: flush offline queue into ring buffer
       await vitalsStore.flushOfflineQueue()
@@ -72,11 +75,24 @@ export function initWebSocket(onReady?: () => void): void {
         }
       })
 
-      // ── Subscribe: Safety alerts / Subsumption
-      _client!.subscribe('/topic/safety-alerts', (msg: IMessage) => {
+      // ── Subscribe: LiDAR scan (MQTT → Core → enriched snapshot)
+      _client!.subscribe('/topic/safety-scan', (msg: IMessage) => {
         const data = JSON.parse(msg.body)
+        safetyStore.applyScan(data)
+      })
+
+      // ── Subscribe: IMU / fall-risk telemetry
+      _client!.subscribe('/topic/safety-imu', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        safetyStore.applyImu(data)
+      })
+
+      // ── Subscribe: Safety alerts / Subsumption (SafetyAgent inhibit bridge)
+      _client!.subscribe('/topic/safety-alerts', (msg: IMessage) => {
+        const data = JSON.parse(msg.body) as SafetyInhibitAlert
         const isActive = data.subsumptionActivated === true
         agentsStore.setSubsumptionActive(isActive, data.triggerType)
+        safetyStore.applyInhibit(data)
       })
 
       // ── Subscribe: System state changes

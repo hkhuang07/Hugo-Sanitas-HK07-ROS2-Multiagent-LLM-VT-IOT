@@ -2,21 +2,52 @@
   <div class="safety-shell">
     <div class="safety-layout">
       <!-- ── LEFT: Radar Canvas ─────────────────────────────────────────────── -->
-      <div class="radar-panel terminal-card corner-reticle">
-        <div class="terminal-card-header">[ LIDAR_360_RADAR // {{ scanHz }}Hz ]</div>
+      <div class="radar-panel terminal-card corner-reticle" :class="radarPanelClass">
+        <div class="terminal-card-header radar-header-row">
+          <span>[ LIDAR_360_RADAR // {{ displayHz }}Hz ]</span>
+          <span :class="['data-link hud', safetyStore.dataLive ? 'text-green' : 'text-orange']">
+            {{ safetyStore.dataLinkLabel }}
+          </span>
+        </div>
+        <div class="radar-meta mono text-dim">
+          <span>MIN {{ safetyStore.minDistanceM.toFixed(2) }}m @ {{ safetyStore.closestAngleDeg }}°</span>
+          <span :class="threatClass">[ {{ safetyStore.threatLevel }} ]</span>
+        </div>
         <div class="radar-container">
           <canvas ref="radarCanvas" :width="RADAR_SIZE" :height="RADAR_SIZE"></canvas>
-          <!-- Center label -->
           <div class="radar-center-label hud text-dim">HK-07</div>
         </div>
-        <!-- Distance rings legend -->
+        <div class="baymax-hint mono">
+          <span class="baymax-tag hud text-cyan">BAYMAX_SCAN</span>
+          {{ safetyStore.baymaxHint }}
+        </div>
         <div class="radar-legend mono text-dim">
           <span>0.5m ● 1.0m ● 2.0m ● 3.0m</span>
+          <span class="legend-bubble">◎ vùng an toàn cá nhân</span>
         </div>
       </div>
 
       <!-- ── RIGHT: Alert Panel ─────────────────────────────────────────────── -->
       <div class="safety-right">
+        <!-- E-STOP Emergency Control -->
+        <div class="terminal-card estop-panel">
+          <div class="terminal-card-header">[ EMERGENCY_HALT // E-STOP ]</div>
+          <div class="estop-container">
+            <button
+              type="button"
+              class="estop-btn"
+              :disabled="estopBusy"
+              aria-label="Emergency stop — activate SOS protocol"
+              @click="triggerEstop"
+            >
+              <span class="estop-label">[ E-STOP ]</span>
+            </button>
+            <p v-if="estopStatus" class="estop-status mono" :class="estopStatusOk ? 'text-green' : 'text-red'">
+              {{ estopStatus }}
+            </p>
+          </div>
+        </div>
+
         <!-- Response Time Meter -->
         <div class="terminal-card">
           <div class="terminal-card-header">[ SUBSUMPTION_LATENCY ]</div>
@@ -35,13 +66,13 @@
         <div class="terminal-card">
           <div class="terminal-card-header">[ ACTIVE_TRIGGERS ]</div>
           <div class="triggers-list">
-            <div v-for="trigger in activeTriggers" :key="trigger.type"
+            <div v-for="trigger in safetyStore.activeTriggers" :key="trigger.type + trigger.detectedAt"
                  :class="['trigger-row', trigger.severity]">
               <span class="trigger-type hud">{{ trigger.type }}</span>
               <span class="trigger-dist mono">{{ trigger.distanceM?.toFixed(2) }}m</span>
               <span class="trigger-msg text-dim">{{ trigger.message }}</span>
             </div>
-            <div v-if="activeTriggers.length === 0" class="text-dim mono" style="padding:8px;font-size:10px">
+            <div v-if="safetyStore.activeTriggers.length === 0" class="text-dim mono" style="padding:8px;font-size:10px">
               &gt;&gt;&gt; NO ACTIVE THREATS DETECTED
             </div>
           </div>
@@ -70,124 +101,126 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAgentsStore } from '../stores/agents'
+import { useSafetyStore } from '../stores/safety'
+import { triggerRobotSosTrigger, fetchLidarSnapshot } from '../services/api'
+import { useLidarRadar } from '../composables/useLidarRadar'
+import type { LidarScanSnapshot } from '../types/safety'
 
 const agentsStore = useAgentsStore()
+const safetyStore = useSafetyStore()
 
-// ─── State ────────────────────────────────────────────────────────────────────
-const RADAR_SIZE = 400
 const subsumptionActive = computed(() => agentsStore.subsumptionActive)
 const lastResponseMs = ref(0)
 const latencyOk = computed(() => lastResponseMs.value < 5.0 || lastResponseMs.value === 0)
-const scanHz = ref(10)
+const displayHz = computed(() =>
+  safetyStore.scanHz > 0 ? safetyStore.scanHz.toFixed(1) : '—'
+)
 
-const activeTriggers = ref<{ type: string; distanceM: number; message: string; severity: string }[]>([])
 const alertHistory = ref<{ time: string; trigger: string; responseMs: number; message: string; severity: string }[]>([])
 
-// ─── Radar Canvas ─────────────────────────────────────────────────────────────
 const radarCanvas = ref<HTMLCanvasElement | null>(null)
-let animFrame: number
-let isUnmountedFlag = false
+const { RADAR_SIZE } = useLidarRadar(
+  radarCanvas,
+  computed(() => safetyStore.ranges360),
+  computed(() => safetyStore.closestAngleDeg),
+  subsumptionActive
+)
 
-// Mock LiDAR data (replaced by WebSocket data in real mode)
-let lidarRanges: number[] = Array.from({ length: 360 }, () => 3.0 + Math.random() * 0.2)
+const threatClass = computed(() => {
+  const t = safetyStore.threatLevel
+  if (t === 'CRITICAL') return 'text-red'
+  if (t === 'WARNING') return 'text-orange'
+  if (t === 'CAUTION') return 'text-orange'
+  if (t === 'SAFE') return 'text-green'
+  return 'text-dim'
+})
 
-function drawRadar() {
-  if (isUnmountedFlag) return
-  const canvas = radarCanvas.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')!
-  const cx = RADAR_SIZE / 2, cy = RADAR_SIZE / 2
-  const maxRange = 3.5   // meters — displayed range
+const radarPanelClass = computed(() => {
+  if (agentsStore.subsumptionActive) return 'radar-inhibit'
+  if (safetyStore.threatLevel === 'CRITICAL') return 'radar-critical'
+  if (safetyStore.threatLevel === 'WARNING') return 'radar-warning'
+  return ''
+})
 
-  ctx.clearRect(0, 0, RADAR_SIZE, RADAR_SIZE)
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(0, 0, RADAR_SIZE, RADAR_SIZE)
+const estopBusy = ref(false)
+const estopStatus = ref('')
+const estopStatusOk = ref(false)
 
-  // ── Grid rings ─────────────────────────────────────────────────────────────
-  const ringDistances = [0.5, 1.0, 2.0, 3.0]
-  ctx.strokeStyle = 'rgba(0, 255, 102, 0.1)'
-  ctx.lineWidth = 1
-  ringDistances.forEach(d => {
-    const r = (d / maxRange) * (RADAR_SIZE / 2)
-    ctx.beginPath()
-    ctx.arc(cx, cy, r, 0, Math.PI * 2)
-    ctx.stroke()
-  })
-
-  // ── Crosshair lines ─────────────────────────────────────────────────────────
-  ctx.strokeStyle = 'rgba(0, 255, 102, 0.08)'
-  ;[0, 45, 90, 135].forEach(angleDeg => {
-    const rad = (angleDeg * Math.PI) / 180
-    ctx.beginPath()
-    ctx.moveTo(cx + Math.cos(rad) * RADAR_SIZE / 2, cy + Math.sin(rad) * RADAR_SIZE / 2)
-    ctx.lineTo(cx - Math.cos(rad) * RADAR_SIZE / 2, cy - Math.sin(rad) * RADAR_SIZE / 2)
-    ctx.stroke()
-  })
-
-  // ── Sweep line (rotating) ───────────────────────────────────────────────────
-  const sweepAngle = (Date.now() / 50) % 360
-  const sweepRad = (sweepAngle * Math.PI) / 180
-  const grad = ctx.createLinearGradient(cx, cy,
-    cx + Math.cos(sweepRad) * RADAR_SIZE / 2,
-    cy + Math.sin(sweepRad) * RADAR_SIZE / 2)
-  grad.addColorStop(0, 'rgba(0, 255, 102, 0.4)')
-  grad.addColorStop(1, 'rgba(0, 255, 102, 0)')
-  ctx.strokeStyle = grad
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(cx, cy)
-  ctx.lineTo(
-    cx + Math.cos(sweepRad) * RADAR_SIZE / 2,
-    cy + Math.sin(sweepRad) * RADAR_SIZE / 2
-  )
-  ctx.stroke()
-
-  // ── LiDAR points ───────────────────────────────────────────────────────────
-  ctx.fillStyle = '#00FF66'
-  ctx.shadowColor = '#00FF66'
-  ctx.shadowBlur = 6
-  lidarRanges.forEach((dist, angleDeg) => {
-    if (dist <= 0 || dist > maxRange) return
-    const rad = (angleDeg * Math.PI) / 180
-    const pixelDist = (dist / maxRange) * (RADAR_SIZE / 2)
-    const px = cx + Math.cos(rad) * pixelDist
-    const py = cy + Math.sin(rad) * pixelDist
-    ctx.beginPath()
-    ctx.arc(px, py, dist < 0.5 ? 4 : 2, 0, Math.PI * 2)
-    ctx.fill()
-  })
-  ctx.shadowBlur = 0
-
-  // ── Center dot (robot) ─────────────────────────────────────────────────────
-  ctx.fillStyle = '#00FF66'
-  ctx.shadowColor = '#00FF66'
-  ctx.shadowBlur = 10
-  ctx.beginPath()
-  ctx.arc(cx, cy, 6, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.shadowBlur = 0
-
-  animFrame = requestAnimationFrame(drawRadar)
+async function triggerEstop() {
+  if (estopBusy.value) return
+  estopBusy.value = true
+  estopStatus.value = '>> DISPATCHING SOS PROTOCOL...'
+  estopStatusOk.value = false
+  try {
+    await triggerRobotSosTrigger()
+    estopStatus.value = '>> EMERGENCY PROTOCOL ACTIVATED'
+    estopStatusOk.value = true
+    document.dispatchEvent(new CustomEvent('hk07:toast', {
+      detail: {
+        agent: 'SAFETY',
+        message: 'EMERGENCY PROTOCOL ACTIVATED',
+        severity: 'critical',
+        duration: 6000
+      }
+    }))
+    alertHistory.value.unshift({
+      time: new Date().toTimeString().slice(0, 8),
+      trigger: 'E-STOP',
+      responseMs: 0,
+      message: 'Manual SOS trigger via E-STOP control',
+      severity: 'critical'
+    })
+    if (alertHistory.value.length > 50) alertHistory.value.pop()
+  } catch {
+    estopStatus.value = '>> SOS UPLINK FAILED — RETRY OR CALL OPERATOR'
+    estopStatusOk.value = false
+    document.dispatchEvent(new CustomEvent('hk07:toast', {
+      detail: {
+        agent: 'SAFETY',
+        message: 'E-STOP uplink failed — check network / backend',
+        severity: 'warning',
+        duration: 5000
+      }
+    }))
+  } finally {
+    estopBusy.value = false
+  }
 }
 
-// Simulate LiDAR scan updates (replaced by WebSocket in real mode)
-function updateLidarSimulation() {
-  lidarRanges = lidarRanges.map((v, i) => {
-    // Occasional close-range obstacle for demo
-    if (i > 25 && i < 35 && Math.random() < 0.1) return 0.3 + Math.random() * 0.4
-    return 3.0 + Math.random() * 0.3 - 0.1
-  })
+let pruneInterval: ReturnType<typeof setInterval>
+
+async function loadInitialLidarSnapshot() {
+  try {
+    const resp = await fetchLidarSnapshot()
+    const snap = resp.data?.data as LidarScanSnapshot | undefined
+    if (snap?.ranges360?.length) {
+      safetyStore.loadSnapshot(snap)
+    }
+  } catch {
+    /* WS stream will populate when broker is live */
+  }
 }
 
 onMounted(() => {
-  animFrame = requestAnimationFrame(drawRadar)
-  const scanInterval = setInterval(updateLidarSimulation, 100)
-  onUnmounted(() => clearInterval(scanInterval))
+  loadInitialLidarSnapshot()
+  pruneInterval = setInterval(() => safetyStore.pruneStaleTriggers(), 2000)
 })
 
 onUnmounted(() => {
-  isUnmountedFlag = true
-  cancelAnimationFrame(animFrame)
+  clearInterval(pruneInterval)
+})
+
+watch(() => safetyStore.threatLevel, (level, prev) => {
+  if (level === 'CRITICAL' && prev !== 'CRITICAL' && safetyStore.dataLive) {
+    alertHistory.value.unshift({
+      time: new Date().toTimeString().slice(0, 8),
+      trigger: 'LIDAR_PROXIMITY',
+      responseMs: 0,
+      message: `Vật cản ${safetyStore.minDistanceM.toFixed(2)}m — góc ${safetyStore.closestAngleDeg}°`,
+      severity: 'critical'
+    })
+    if (alertHistory.value.length > 50) alertHistory.value.pop()
+  }
 })
 
 // Watch subsumption events to update trigger log
@@ -221,7 +254,21 @@ watch(() => agentsStore.subsumptionActive, (active) => {
   position: absolute; font-size: 9px; letter-spacing: 0.2em;
   text-transform: uppercase; pointer-events: none;
 }
-.radar-legend { font-size: 9px; text-align: center; margin-top: 4px; }
+.radar-header-row { display: flex; justify-content: space-between; align-items: center; }
+.radar-meta { display: flex; justify-content: space-between; font-size: 9px; padding: 0 4px 6px; letter-spacing: 0.08em; }
+.data-link { font-size: 8px; letter-spacing: 0.2em; }
+.baymax-hint {
+  font-size: 10px; line-height: 1.5; padding: 8px 10px; margin-top: 6px;
+  border-left: 2px solid var(--color-accent-cyan, #00e5ff);
+  background: rgba(0, 229, 255, 0.04);
+  color: var(--color-text-primary);
+}
+.baymax-tag { font-size: 8px; display: block; margin-bottom: 4px; letter-spacing: 0.15em; }
+.radar-legend { font-size: 9px; text-align: center; margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.legend-bubble { font-size: 8px; opacity: 0.75; }
+.radar-critical { border-color: rgba(255, 51, 51, 0.6) !important; }
+.radar-warning { border-color: rgba(255, 136, 0, 0.5) !important; }
+.radar-inhibit { box-shadow: 0 0 24px rgba(255, 51, 51, 0.15); }
 
 .safety-right { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
 
@@ -241,4 +288,51 @@ watch(() => agentsStore.subsumptionActive, (active) => {
 .alert-history { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .alert-row { display: grid; grid-template-columns: 65px 120px 55px 1fr; gap: 6px; font-size: 10px; padding: 2px 4px; }
 .alert-row.critical { background: rgba(255,51,51,0.05); }
+
+.estop-panel { display: flex; flex-direction: column; align-items: center; }
+.estop-container { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0; }
+.estop-btn {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  border: 3px solid #FF3333;
+  background: radial-gradient(circle at 35% 30%, #ff6666, #FF3333 55%, #990000);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-hud);
+  box-shadow:
+    0 0 20px rgba(255, 51, 51, 0.7),
+    0 0 40px rgba(255, 51, 51, 0.4),
+    inset 0 0 12px rgba(0, 0, 0, 0.35);
+  animation: estop-pulse-glow 1.4s ease-in-out infinite;
+  transition: transform 0.1s ease;
+}
+.estop-btn:hover:not(:disabled) { transform: scale(1.05); }
+.estop-btn:active:not(:disabled) { transform: scale(0.97); }
+.estop-btn:disabled { opacity: 0.6; cursor: not-allowed; animation: none; }
+.estop-label {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+}
+.estop-status { font-size: 9px; letter-spacing: 0.1em; text-align: center; max-width: 280px; }
+
+@keyframes estop-pulse-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 16px rgba(255, 51, 51, 0.6),
+      0 0 32px rgba(255, 51, 51, 0.35),
+      inset 0 0 12px rgba(0, 0, 0, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 28px rgba(255, 51, 51, 1),
+      0 0 56px rgba(255, 51, 51, 0.55),
+      inset 0 0 12px rgba(0, 0, 0, 0.35);
+  }
+}
 </style>
