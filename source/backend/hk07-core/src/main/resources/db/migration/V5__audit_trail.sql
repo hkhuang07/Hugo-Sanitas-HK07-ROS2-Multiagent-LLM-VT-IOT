@@ -5,10 +5,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE audit_logs (
-    id              UUID         PRIMARY KEY DEFAULT (UUID()),
+    id              VARCHAR(36)  PRIMARY KEY DEFAULT (UUID()),
 
     -- Người thực hiện
-    actor_id        UUID         NOT NULL COMMENT 'UUID của Medic/Owner phát lệnh',
+    actor_id        VARCHAR(36)  NOT NULL COMMENT 'UUID của Medic/Owner phát lệnh',
     actor_role      VARCHAR(30)  NOT NULL COMMENT 'Role tại thời điểm thực hiện',
 
     -- Hành động

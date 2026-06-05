@@ -120,7 +120,7 @@ public class HealthService {
     /**
      * [HẠNCHẾ-#8] Scheduled batch flush: every 5 seconds, drain the normalBatchQueue
      * into a single saveAll() call. This collapses up to 300 individual SQL INSERTs
-     * (10Hz × 30s) into 1 batch JDBC call, reducing MariaDB I/O by ~98%.
+     * (10Hz × 30s) into 1 batch JDBC call, reducing database I/O by ~98%.
      */
     @Scheduled(fixedDelay = 5000)
     @Transactional

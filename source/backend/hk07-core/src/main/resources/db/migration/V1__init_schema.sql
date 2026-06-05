@@ -1,11 +1,11 @@
--- Flyway Migration V1: Full Schema Initialization (MariaDB / MySQL Version)
+-- Flyway Migration V1: Full Schema Initialization (MySQL Version)
 -- Project: Hugo Sanitas HK-07
 -- Version: 1.0.0-ALPHA
 --
 
 -- ─── Users ───────────────────────────────────────────────────────────────────
 CREATE TABLE users (
-    id              UUID PRIMARY KEY DEFAULT (UUID()),
+    id              VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
     display_name    VARCHAR(100)  NOT NULL,
     email           VARCHAR(255)  NOT NULL,
     password_hash   VARCHAR(255)  NOT NULL,
@@ -19,8 +19,8 @@ CREATE TABLE users (
 
 -- ─── Wristband Configurations ─────────────────────────────────────────────────
 CREATE TABLE wristband_configs (
-    id                         UUID PRIMARY KEY DEFAULT (UUID()),
-    user_id                    UUID         NOT NULL,
+    id                         VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id                    VARCHAR(36)  NOT NULL,
     device_id                  VARCHAR(100) NOT NULL,
     mqtt_topic                 VARCHAR(200) NOT NULL,
     heart_rate_threshold_min   INT          NOT NULL DEFAULT 50,
@@ -34,8 +34,8 @@ CREATE TABLE wristband_configs (
 
 -- ─── Health Records ──────────────────────────────────────────────────────────
 CREATE TABLE health_records (
-    id               UUID        PRIMARY KEY DEFAULT (UUID()),
-    user_id          UUID        NOT NULL,
+    id               VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id          VARCHAR(36) NOT NULL,
     heart_rate       INT,
     systolic         FLOAT,
     diastolic        FLOAT,
@@ -51,7 +51,7 @@ CREATE TABLE health_records (
 
 -- ─── Agent Logs ──────────────────────────────────────────────────────────────
 CREATE TABLE agent_logs (
-    id               UUID        PRIMARY KEY DEFAULT (UUID()),
+    id               VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
     agent_type       VARCHAR(20) NOT NULL,
     input_context    TEXT,
     output_decision  TEXT,
@@ -63,7 +63,7 @@ CREATE TABLE agent_logs (
 
 -- ─── Safety Alerts ───────────────────────────────────────────────────────────
 CREATE TABLE safety_alerts (
-    id                     UUID        PRIMARY KEY DEFAULT (UUID()),
+    id                     VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
     level                  VARCHAR(20) NOT NULL,
     trigger_type           VARCHAR(30) NOT NULL,
     distance_meters        FLOAT,

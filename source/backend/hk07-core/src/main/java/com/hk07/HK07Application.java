@@ -28,7 +28,7 @@ public class HK07Application {
         System.out.printf("""
                 %n╔══════════════════════════════════════════════════════╗
                 ║   HUGO SANITAS HK-07 — CORE ENGINE BOOTING...        ║
-                ║   JVM Max Heap: %dMB (Target: ≤512MB)               ║
+                ║   JVM Max Heap: %dMB (Target: ≤512MB)                ║
                 ║   Virtual Threads: ACTIVE (Java 21)                  ║
                 ║   devtools: DISABLED (saves ~150MB)                  ║
                 ╚══════════════════════════════════════════════════════╝%n

@@ -60,7 +60,7 @@ A next-generation healthcare robot companion — assisting in daily life through
          │  WebSocket/REST │   MQTT/WebSocket     │ MQTT
          ▼                 ▼                      ▼
 ┌────────────────┐  ┌─────────────┐  ┌───────────────────────┐
-│    MariaDB     │  │    Redis    │  │  Eclipse Mosquitto    │
+│    MySQL       │  │    Redis    │  │  Eclipse Mosquitto    │
 │   (Persist)    │  │  (Buffer)   │  │  MQTT Broker :1883    │
 └────────────────┘  └─────────────┘  └───────────────────────┘
                                               ▲
@@ -110,7 +110,7 @@ The **HK-07 // HUGO SANITAS** project is designed to build an intelligent care-r
   * **Simulated ESP32 (Wokwi BLE Wristband):** Simulated smart band emitting heart rate, SpO2, body temperature, and an SOS panic button.
   * **Webots Simulator & ROS 2 Mock Nodes:** Physics-based simulation of the HK-07 robot chassis, distance sensors, and LiDAR obstacle avoidance.
 * **Database:**
-  * **MariaDB:** Relational database storing patient history, logs, and user metadata.
+  * **MySQL:** Relational database storing patient history, logs, and user metadata.
   * **Redis:** In-memory caching, WebSocket session management, and rate-limiting (throttling).
 
 ### 2. Operational Workflow
@@ -128,7 +128,7 @@ The **HK-07 // HUGO SANITAS** project is designed to build an intelligent care-r
 
 * **Step 1: IoT Ingestion:** The smart band simulator publishes JSON packets to `hk07/sensors/wristband/...` while the Webots robot emits obstacle distance metrics to `hk07/sensors/lidar/...`.
 * **Step 2: Routing & Reflex Loop:**
-  * Spring Boot Core intercepts the MQTT packets. If metrics fall within normal ranges, it persists them in MariaDB and broadcasts them instantly to the Vue 3 Dashboard via STOMP WebSockets.
+  * Spring Boot Core intercepts the MQTT packets. If metrics fall within normal ranges, it persists them in MySQL and broadcasts them instantly to the Vue 3 Dashboard via STOMP WebSockets.
   * If vitals exceed clinical thresholds (e.g. Heart Rate > 150 BPM - Heart Attack), the backend skips standard buffers, flags the event as an EMERGENCY, sends a command via MQTT to immediately halt the Webots robot, and triggers an overlay SOS modal on the frontend dashboard.
 * **Step 3: Empathetic AI Dialogue:** The Python AI Agent catches the health event, reviews the patient's historical records, and calls the Groq/Gemini APIs to generate clinical advice and supportive dialogue, instantly routing it to the companion chat widget in the Vue 3 dashboard.
 
@@ -141,7 +141,7 @@ source/
 ├── backend/
 │   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
 │   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
-│   └── docker/             ← Mosquitto + MariaDB configs
+│   └── docker/             ← Mosquitto + MySQL configs
 ├── frontend/
 │   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
 └── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
@@ -202,11 +202,11 @@ To run components locally in development mode, you can start the databases and M
 
 #### Step 0: Start Infrastructure Services (Brokers & Databases)
 ```bash
-# Spin up MQTT, MariaDB, and Redis in the background:
+# Spin up MQTT, MySQL, and Redis in the background:
 cd source/backend
-docker compose up -d redis mariadb mosquitto
+docker compose up -d redis hk07-mysql mosquitto
 ```
-*Alternatively, you can run native local instances of Mosquitto broker (port 1883), Redis (port 6379), and MariaDB (port 3306) on your machine.*
+*Alternatively, you can run native local instances of Mosquitto broker (port 1883), Redis (port 6379), and MySQL (port 3306) on your machine.*
 
 #### Step 1: Start Backend Core (Spring Boot)
 ```bash
@@ -279,7 +279,7 @@ python trigger_emergency_button.py
 * **Symptom:** Executing `docker compose up` raises a configuration missing error.
 * **Fix:** Make sure you are in `source/backend/` before executing commands, or specify the file directly:
   ```bash
-  docker compose -f source/backend/docker-compose.yml up -d redis mariadb mosquitto
+  docker compose -f source/backend/docker-compose.yml up -d redis hk07-mysql mosquitto
   ```
 
 ---
@@ -290,7 +290,7 @@ python trigger_emergency_button.py
 |---------|-----------|---------|
 | Mosquitto | 32MB | MQTT Broker |
 | Redis | 64MB | Lag Compensation Buffer |
-| MariaDB | 128MB | Persistent Health Records |
+| MySQL | 256MB | Persistent Health Records |
 | hk07-core | 512MB | Spring Boot (JVM: -Xmx512m) |
 | hk07-agent | 256MB | Python Multi-Agent |
 | **Total** | **~615MB** | ✅ Safe on WSL2 4GB |

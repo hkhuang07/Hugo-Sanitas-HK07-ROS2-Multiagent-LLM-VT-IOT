@@ -4,8 +4,8 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE medical_thresholds (
-    id                          UUID         PRIMARY KEY DEFAULT (UUID()),
-    user_id                     UUID         NOT NULL,
+    id                          VARCHAR(36)  PRIMARY KEY DEFAULT (UUID()),
+    user_id                     VARCHAR(36)  NOT NULL,
     device_id                   VARCHAR(100) NOT NULL,
 
     -- Heart Rate thresholds (BPM)
@@ -28,7 +28,7 @@ CREATE TABLE medical_thresholds (
 
     -- Metadata
     label                       VARCHAR(100)          DEFAULT NULL COMMENT 'Human-readable label (e.g. Post-cardiac surgery profile)',
-    configured_by               UUID                  DEFAULT NULL COMMENT 'UUID of the Medic/Owner who last configured this',
+    configured_by               VARCHAR(36)           DEFAULT NULL COMMENT 'UUID of the Medic/Owner who last configured this',
     updated_at                  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     created_at                  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

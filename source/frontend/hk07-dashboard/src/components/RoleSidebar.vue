@@ -53,6 +53,9 @@
           <router-link to="/profile" class="sidebar-nav-item" active-class="active">
             <span class="index text-dim">[05]</span> PROFILE_SETTINGS
           </router-link>
+          <router-link to="/digital-twin" class="sidebar-nav-item dt-nav-item" active-class="active">
+            <span class="index text-cyan">[06]</span> HOLOGRAPHIC_TWIN
+          </router-link>
         </div>
       </div>
 
@@ -228,5 +231,17 @@ const vitalsStore = useVitalsStore()
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
+}
+
+/* Digital Twin nav item — holographic glow */
+.dt-nav-item {
+  border-color: rgba(0, 229, 255, 0.12) !important;
+  background: rgba(0, 229, 255, 0.02);
+}
+.dt-nav-item:hover,
+.dt-nav-item.active {
+  background: rgba(0, 229, 255, 0.08) !important;
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.15) inset;
+  color: #00e5ff !important;
 }
 </style>

@@ -129,6 +129,49 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "execute_full_body_scan",
+            "description": (
+                "Trigger Perception Agent to perform a full multi-modal body scan "
+                "(camera vision + vitals + LiDAR). Use when user explicitly requests "
+                "a body scan (e.g. 'Quét người tôi', 'Full scan', 'Scan toàn thân'). "
+                "Silent — writes results to Blackboard, does not reply to user directly."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scan_reason": {
+                        "type": "string",
+                        "description": "Brief reason for triggering the scan"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_environment_scan",
+            "description": (
+                "Read latest LiDAR environment scan from sensor buffer. "
+                "Use when user asks about nearby obstacles, surroundings, or environment safety."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {
+                        "type": "string",
+                        "description": "Scan scope: 'full' (all sectors) or 'front' (forward only)",
+                        "enum": ["full", "front"]
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "execute_system_query",
             "description": "Ping hardware devices or check status of sensors (e.g. wristband, lidar, imu, camera, connection). Use when user asks to check device status, connection, or ping sensors. Do NOT use for user health scans or clinical assessments.",
             "parameters": {
@@ -145,6 +188,7 @@ TOOLS_SCHEMA = [
     }
 ]
 
+
 ORCHESTRATOR_SYSTEM_PROMPT = (
     "Bạn là Router Agent v2 của robot đồng hành HK-07.\n"
     "Nhiệm vụ: Phân tích message từ user và quyết định gọi ĐỒNG THỜI các Tool phù hợp.\n"
@@ -153,19 +197,24 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
     "- User: 'Tôi ho ra máu và rất sợ' → gọi analyze_clinical_symptoms + speak_empathetic_response\n"
     "- User: 'Xin chào Hugo' → gọi speak_empathetic_response\n"
     "- User: 'Tôi bị đột quỵ' → gọi trigger_sos_protocol + analyze_clinical_symptoms\n"
+    "- User: 'Quét toàn thân tôi' → gọi execute_full_body_scan\n"
+    "- User: 'Xung quanh tôi có vật cản không?' → gọi execute_environment_scan\n"
     "\n"
     "Nguyên tắc (Subsumption):\n"
     "1. Luôn ưu tiên Safety (Emergency) trước — TIER 0\n"
-    "2. Nếu có triệu chứng y tế hoặc yêu cầu quét cơ thể, gọi analyze_clinical_symptoms — TIER 1\n"
-    "3. Nếu có yếu tố cảm xúc, gọi speak_empathetic_response — TIER 2\n"
-    "4. Nếu hỏi về kiến thức y tế, gọi search_medical_guidelines\n"
-    "5. Nếu muốn kiểm tra trạng thái phần cứng, kết nối hoặc ping cảm biến, gọi execute_system_query\n"
+    "2. Nếu có triệu chứng y tế hoặc yêu cầu quét cơ thể chi tiết (analyze_clinical_symptoms) — TIER 1\n"
+    "3. Nếu user yêu cầu quét toàn thân hình ảnh (camera), gọi execute_full_body_scan — TIER 0.5\n"
+    "4. Nếu hỏi về vật cản / môi trường xung quanh, gọi execute_environment_scan\n"
+    "5. Nếu có yếu tố cảm xúc, gọi speak_empathetic_response — TIER 2\n"
+    "6. Nếu hỏi về kiến thức y tế, gọi search_medical_guidelines\n"
+    "7. Nếu muốn kiểm tra trạng thái phần cứng, kết nối hoặc ping cảm biến, gọi execute_system_query\n"
     "LƯU Ý QUAN TRỌNG VỀ PHÂN BIỆT Ý ĐỊNH:\n"
     "- Nếu yêu cầu là quét cơ thể/sức khỏe hoặc phân tích sinh tồn (ví dụ: 'Scan me', 'Quét cơ thể tôi', 'Analyze my vitals', 'Scan my body', 'Scan my vitals'), bạn BẮT BUỘC phải gọi analyze_clinical_symptoms (Medical Analysis). TUYỆT ĐỐI KHÔNG gọi execute_system_query.\n"
     "- Nếu câu hỏi là về lý thuyết/kiến thức khái niệm (ví dụ: 'Cảm biến Lidar hoạt động như thế nào?', 'Lidar là gì?', 'How does Lidar work?'), bạn BẮT BUỘC phải gọi speak_empathetic_response (để an ủi/giải thích khái niệm) hoặc search_medical_guidelines (nếu y tế). TUYỆT ĐỐI KHÔNG gọi execute_system_query.\n"
     "- Chỉ khi người dùng thực sự muốn kiểm tra trạng thái hoạt động hiện tại của phần cứng (ví dụ: 'Kiểm tra trạng thái Lidar', 'Ping cảm biến đeo tay', 'Check wristband status'), bạn mới gọi execute_system_query.\n"
     "Trả lời bằng tool_calls, không giải thích thêm.\n"
 )
+
 
 
 
@@ -278,6 +327,29 @@ class RouterAgentV2:
                     "symptom_description": user_message,
                     "urgency_level": "HIGH" if urgent else "MEDIUM",
                 },
+            })
+
+        # Tier 0.5 — Full body scan (camera + perception)
+        body_scan_kw = [
+            "quét toàn thân", "quet toan than", "full scan", "full body scan",
+            "scan toàn thân", "scan toan than", "quét người", "quet nguoi",
+            "full body", "perception scan", "body scan"
+        ]
+        if any(w in msg for w in body_scan_kw):
+            tool_calls.append({
+                "tool_name": "execute_full_body_scan",
+                "parameters": {"scan_reason": user_message},
+            })
+
+        # Environment / obstacle scan
+        env_scan_kw = [
+            "vật cản", "vat can", "obstacle", "xung quanh", "surroundings",
+            "môi trường", "moi truong", "environment scan", "lidar scan"
+        ]
+        if any(w in msg for w in env_scan_kw):
+            tool_calls.append({
+                "tool_name": "execute_environment_scan",
+                "parameters": {"scope": "full"},
             })
 
         # Tier 3 — System / Hardware Queries

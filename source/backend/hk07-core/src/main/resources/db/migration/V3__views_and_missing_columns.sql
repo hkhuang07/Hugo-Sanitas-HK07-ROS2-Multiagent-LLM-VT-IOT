@@ -1,10 +1,7 @@
--- Flyway Migration V3: Add missing columns and performance views (MariaDB / MySQL Version)
-
--- Add device_id to health_records if not exists (MariaDB supports ADD COLUMN IF NOT EXISTS)
-ALTER TABLE health_records ADD COLUMN IF NOT EXISTS device_id VARCHAR(100);
+-- Flyway Migration V3: Add missing columns and performance views (MySQL Version)
 
 -- Add updated_at to wristband_configs
-ALTER TABLE wristband_configs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+ALTER TABLE wristband_configs ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
 
 -- ─── View: 24h health summary per user
 CREATE OR REPLACE VIEW v_health_hourly_summary AS

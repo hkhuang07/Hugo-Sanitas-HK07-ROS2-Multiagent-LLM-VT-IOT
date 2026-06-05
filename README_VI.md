@@ -57,7 +57,7 @@ Robot Bạn đồng hành Chăm sóc Sức khỏe thế hệ mới — Đồng h
          │  WebSocket/REST │   MQTT/WebSocket     │ MQTT
          ▼                 ▼                      ▼
 ┌────────────────┐  ┌─────────────┐  ┌───────────────────────┐
-│   Mariadb      │  │    Redis    │  │  Eclipse Mosquitto    │
+│    MySQL       │  │    Redis    │  │  Eclipse Mosquitto    │
 │   (Persist)    │  │  (Buffer)   │  │  MQTT Broker :1883    │
 └────────────────┘  └─────────────┘  └───────────────────────┘
                                               ▲
@@ -107,7 +107,7 @@ Dự án **HK-07 // HUGO SANITAS** được thiết kế nhằm mục đích xâ
   * **Simulated ESP32 (Wokwi BLE Wristband):** Mô phỏng vòng đeo tay thông minh đo nhịp tim, nhiệt độ, SpO2 và nút khẩn cấp SOS.
   * **Webots Simulator & ROS 2 Mock Nodes:** Mô phỏng vật lý chuyển động của robot HK-07, cảm biến khoảng cách và LiDAR tránh chướng ngại vật thời gian thực.
 * **Cơ sở dữ liệu (Database):**
-  * **MariaDB:** Lưu trữ lâu dài thông tin lịch sử bệnh án, người dùng và logs hệ thống.
+  * **MySQL:** Lưu trữ lâu dài thông tin lịch sử bệnh án, người dùng và logs hệ thống.
   * **Redis:** Lưu cache, kiểm soát chống spam tin nhắn (Throttling) và quản lý trạng thái token đăng nhập.
 
 ### 2. Nguyên lý hoạt động hệ thống (Operational Workflow)
@@ -118,14 +118,14 @@ Dự án **HK-07 // HUGO SANITAS** được thiết kế nhằm mục đích xâ
 [Eclipse Mosquitto (Port: 1883)]
     ├───► [Python Multi-Agent Engine (Port: 8889)] ───► Chẩn đoán Lâm sàng & LLM Reasoning
     └───► [Spring Boot Backend Core (Port: 8888)]
-               │ (Xử lý ưu tiên, Ghi MariaDB & Redis)
+               │ (Xử lý ưu tiên, Ghi MySQL & Redis)
                ▼ (WebSocket STOMP qua JWT Interceptor)
          [Vue 3 Frontend Dashboard (60FPS ECG)]
 ```
 
 * **Bước 1: Tiếp nhận dữ liệu IoT (Ingestion):** Cảm biến vòng đeo tay y tế phát dữ liệu định dạng JSON tới MQTT topic `hk07/sensors/wristband/...`. Cùng lúc đó, Webots Robot phát dữ liệu khoảng cách laser đến `hk07/sensors/lidar/...`.
 * **Bước 2: Phản xạ và Phân phối (Routing & Reflex):**
-  * Spring Boot Core đăng ký nhận tin từ MQTT. Khi nhận gói tin sinh tồn, hệ thống kiểm tra ngưỡng an toàn. Nếu các chỉ số bình thường, nó lưu vào MariaDB và đẩy trực tiếp lên Vue 3 Dashboard thông qua STOMP WebSocket để hiển thị.
+  * Spring Boot Core đăng ký nhận tin từ MQTT. Khi nhận gói tin sinh tồn, hệ thống kiểm tra ngưỡng an toàn. Nếu các chỉ số bình thường, nó lưu vào MySQL và đẩy trực tiếp lên Vue 3 Dashboard thông qua STOMP WebSocket để hiển thị.
   * Nếu phát hiện chỉ số bất thường (nhịp tim > 150 BPM - Heart Attack), hệ thống lập tức bỏ qua lưu trữ đệm, kích hoạt cờ khẩn cấp (`emergency_button_pressed` hoặc `stroke_alert`), gửi lệnh khẩn cấp qua MQTT buộc robot Webots dừng di chuyển lập tức để đảm bảo an toàn, đồng thời thông báo SOS nổi trên Dashboard.
 * **Bước 3: Suy luận AI thấu cảm (AI Dialogue):** AI Agent tiếp nhận luồng sự kiện khẩn cấp, phân tích bệnh án lịch sử của bệnh nhân, gọi mô hình ngôn ngữ lớn (LLM Groq/Gemini) để đưa ra lời khuyên y khoa sơ cấp và câu nói trấn an tâm lý phù hợp, gửi trực tiếp về khung chat Companion trên giao diện Vue 3.
 
@@ -138,7 +138,7 @@ source/
 ├── backend/
 │   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
 │   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
-│   └── docker/             ← Mosquitto + MariaDB configs
+│   └── docker/             ← Mosquitto + MySQL configs
 ├── frontend/
 │   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
 └── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
@@ -197,11 +197,11 @@ python vivo_http_mqtt_bridge.py
 
 #### Bước 0: Khởi động các dịch vụ hạ tầng (Broker & Database)
 ```bash
-# Chạy MQTT, MariaDB và Redis ở chế độ nền:
+# Chạy MQTT, MySQL và Redis ở chế độ nền:
 cd source/backend
-docker compose up -d redis mariadb mosquitto
+docker compose up -d redis hk07-mysql mosquitto
 ```
-*Hoặc bạn có thể cài đặt chạy dịch vụ Mosquitto (port 1883), Redis (port 6379), MariaDB (port 3306) trực tiếp trên máy cục bộ.*
+*Hoặc bạn có thể cài đặt chạy dịch vụ Mosquitto (port 1883), Redis (port 6379), MySQL (port 3306) trực tiếp trên máy cục bộ.*
 
 #### Bước 1: Khởi động Backend Core (Spring Boot)
 ```bash
@@ -274,7 +274,7 @@ python trigger_emergency_button.py
 * **Triệu chứng:** Chạy `docker compose up -d` bị báo lỗi không tìm thấy file cấu hình.
 * **Khắc phục:** File `docker-compose.yml` nằm ở thư mục `source/backend/`. Hãy chắc chắn đã chuyển hướng `cd source/backend` trước khi chạy lệnh, hoặc chỉ định rõ file cấu hình bằng tham số `-f`:
   ```bash
-  docker compose -f source/backend/docker-compose.yml up -d redis mariadb mosquitto
+  docker compose -f source/backend/docker-compose.yml up -d redis hk07-mysql mosquitto
   ```
 
 ## RAM Budget (8GB Host Dell Latitude E7270)
@@ -283,7 +283,7 @@ python trigger_emergency_button.py
 |---------|-----------|---------|
 | Mosquitto | 32MB | MQTT Broker |
 | Redis | 64MB | Lag Compensation Buffer |
-| MariaDB | 128MB | Persistent Health Records |
+| MySQL | 256MB | Persistent Health Records |
 | hk07-core | 512MB | Spring Boot (JVM: -Xmx512m) |
 | hk07-agent | 256MB | Python Multi-Agent |
 | **Total** | **~615MB** | ✅ Safe on WSL2 4GB |

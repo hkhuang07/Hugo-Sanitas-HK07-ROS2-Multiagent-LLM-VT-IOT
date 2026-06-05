@@ -1,26 +1,28 @@
 spring:
   application:
     name: hk07-core
+  config:
+    import:
+      - optional:file:../.env[.properties]
   # ─── Database ───
   datasource:
-    url: jdbc:mariadb://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_DATABASE:hk07db}
+    # ─── MySQL 8.x (Official Connector/J) ─────────────────────────────────────────
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_DATABASE:hk07db}?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${DB_USERNAME:hk07user}
     # No real secret in source — provide DB_PASSWORD via env / .env (see source/backend/.env.example)
-    password: ${DB_PASSWORD:hk07_local_dev}
+    password: ${DB_PASSWORD:HK040103}
     hikari:
-      # [P2-2] Virtual Thread tuning: VT blocks OS thread on I/O — need more connections
+      # Virtual Thread tuning: VT blocks OS thread on I/O — need more connections
       # than traditional thread pool. Rule: (vCPU * 2) + spindle count, min 10.
       maximum-pool-size: 10
       minimum-idle: 2
       connection-timeout: 20000
       idle-timeout: 300000
-      keepalive-time: 60000         # Prevent idle connection drops from MariaDB
+      keepalive-time: 60000         # Prevent idle connection drops
       max-lifetime: 600000
-      # Virtual Threads are NOT compatible with connection acquisition on carrier thread
-      # HikariCP 5.1+ handles this automatically when VT executor is active
       data-source-properties:
-        useServerPrepStmts: false    # Use client prep statements with rewriteBatchedStatements to avoid statement handler errors
-        rewriteBatchedStatements: true  # [P2-3] Enable true JDBC batch execution
+        rewriteBatchedStatements: true  # Enable true JDBC batch execution for vitals bursts
   jpa:
     hibernate:
       ddl-auto: validate            # Flyway owns schema — JPA only validates
@@ -28,11 +30,14 @@ spring:
     open-in-view: false             # Disable OSIV — incompatible with Virtual Threads
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect  # Explicit MySQL dialect
+        type:
+          preferred_uuid_jdbc_type: VARCHAR               # Globally map Java UUID to VARCHAR(36) to match database VARCHAR(36)
         format_sql: false
         jdbc:
-          batch_size: 50            # [P2-3] Increased batch size for 10Hz vitals bursts
-          order_inserts: true         # [P2-3] Sort inserts by entity type to maximize batch grouping
-          order_updates: true         # [P2-3] Same for updates
+          batch_size: 50            # Increased batch size for 10Hz vitals bursts
+          order_inserts: true       # Sort inserts by entity type to maximize batch grouping
+          order_updates: true       # Same for updates
   # ─── Flyway (Database Migration Manager) ───
   flyway:
     enabled: true
@@ -88,7 +93,7 @@ logging:
     com.hk07: INFO
     org.springframework.integration.mqtt: DEBUG
     org.hibernate: WARN
-    org.mariadb.jdbc: ERROR
+    com.mysql: ERROR                # mysql-connector-j driver
     org.flywaydb.core.internal.database.base.Database: ERROR
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{20} - %msg%n"

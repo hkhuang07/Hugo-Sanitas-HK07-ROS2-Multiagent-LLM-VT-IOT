@@ -165,6 +165,72 @@
           <EcgWaveform :width="240" :height="50" />
         </div>
 
+        <!-- Phase 2: Perception Scan Panel -->
+        <div class="terminal-card perception-card">
+          <div class="terminal-card-header">[ PERCEPTION_SCAN_MODULE ]</div>
+          <div class="perception-body">
+
+            <!-- Scan State -->
+            <div class="scan-status-row">
+              <span class="label">SCAN_STATUS:</span>
+              <span :class="['val', scanLoading ? 'text-orange animate-pulse' : (scanResult ? 'text-green' : 'text-dim')]">
+                {{ scanLoading ? 'SCANNING...' : (scanResult ? 'SCAN_COMPLETE' : 'READY') }}
+              </span>
+            </div>
+
+            <!-- Scan Button -->
+            <button
+              id="btn-full-body-scan"
+              class="scan-btn"
+              :class="{ scanning: scanLoading }"
+              :disabled="scanLoading"
+              @click="executeScan"
+            >
+              <span class="scan-icon">◎</span>
+              {{ scanLoading ? 'SCANNING...' : '[ FULL_BODY_SCAN ]' }}
+            </button>
+
+            <!-- Scan Results -->
+            <div v-if="scanResult" class="scan-result-grid font-mono text-[9px]">
+              <div class="scan-result-row">
+                <span class="label">OVERALL_RISK:</span>
+                <span :class="['val font-bold', riskClass(scanResult.overall_risk)]">
+                  {{ scanResult.overall_risk }}
+                </span>
+              </div>
+              <div class="scan-result-row">
+                <span class="label">POSTURE:</span>
+                <span :class="['val', riskClass(scanResult.posture_risk)]">{{ scanResult.posture_risk }}</span>
+              </div>
+              <div class="scan-result-row">
+                <span class="label">DISTRESS:</span>
+                <span class="val text-cyan">{{ (scanResult.facial_distress * 100).toFixed(0) }}%</span>
+              </div>
+              <div class="scan-result-row">
+                <span class="label">CONFIDENCE:</span>
+                <span class="val text-green">{{ (scanResult.confidence * 100).toFixed(0) }}%</span>
+              </div>
+              <div v-if="scanResult.skin_tone_note" class="scan-result-row">
+                <span class="label">SKIN_TONE:</span>
+                <span class="val text-cyan">{{ scanResult.skin_tone_note }}</span>
+              </div>
+              <div v-if="scanResult.visible_injuries?.length" class="scan-result-row">
+                <span class="label">INJURIES:</span>
+                <span class="val text-orange">{{ scanResult.visible_injuries.join(', ') }}</span>
+              </div>
+              <div v-if="scanResult.threat_level !== 'CLEAR'" class="scan-result-row">
+                <span class="label">ENV_THREAT:</span>
+                <span :class="['val', riskClass(scanResult.threat_level)]">{{ scanResult.threat_level }}</span>
+              </div>
+              <div v-if="scanResult.notes" class="scan-notes">
+                <span class="text-dim">{{ scanResult.notes }}</span>
+              </div>
+              <div class="scan-disclaimer">{{ scanResult.disclaimer }}</div>
+            </div>
+
+          </div>
+        </div>
+
       </aside>
 
     </div>
@@ -188,6 +254,65 @@ interface ChatMessage {
   role: 'user' | 'hugo'
   content: string
   timestamp: string
+}
+
+interface PerceptionScan {
+  overall_risk: string
+  posture_risk: string
+  facial_distress: number
+  confidence: number
+  skin_tone_note: string
+  visible_injuries: string[]
+  threat_level: string
+  nearest_obstacle_m: number
+  notes: string
+  disclaimer: string
+  scan_duration_ms: number
+}
+
+const scanLoading = ref(false)
+const scanResult = ref<PerceptionScan | null>(null)
+
+function riskClass(risk: string) {
+  if (!risk) return 'text-dim'
+  const r = risk.toUpperCase()
+  if (r === 'CRITICAL') return 'text-red animate-pulse'
+  if (r === 'HIGH' || r === 'WARNING') return 'text-orange'
+  if (r === 'MED' || r === 'MEDIUM') return 'text-orange'
+  if (r === 'LOW' || r === 'CLEAR') return 'text-green'
+  return 'text-cyan'
+}
+
+async function executeScan() {
+  if (scanLoading.value) return
+  scanLoading.value = true
+  scanResult.value = null
+  try {
+    const resp = await api.post('/agents/perception/scan', {})
+    const data = resp.data
+    if (data?.scan) {
+      scanResult.value = data.scan as PerceptionScan
+      // Push scan context to chat log
+      const risk = data.scan.overall_risk
+      const notes = data.scan.notes || ''
+      chatLog.value.push({
+        role: 'hugo',
+        content: `[PERCEPTION_SCAN_COMPLETE] Đã quét toàn thân. Risk: ${risk}${notes ? ' — ' + notes : ''}. Kết quả chi tiết hiển thị trên bảng bên phải.`,
+        timestamp: getCurrentTimeString()
+      })
+      await nextTick()
+      scrollChatToBottom()
+    }
+  } catch (err) {
+    console.error('[SCAN_ERROR]', err)
+    chatLog.value.push({
+      role: 'hugo',
+      content: '[SCAN_ERR] Không thể kết nối Perception Module. Kiểm tra kết nối agent engine.',
+      timestamp: getCurrentTimeString()
+    })
+  } finally {
+    scanLoading.value = false
+  }
 }
 
 const userInput = ref('')
@@ -747,5 +872,127 @@ onMounted(() => {
   font-family: var(--font-hud);
   font-size: 8px;
   letter-spacing: 0.05em;
+}
+
+/* ── Perception Scan Card ──────────────────────────────────────────────── */
+.perception-card {
+  border-color: rgba(0, 229, 255, 0.2);
+}
+
+.perception-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scan-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-hud);
+  font-size: 8px;
+  letter-spacing: 0.05em;
+}
+
+.scan-status-row .label {
+  color: var(--color-text-dim);
+}
+
+.scan-btn {
+  width: 100%;
+  padding: 8px 0;
+  background: rgba(0, 229, 255, 0.04);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  color: var(--color-accent-cyan);
+  font-family: var(--font-hud);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.scan-btn:hover:not(:disabled) {
+  background: rgba(0, 229, 255, 0.12);
+  border-color: var(--color-accent-cyan);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.25), inset 0 0 10px rgba(0, 229, 255, 0.05);
+}
+
+.scan-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.scan-btn.scanning {
+  animation: scan-pulse 1.2s ease-in-out infinite;
+  border-color: var(--color-accent-orange);
+  color: var(--color-accent-orange);
+}
+
+@keyframes scan-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(255, 176, 0, 0.2); }
+  50% { box-shadow: 0 0 12px rgba(255, 176, 0, 0.6); }
+}
+
+.scan-icon {
+  font-size: 14px;
+  animation: scan-rotate 3s linear infinite;
+}
+
+.scan-btn.scanning .scan-icon {
+  animation-duration: 0.8s;
+}
+
+@keyframes scan-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.scan-result-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed rgba(0, 229, 255, 0.15);
+  padding-top: 8px;
+}
+
+.scan-result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+}
+
+.scan-result-row .label {
+  color: var(--color-text-dim);
+  font-size: 8px;
+  letter-spacing: 0.04em;
+}
+
+.scan-result-row .val {
+  font-family: var(--font-hud);
+  font-size: 9px;
+}
+
+.scan-notes {
+  font-size: 8px;
+  color: var(--color-text-dim);
+  line-height: 1.4;
+  border-left: 2px solid rgba(0, 229, 255, 0.2);
+  padding-left: 6px;
+}
+
+.scan-disclaimer {
+  font-size: 7px;
+  color: rgba(255,255,255,0.2);
+  line-height: 1.3;
+  font-style: italic;
+  border-top: 1px dashed rgba(255,255,255,0.06);
+  padding-top: 4px;
 }
 </style>

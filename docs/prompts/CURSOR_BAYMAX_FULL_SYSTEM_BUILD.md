@@ -90,6 +90,24 @@ Bạn là **Lead System Architect + Robotics/Health AI Engineer** cho dự án *
 
 ## 4. PHASED BUILD — THỰC THI TUẦN TỰ
 
+
+
+### PHASE ƯU TIÊN - KHÓ NHƯNG Giá TRỊ NHẤT : ĐẶC TẢ MODULE MÔ PHỎNG 3D (DIGITAL TWIN SPECIFICATION)
+
+Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographic Simulator), Agent phải tuân thủ Tuyệt Đối các quy chuẩn sau:
+
+1. **Tech Stack:** Sử dụng `Three.js` trực tiếp trong Component Vue (sử dụng `<canvas ref="sceneRef">`). Đảm bảo memory management tốt (xóa scene/mesh khi component unmount) để giữ mức 60 FPS.
+2. **Aesthetic (Holographic HUD):** - Không sử dụng material bóng bẩy có texture thực tế (như kim loại hay nhựa). Toàn bộ vật thể phải sử dụng chất liệu Hologram (Wireframe, phát sáng, trong suốt).
+   - BẮT BUỘC sử dụng `EffectComposer` và `UnrealBloomPass` để làm viền lưới của robot và mặt phẳng Grid phát sáng ánh sáng neon trên nền `Midnight Black (#000000)`.
+3. **Môi trường & Tọa độ:**
+   - Vẽ một `GridHelper` vô cực màu `Electric Blue (#00D2FF)` mờ ở mặt phẳng sàn (Y=0).
+   - Vẽ các đường line hiển thị rõ 3 trục tọa độ Vector (X, Y, Z).
+4. **Mô hình Robot (Mockup):** - Dựng một cụm (Group) gồm các khối hình học cơ bản (Box, Cylinder) giả lập các bộ phận của HK-07. Bật chế độ `wireframe: true`.
+   - Cung cấp một hàm/phương thức để cập nhật vị trí `position(x, y, z)` và góc xoay `rotation(x, y, z)` của Group này thông qua Pinia State hoặc Event Listener, sẵn sàng để nối với WebSockets từ Python Backend.
+5. **UI Layer (HTML overlay):** Đặt canvas 3D này phía dưới. Phía trên canvas (z-index cao hơn) là các panel chứa thông số tọa độ dạng chữ ma trận số (Matrix font) cập nhật liên tục để đúng chuẩn Cinematic Cyber.
+
+---
+
 ### PHASE 0 — Audit & Doc sync (2h)
 **Tasks:**
 1. Sửa `docs/MASTER_CHANGELOG.md` §1.2: phân biệt **Implemented (v1)** vs **Planned (v2)**.
@@ -291,3 +309,4 @@ Bạn là **Lead System Architect + Robotics/Health AI Engineer** cho dự án *
 **Document version:** 1.0  
 **Created:** 2026-06-03  
 **Owner:** HK-07 Architecture
+

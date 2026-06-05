@@ -2,23 +2,21 @@
 # HK-07 // HUGO SANITAS — Docker Compose Stack
 # RAM Budget: ~615MB total (Dell Latitude E7270 constraint)
 # ─────────────────────────────────────────────────────────────────────────────
-version: '3.9'
-
 networks:
   hk07-net:
     driver: bridge
 
 volumes:
-  mariadb-data:
+  mysql-data:
   mosquitto-data:
   mosquitto-log:
 
 services:
 
-  # ── [P0-2] MariaDB — Primary persistent store ──────────────────────────────
-  hk07-mariadb:
-    image: mariadb:11.2
-    container_name: hk07-mariadb
+  # ── [P0-2] MySQL — Primary persistent store ────────────────────────────────
+  hk07-mysql:
+    image: mysql:8.4
+    container_name: hk07-mysql
     restart: unless-stopped
     networks: [hk07-net]
     environment:
@@ -27,12 +25,12 @@ services:
       MYSQL_USER: ${DB_USERNAME:-hk07user}
       MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set (see .env.example)}
     volumes:
-      - mariadb-data:/var/lib/mysql
+      - mysql-data:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     # [P0-2] Healthcheck: hk07-core will not start until DB is truly ready
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 8
@@ -40,7 +38,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   # ── [P0-2] Redis — Token cache + message throttle buffer ───────────────────
   hk07-redis:
@@ -121,7 +119,7 @@ services:
     ports:
       - "8888:8888"
     environment:
-      DB_HOST: hk07-mariadb
+      DB_HOST: hk07-mysql
       DB_PORT: 3306
       DB_DATABASE: ${DB_DATABASE:-hk07db}
       DB_USERNAME: ${DB_USERNAME:-hk07user}
@@ -138,7 +136,7 @@ services:
       JAVA_OPTS: "-Xmx512m -Xms128m -XX:+UseZGC -XX:+UseStringDeduplication"
     # [P0-2] depends_on with condition: service_healthy (not just started)
     depends_on:
-      hk07-mariadb:
+      hk07-mysql:
         condition: service_healthy
       hk07-redis:
         condition: service_healthy

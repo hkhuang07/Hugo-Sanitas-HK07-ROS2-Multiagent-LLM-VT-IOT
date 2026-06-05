@@ -10,20 +10,22 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "vue": "^3.4.21",
-    "vue-router": "^4.3.0",
-    "pinia": "^2.1.7",
-    "axios": "^1.6.8",
     "@stomp/stompjs": "^7.0.0",
+    "@types/three": "^0.184.1",
+    "axios": "^1.6.8",
+    "chart.js": "^4.4.2",
+    "pinia": "^2.1.7",
     "sockjs-client": "^1.6.1",
-    "chart.js": "^4.4.2"
+    "three": "^0.184.0",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@types/sockjs-client": "^1.5.4",
     "@vitejs/plugin-vue": "^5.0.4",
-    "vite": "^5.2.0",
     "typescript": "^5.4.0",
-    "vue-tsc": "^2.0.6",
-    "@types/sockjs-client": "^1.5.4"
+    "vite": "^5.2.0",
+    "vue-tsc": "^2.0.6"
   },
   "engines": {
     "node": ">=18.0.0"

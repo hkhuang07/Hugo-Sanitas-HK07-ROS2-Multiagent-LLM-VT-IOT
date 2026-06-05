@@ -52,6 +52,12 @@ export const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/digital-twin',
+      name: 'DigitalTwin',
+      component: () => import('../views/DigitalTwinView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/'
     }

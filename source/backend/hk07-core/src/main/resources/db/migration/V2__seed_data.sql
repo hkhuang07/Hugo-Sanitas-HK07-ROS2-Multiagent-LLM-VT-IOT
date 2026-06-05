@@ -1,4 +1,4 @@
--- Flyway Migration V2: Seed Default Data (MariaDB / MySQL Version)
+-- Flyway Migration V2: Seed Default Data (MySQL Version)
 -- Creates default OWNER account for initial dashboard login.
 -- Password: "HK07-Admin-Change-Me!"
 

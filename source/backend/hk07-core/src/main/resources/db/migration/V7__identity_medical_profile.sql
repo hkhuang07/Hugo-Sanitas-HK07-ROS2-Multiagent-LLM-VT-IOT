@@ -1,12 +1,12 @@
--- Flyway Migration V7: Identity & Medical Profile (MariaDB / MySQL Version)
+-- Flyway Migration V7: Identity & Medical Profile (MySQL Version)
 -- Project: Hugo Sanitas HK-07
 -- Version: 1.0.0-ALPHA
 --
 
 -- ─── Medical Profiles ──────────────────────────────────────────────────────────
 CREATE TABLE medical_profiles (
-    id                     UUID PRIMARY KEY DEFAULT (UUID()),
-    user_id                UUID         NOT NULL,
+    id                     VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id                VARCHAR(36)  NOT NULL,
     full_name              VARCHAR(100) NULL,
     age                    INT          NULL,
     gender                 VARCHAR(10)  NULL,
@@ -25,8 +25,8 @@ CREATE TABLE medical_profiles (
 
 -- ─── Recovery Codes ────────────────────────────────────────────────────────────
 CREATE TABLE recovery_codes (
-    id          UUID PRIMARY KEY DEFAULT (UUID()),
-    user_id     UUID        NOT NULL,
+    id          VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id     VARCHAR(36) NOT NULL,
     code        VARCHAR(8)  NOT NULL,
     used        BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,

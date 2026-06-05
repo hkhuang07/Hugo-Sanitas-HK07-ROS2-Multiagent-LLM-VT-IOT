@@ -10,7 +10,7 @@
       <transition name="sidebar-slide">
         <RoleSidebar v-if="showSidebar" />
       </transition>
-      <main class="app-main-content">
+      <main :class="['app-main-content', isDigitalTwin ? 'app-main-noscroll' : '']">
         <!-- Emergency banner visible on all pages when critical -->
         <div v-if="authStore.isAuthenticated && vitalsStore.isEmergency" class="emergency-banner">
           ⚠ ALERT: {{ vitalsStore.alertLevel }} — HR={{ vitalsStore.current.heartRate }}bpm
@@ -77,6 +77,8 @@ function toggleSidebar() {
 const showSidebar = computed(() => {
   return route.name !== 'Login' && sidebarOpen.value
 })
+
+const isDigitalTwin = computed(() => route.name === 'DigitalTwin')
 
 watch(() => authStore.isAuthenticated, (authed) => {
   if (authed) {
@@ -176,6 +178,11 @@ onUnmounted(() => {
   flex-direction: column;
   overflow-y: auto;
   background: var(--color-bg-void);
+}
+
+/* Digital Twin — no scroll, canvas fills entire content area */
+.app-main-noscroll {
+  overflow: hidden !important;
 }
 
 .emergency-banner {

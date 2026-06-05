@@ -19,7 +19,7 @@ import java.util.UUID;
  * Design notes:
  * - Separate from WristbandConfigEntity to support future multi-device profiles.
  * - Lazy-fetched User join to avoid N+1 on bulk threshold lookups.
- * - Updated_at is auto-managed by MariaDB ON UPDATE CURRENT_TIMESTAMP.
+ * - Updated_at is auto-managed by database ON UPDATE CURRENT_TIMESTAMP.
  */
 @Entity
 @Table(name = "medical_thresholds")

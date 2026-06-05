@@ -64,6 +64,7 @@ public class JwtService {
     public Claims parseToken(String token) {
         return Jwts.parser()
                 .verifyWith(getSigningKey())
+                .clockSkewSeconds(60) // Allow up to 60 seconds clock drift between client and server
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
@@ -73,6 +74,9 @@ public class JwtService {
         try {
             parseToken(token);
             return true;
+        } catch (ExpiredJwtException e) {
+            log.info("[JWT_EXPIRED] {}", e.getMessage()); // Normal lifecycle event, log as INFO rather than WARN
+            return false;
         } catch (JwtException | IllegalArgumentException e) {
             log.warn("[JWT_INVALID] {}", e.getMessage());
             return false;

@@ -18,6 +18,7 @@ from agents.router_agent_v2 import RouterAgentV2
 from agents.safety_agent import SafetyAgent
 from agents.medical_agent import MedicalAgent
 from agents.empathetic_agent import EmpatheticAgent
+from agents.perception_agent import PerceptionAgent
 from arbitrator.arbitrator import Arbitrator
 
 from services.blackboard_service import get_blackboard, ClinicalEntry
@@ -44,6 +45,7 @@ class AgentOrchestratorV2:
         self.safety_agent = SafetyAgent(arbitrator)
         self.medical_agent = MedicalAgent(memory, arbitrator)
         self.empathetic_agent = EmpatheticAgent(memory, arbitrator)
+        self.perception_agent = PerceptionAgent(arbitrator)
         self.memory = memory
         self.arbitrator = arbitrator or Arbitrator()
 
@@ -194,6 +196,16 @@ class AgentOrchestratorV2:
             if med_res and not med_res.startswith("[ERROR]"):
                 if not emp_res:
                     parts.append(med_res)
+                    
+            scan_res = state["outputs"].get("execute_full_body_scan")
+            if scan_res and not scan_res.startswith("[ERROR]"):
+                # Perception result goes into empathetic context (silent blackboard write already done)
+                if not emp_res and not med_res:
+                    parts.append(scan_res)
+                    
+            env_res = state["outputs"].get("execute_environment_scan")
+            if env_res and not env_res.startswith("[ERROR]"):
+                parts.append(env_res)
                     
             search_res = state["outputs"].get("search_medical_guidelines")
             if search_res and not search_res.startswith("[ERROR]"):
@@ -348,6 +360,36 @@ class AgentOrchestratorV2:
                 
                 log.critical("[SOS_PROTOCOL] Emergency activated: %s", reason)
                 return "[緊急対応開始]\n救急車を呼んでいます。位置情報を送信しています。"
+
+            elif tool_name == "execute_full_body_scan":
+                # Tier 0.5: Perception Agent full-body scan
+                # Silent — writes to Blackboard, returns brief summary for orchestrator
+                log.info("[ORCHESTRATOR_V2] Triggering PerceptionAgent full-body scan")
+                scan = await self.perception_agent.execute_full_body_scan()
+                risk = scan.overall_risk
+                notes = scan.notes or ""
+                conf = f"{scan.confidence:.0%}"
+                summary = (
+                    f"[PERCEPTION_SCAN] Risk={risk} | Confidence={conf}"
+                    + (f" | {notes}" if notes else "")
+                )
+                # Upgrade alert_level if scan indicates high risk
+                if risk in ("HIGH", "CRITICAL"):
+                    log.warning("[ORCHESTRATOR_V2] Perception scan returned risk=%s", risk)
+                return summary
+
+            elif tool_name == "execute_environment_scan":
+                # LiDAR snapshot from Fusion Buffer
+                from services.sensor_fusion_buffer import get_fusion_buffer
+                fusion_buf = get_fusion_buffer()
+                lidar = await fusion_buf.latest_lidar()
+                if lidar:
+                    return (
+                        f"[ENVIRONMENT_SCAN] Nearest obstacle: {lidar.min_distance_m:.2f}m | "
+                        f"Threat: {lidar.threat_level} | Obstacles: {lidar.obstacle_count}"
+                    )
+                else:
+                    return "[ENVIRONMENT_SCAN] No LiDAR data in buffer."
 
             else:
                 return f"[Unknown tool: {tool_name}]"

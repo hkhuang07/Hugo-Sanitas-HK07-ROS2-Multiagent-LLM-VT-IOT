@@ -29,10 +29,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.agent_orchestrator import AgentOrchestrator
+from agents.perception_agent import PerceptionAgent
 from arbitrator.arbitrator import Arbitrator
 from memory.lance_memory import LanceMemory
 from services.agent_log_client import start_log_client, stop_log_client
 from services.blackboard_service import get_blackboard
+from services.sensor_fusion_buffer import get_fusion_buffer, VitalsSample, CameraFrame
 
 
 
@@ -66,15 +68,18 @@ orchestrator = AgentOrchestrator(memory=memory, arbitrator=arbitrator)
 # Orchestrator V2 (parallel tool-calling) — instantiated only when flag is on
 orchestrator_v2 = AgentOrchestratorV2(memory=memory, arbitrator=arbitrator) if USE_ORCHESTRATOR_V2 else None
 
+# Perception Agent (Tier 0.5) — on-demand scan, no background loop
+perception_agent = PerceptionAgent(arbitrator=arbitrator)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown sequence for the agent engine"""
-    log.info("+--------------------------------------------------+")
-    log.info("|  HK-07 MULTI-AGENT ENGINE - STARTING             |")
-    log.info("|  Architecture: Supervisor Node-Router Graph      |")
-    log.info("|  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          |")
-    log.info("+--------------------------------------------------+")
+    log.info("╔══════════════════════════════════════════════════╗")
+    log.info("║  HK-07 MULTI-AGENT ENGINE - STARTING             ║")
+    log.info("║  Architecture: Supervisor Node-Router Graph      ║")
+    log.info("║  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          ║")
+    log.info("╚══════════════════════════════════════════════════╝")
 
     # Initialize LanceDB memory
     await memory.initialize()
@@ -115,9 +120,9 @@ async def lifespan(app: FastAPI):
 
 # ─── FastAPI Application ─────────────────────────────────────────────────────
 app = FastAPI(
-    title="HK-07 Multi-Agent Engine",
-    description="MiroFish Node-Router Multi-Agent AI system for HK-07 Robot",
-    version="1.0.0-RC1",
+    title="HK-07 Multi-Agent Engine (Phase 2)",
+    description="Baymax Cognitive Multi-Agent system — Blackboard + Orchestrator V2 + Perception Agent",
+    version="2.0.0-phase2",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url=None,
@@ -259,6 +264,83 @@ async def test_orchestrator(body: dict):
         state["orchestrator_version"] = "V1"
 
     return state
+
+
+# ─── Perception Agent Endpoints ───────────────────────────────────────────────
+
+@app.post("/api/v1/agents/perception/scan")
+async def perception_scan(body: dict = None):
+    """
+    Trigger a full-body multi-modal perception scan.
+    Pulls latest camera frame + vitals + LiDAR snapshot from SensorFusionBuffer,
+    calls Vision LLM (Gemini Flash), writes PerceptionScan to Blackboard.
+    Returns PerceptionScan JSON.
+    """
+    # Optional: push synthetic camera frame path from request body
+    if body:
+        frame_path = body.get("frame_path", "")
+        if frame_path and os.path.isfile(frame_path):
+            import base64
+            fusion_buf = get_fusion_buffer()
+            with open(frame_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+            from services.sensor_fusion_buffer import CameraFrame
+            await fusion_buf.push_camera(CameraFrame(frame_path=frame_path, frame_b64=b64))
+
+    try:
+        scan = await perception_agent.execute_full_body_scan()
+        return {
+            "status": "ok",
+            "scan": scan.to_dict(),
+        }
+    except Exception as exc:
+        log.error("[PERCEPTION_SCAN] Error: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.get("/api/v1/agents/perception/latest")
+async def perception_latest():
+    """
+    Return the latest cached PerceptionScan from Blackboard (no new scan).
+    """
+    scan = await perception_agent.read_latest_scan()
+    if scan is None:
+        return {"status": "no_scan", "scan": None}
+    return {"status": "ok", "scan": scan.to_dict()}
+
+
+@app.get("/api/v1/agents/perception/status")
+async def perception_status():
+    """Agent status + SensorFusionBuffer stats"""
+    fusion_buf = get_fusion_buffer()
+    return {
+        "agent": perception_agent.get_status(),
+        "fusion_buffer": await fusion_buf.stats(),
+    }
+
+
+@app.post("/api/v1/sensors/vitals/push")
+async def push_vitals(body: dict):
+    """
+    Lightweight endpoint for SensorFusionBuffer: push a vitals sample.
+    (Spring Boot / wristband simulator can call this to feed the fusion buffer)
+    Body: { heart_rate, spo2, systolic, diastolic, body_temperature, step_count, alert_level }
+    """
+    try:
+        fusion_buf = get_fusion_buffer()
+        sample = VitalsSample(
+            heart_rate=body.get("heart_rate") or body.get("heartRate"),
+            spo2=body.get("spo2"),
+            systolic=body.get("systolic"),
+            diastolic=body.get("diastolic"),
+            body_temperature=body.get("body_temperature") or body.get("bodyTemperature"),
+            step_count=body.get("step_count") or body.get("stepCount"),
+            alert_level=body.get("alert_level", "NORMAL"),
+        )
+        await fusion_buf.push_vitals(sample)
+        return {"status": "ok", "buffered_samples": (await fusion_buf.stats())["vitals_samples"]}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
 
 
 if __name__ == "__main__":
