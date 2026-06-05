@@ -1,4 +1,4 @@
-# ─── [ HK-07 // HUGO SANITAS ROBOT COMPANION ] ──────────────────────────────
+# ─── [ HUGO SANITAS HK-07 ROBOT COMPANION ] ───
 
 <p align="center">
   <img src="./asset/main_logo.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
@@ -250,3 +250,22 @@ python source/robotics/simulation/trigger_obstacle.py
 | **hk07-core** | 512 MB | Spring Boot core backend JVM |
 | **hk07-agent** | 256 MB | Python multi-agent event loop |
 | **TOTAL** | **~615 MB** | **Highly optimized for low-spec WSL2/Docker** |
+
+---
+
+## 👤 Author
+
+* **Huỳnh Quốc Huy** (HK.Huang07)
+* **Email:** [huykyunh.k@gmail.com](mailto:huykyunh.k@gmail.com)
+* **GitHub:** [hkhuang07](https://github.com/hkhuang07)
+* **LinkedIn:** [hkhuang07](https://www.linkedin.com/in/hkhuang07/)
+
+---
+
+## 📄 License
+
+Proprietary / Closed Source — All Rights Reserved.
+
+Copyright (c) 2026 HK.Huang07 (Hugo Sanitas Project).
+
+This software and its associated documentation files are the sole and exclusive property of the author. Copying, modification, distribution, redistribution, publishing, or sublicensing in any form, source or binary, with or without modification, is strictly prohibited without the prior written consent of the copyright owner.

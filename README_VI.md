@@ -248,3 +248,22 @@ python source/robotics/simulation/trigger_obstacle.py
 | **hk07-core** | 512 MB | Máy ảo JVM chạy dịch vụ Spring Boot Core |
 | **hk07-agent** | 256 MB | Tiến trình Python chạy vòng lặp suy luận AI Multi-Agent |
 | **TỔNG CỘNG** | **~615 MB** | **Tối ưu hóa tuyệt đối cho môi trường nhúng WSL2/Docker** |
+
+---
+
+## 👤 Tác Giả (Author)
+
+* **Huỳnh Quốc Huy** (HK.Huang07)
+* **Email:** [huykyunh.k@gmail.com](mailto:huykyunh.k@gmail.com)
+* **GitHub:** [hkhuang07](https://github.com/hkhuang07)
+* **LinkedIn:** [hkhuang07](https://www.linkedin.com/in/hkhuang07/)
+
+---
+
+## 📄 Bản Quyền (License)
+
+Bản quyền sở hữu riêng (Proprietary / Closed Source) — Tất cả các quyền được bảo lưu.
+
+Bản quyền © 2026 thuộc về HK.Huang07 (Dự án Hugo Sanitas).
+
+Phần mềm này cùng tất cả tài liệu đi kèm là tài sản độc quyền của tác giả. Nghiêm cấm mọi hành vi sao chép, chỉnh sửa, phân phối, tái phân phối, xuất bản hoặc cấp phép lại dưới mọi hình thức, cho dù ở dạng mã nguồn hay mã máy, có hoặc không có sửa đổi, nếu không có sự đồng ý trước bằng văn bản từ chủ sở hữu bản quyền.
