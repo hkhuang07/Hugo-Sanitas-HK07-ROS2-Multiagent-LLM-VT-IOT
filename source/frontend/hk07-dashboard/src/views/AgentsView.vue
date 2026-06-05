@@ -181,13 +181,33 @@ function truncate(s: string, max: number) {
 
 .event-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .event-row {
-  display: grid; grid-template-columns: 65px 110px 100px 1fr;
-  gap: 8px; font-size: 10px; line-height: 1.6; padding: 2px 4px;
-  border-left: 2px solid transparent; transition: border-color 100ms;
+  display: grid;
+  grid-template-columns:
+    minmax(58px, 65px)
+    minmax(90px, 120px)
+    minmax(70px, 110px)
+    minmax(0, 1fr);
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 2px 4px;
+  border-left: 2px solid transparent;
+  transition: border-color 100ms;
+  align-items: start;
 }
 .event-row:hover { border-left-color: var(--color-accent-green); background: rgba(0,255,102,0.03); }
 .ev-critical { border-left-color: var(--color-accent-red) !important; background: rgba(255,51,51,0.05); }
-.ev-decision { color: var(--color-text-primary); }
+.ev-decision {
+  color: var(--color-text-primary);
+  word-break: break-word;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ev-time, .ev-agent, .ev-provider {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .empty-stream { padding: 20px; text-align: center; font-size: 11px; animation: blink-cursor 1s step-end infinite; }
 @keyframes blink-cursor { 50%{opacity:0} }

@@ -231,6 +231,7 @@ public class AuthService {
                 .accessTokenExpiresAt(expiresAt)
                 .userId(userId)
                 .role(user.getRole().name())
+                .email(user.getEmail())  // Returned so frontend restores full profile on refresh
                 .build();
     }
 

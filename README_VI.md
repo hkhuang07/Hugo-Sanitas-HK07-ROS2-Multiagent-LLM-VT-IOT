@@ -1,52 +1,104 @@
-# HK-07 // HUGO SANITAS ROBOT COMPANION
+# ─── [ HK-07 // HUGO SANITAS ROBOT COMPANION ] ──────────────────────────────
 
 <p align="center">
-  <img src="./asset/main_logo.jpg" alt="Brand Logo" height="100" />
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="./asset/logo_name.jpg" alt="Logo Name" height="100" />
+  <img src="./asset/main_logo.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
+  <img src="./asset/logo_name.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
 </p>
 
-> **Mã hiệu:** HK.Huang07 | **Phiên bản:** 1.0.0-ALPHA | **Ngày khởi tạo:** 2026-05-31
 
-Robot Bạn đồng hành Chăm sóc Sức khỏe thế hệ mới — Đồng hành trong cuộc sống hàng ngày bằng trí tuệ nhân tạo đa tác nhân, giám sát sinh tồn thời gian thực và phản xạ an toàn < 5ms.
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  MÃ HIỆU:  HK.Huang07           │  PHIÊN BẢN: 1.0.0-ALPHA                    │
+│  KHỞI TẠO: 2026-05-31           │  TRẠNG THÁI: ĐANG VẬN HÀNH                 │
+│  NỀN TẢNG: Linux / WSL2         │  GIAO DIỆN: CYBER-CINEMATIC (HUD THUẦN)    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
----
-
-## Giao diện trực quan (System Interface Showcase)
-
-### 1. Màn hình giám sát Vitals Dashboard (60FPS)
-![Vitals Dashboard](./asset/dashboard-ui.jpg)
-
-### 2. Khung Chat thấu cảm AI & Suy luận Đa tác nhân (Companion Chat)
-![Agent Chat](./asset/agent-chat.jpg)
-![Agent Companion](./asset/agent-companion.jpg)
-
-### 3. Nhật ký Động cơ Đa tác nhân (Agents Log)
-![Agents Log](./asset/agent_logs.jpg)
-
-### 4. Hệ thống điều phối an toàn (Safety Radar)
-![Safety Radar](./asset/safemode-tab.jpg)
-
-### 5. Lịch sử sinh tồn lâm sàng (History)
-![Historical Metrics](./asset/history_tab.jpg)
-
-### 6. Giả lập Camera Robot (Khi có hình ảnh / Khi mất kết nối)
-![Robot Camera Simulation Online](./asset/robot-cam-simulate.jpg)
-![Robot Camera Simulation Lost](./asset/robot-cam-simulate-vision-lost.jpg)
-
-### 7. Trực quan hóa dữ liệu Robot trên máy tính
-![Robot Computer Visualization](./asset/robot-computer-visualize.jpg)
-
-### 8. Xử lý Camera bằng OpenCV & MediaPipe
-![OpenCV MediaPipe Process](./asset/opencv_medipipe_webcam_process.jpg)
+> **HK-07 // HUGO SANITAS** là thế hệ robot bạn đồng hành chăm sóc sức khỏe thông minh thế hệ mới — hỗ trợ người cao tuổi và bệnh nhân mắc các hội chứng tim mạch trong sinh hoạt hàng ngày. Hệ thống tích hợp trí tuệ nhân tạo đa tác nhân (multi-agent AI), truyền tải dữ liệu sinh tồn thời gian thực, thị giác máy tính nhận diện té ngã và cơ chế phản xạ an toàn khẩn cấp <5ms, vận hành mượt mà dưới ràng buộc tài nguyên cực kỳ khắt khe (<615MB RAM tổng).
 
 ---
 
-## Kiến trúc hệ thống
+## 🖥️ Trực Quan Hóa Giao Diện Hệ Thống (Showcase)
+
+Giao diện ứng dụng được thiết kế theo triết lý thiết kế **FUI Cyber-Cinematic** (Nền đen tuyệt đối `#000000`, lưới tọa độ xanh Holographic Cyan `#00E5FF`, thông số sinh tồn hoạt động xanh Emerald Green `#00FF66` và cảnh báo nguy hiểm đỏ Crimson `#FF3333`).
+
+### 1. Hệ Thống Xác Thực & Bảo Mật
+
+#### A. Giao Diện Đăng Nhập Kiểu Terminal
+![Terminal Login](./asset/auth_login.jpg)
+* **Mô tả:** Giao diện xác thực mang phong cách terminal tương lai. Thiết kế mô phỏng bảng điều khiển y tế/quân sự, yêu cầu thông tin đăng nhập được mã hóa an toàn.
+
+#### B. Xác Thực Đa Yếu Tố (MFA) & Khôi Phục Bằng Backup Code
+![Backup Code Verification](./asset/auth_by_backupcode.jpg)
+* **Mô tả:** Kênh xác thực dự phòng sử dụng các mã bảo mật (Backup Codes) được tạo ngẫu nhiên bằng mật mã học khi token của authenticator không khả dụng.
+
+---
+
+### 2. Giám Sát Chỉ Số Sinh Tồn Lâm Sàng
+
+#### A. Bảng Giám Sát Dữ Liệu Sinh Tồn Thời Gian Thực (60FPS)
+![Dynamic Telemetry](./asset/dynamic-telemetry.jpg)
+* **Mô tả:** Trung tâm điều khiển chính. Hiển thị trực quan các chỉ số sinh học (Nhịp tim, SpO2, Thân nhiệt, Huyết áp) cùng sóng điện tâm đồ (ECG) tần số 60Hz vẽ bằng HTML5 Canvas tăng tốc phần cứng.
+
+#### B. Lịch Sử Biểu Đồ Sinh Tồn Lâm Sàng
+![History Metrics](./asset/history_metric.jpg)
+* **Mô tả:** Cho phép điều phối viên thiết lập khoảng thời gian linh hoạt (Từ ngày / Đến ngày) để tải, vẽ biểu đồ và phân tích diễn biến sức khỏe dài hạn của bệnh nhân.
+
+---
+
+### 3. Hệ Thống Trí Tuệ Nhân Tạo (AI Cognitive & Agents)
+
+#### A. Kênh Trò Chuyện Thấu Cảm AI (Companion Dialogue)
+![Companion Uplink](./asset/companion-uplink.jpg)
+* **Mô tả:** Khung hội thoại tương tác được cung cấp bởi động cơ AI Đa tác nhân (Multi-Agent Engine) qua API Groq/Gemini. Đưa ra lời khuyên y tế, phân tích cảm xúc và trấn an tinh thần bệnh nhân.
+
+#### B. Nhật Ký Hoạt Động Của Động Cơ Đa Tác Nhân (System Logs)
+![Agent System Log](./asset/agent_system_log.jpg)
+* **Mô tả:** Luồng dữ liệu log hiển thị chuỗi suy luận thời gian thực và hành động của các đặc vụ: `Vitals Monitor Agent` (Giám sát), `Emergency Agent` (Khẩn cấp), và `Empathetic Agent` (Thấu cảm).
+
+---
+
+### 4. Hệ Thống Điều Phối Robot & An Toàn Vật Lý
+
+#### A. Mô Hình Robot 3D Holographic Twin & Radar Quét
+![Holographic Twin](./asset/holographic_twin.jpg)
+* **Mô tả:** Trực quan hóa bản đồ radar 3D ảo hiển thị trạng thái chuyển động vật lý, vùng cảm biến và hướng di chuyển của robot trong không gian thực thời gian thực.
+
+#### B. Tọa Độ An Toàn & Cơ Chế Phanh Khẩn Cấp (Inhibition)
+![Safety Coordinates](./asset/safety_cooroinates.jpg)
+* **Mô tả:** Giám sát khoảng cách chướng ngại vật từ cảm biến LiDAR, tọa độ robot và tự động kích hoạt phản xạ ngắt động cơ ngay lập tức nếu phát hiện nguy cơ va chạm hoặc té ngã.
+
+---
+
+### 5. Giả Lập Camera & Xử Lý Thị Giác Máy Tính (Edge Vision)
+
+#### A. Luồng Hình Ảnh Trực Tiếp Từ Camera Robot (Online)
+![Robot Camera Online](./asset/robot-cam-simulate.jpg)
+* **Mô tả:** Luồng camera truyền hình ảnh trực tiếp từ góc nhìn của robot khi di chuyển trong không gian giả lập Webots.
+
+#### B. Luồng Hình Ảnh Bị Mất Kết Nối (Offline / Vision Stream Lost)
+![Robot Camera Lost](./asset/robot-cam-simulate-vision-lost.jpg)
+* **Mô tả:** Trạng thái an toàn tự động hiển thị khi mất luồng dữ liệu camera, cảnh báo cho nhân viên y tế từ xa về lỗi cảm biến.
+
+#### C. Nhận Diện Hành Vi Bằng OpenCV & MediaPipe
+![Computer Vision Processing](./asset/robot-computer-visualize.jpg)
+* **Mô tả:** Bộ xử lý thị giác máy tính biên phân tích tư thế nằm/đứng, khung xương, và khuôn mặt của bệnh nhân nhằm phát hiện sự cố té ngã tự động.
+
+---
+
+### 6. Hồ Sơ Bệnh Nhân & Cài Đặt Bảo Mật
+
+#### A. Cấu Hình Hồ Sơ Sức Khỏe & Quản Lý Khóa Bảo Mật MFA
+![Profile Settings](./asset/profile-settings.jpg)
+* **Mô tả:** Bảng quản trị chứa thông tin tóm tắt hồ sơ y tế bệnh nhân, thông tin tài khoản cá nhân, và cấu hình kích hoạt khóa xác thực đa yếu tố.
+
+---
+
+## ⚙️ Kiến Trúc Hệ Thống
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│         HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE           │
+│          HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE           │
 ├─────────────────┬───────────────────┬───────────────────────┤
 │  [FRONTEND]     │   [BACKEND CORE]  │   [AGENT ENGINE]      │
 │  Vue 3 + Vite   │  Spring Boot 3.2  │   Python FastAPI      │
@@ -62,239 +114,137 @@ Robot Bạn đồng hành Chăm sóc Sức khỏe thế hệ mới — Đồng h
 └────────────────┘  └─────────────┘  └───────────────────────┘
                                               ▲
                               ┌───────────────┴───────────────┐
-                              │     SENSOR LAYER (Simulated)  │
-                              │  Wokwi ESP32 (BLE Wristband)  │
+                              │     LỚP THIẾT BỊ CẢM BIẾN     │
+                              │  Wokwi ESP32 (Vòng đeo tay)   │
                               │  ROS 2 LiDAR Mock Nodes       │
-                              │  Webots Robot Simulator       │
+                              │  Giả lập Robot Webots         │
                               └───────────────────────────────┘
 ```
 
 ---
 
-## Ý nghĩa xây dựng & Bài toán giải quyết
+## 🛠️ Các Bài Toán Thực Tiễn Được Giải Quyết
 
-### 1. Ý nghĩa dự án (Mission & Philosophy)
-Dự án **HK-07 // HUGO SANITAS** được thiết kế nhằm mục đích xây dựng một hệ thống robot trợ lý cá nhân thông minh trong gia đình (Care-Robot Companion) dành cho người cao tuổi, người có bệnh nền tim mạch. Robot không chỉ là thiết bị giám sát chỉ số sinh tồn bị động mà còn đóng vai trò như một thực thể tương tác thấu cảm và phản ứng nhanh, kết nối chặt chẽ giữa bệnh nhân, gia đình và nhân viên y tế.
-
-### 2. Bài toán thực tiễn giải quyết
-* **Độ trễ phản xạ khẩn cấp:** Trong y khoa, mỗi giây đều quý giá. Hệ thống giải quyết bài toán xử lý phản xạ các sự kiện khẩn cấp y tế dưới 5ms (ví dụ: phát hiện đột quỵ, dừng chuyển động robot khi phát hiện chướng ngại vật hoặc va chạm cận kề) bằng mô hình xử lý ưu tiên dựa trên hàng đợi MQTT và STOMP WebSockets.
-* **Tối ưu hóa tài nguyên phần cứng (Resource Constraint):** Robot hoạt động ổn định trên các vi điều khiển và máy tính nhúng hạn chế (như Dell Latitude E7270 cũ, chip 1.6GHz, 8GB RAM) với mức tiêu thụ tài nguyên cực kỳ tối ưu (<615MB RAM cho toàn bộ stack).
-* **Kết hợp Chẩn đoán Logic & Thấu cảm AI:** Tách biệt hai lớp xử lý: Lớp phản xạ cứng (Hard Reflex - dựa trên ngưỡng chỉ số y tế cố định) để kích hoạt tín hiệu SOS ngay lập tức, và Lớp tương tác mềm (Empathetic Dialogue - dựa trên AI Multi-Agent và LLMs) để trò chuyện, giảm căng thẳng tâm lý cho bệnh nhân và đề xuất lộ trình chăm sóc lâm sàng thứ cấp.
-* **Bảo mật kênh truyền thời gian thực (Secured Real-time Telemetry):** Giải quyết lỗ hổng bảo mật rò rỉ dữ liệu y tế trên luồng WebSockets thông qua hệ thống chặn quyền ở mức Inbound Channel của STOMP (JWT Authentication Interceptor), đảm bảo dữ liệu sinh tồn chỉ được truyền đến người dùng hợp lệ.
+1. **Độ Trễ Phản Xạ Khẩn Cấp Cực Thấp (<5ms):** Bỏ qua các khối ghi cơ sở dữ liệu đồng bộ thông thường để phát tín hiệu dừng khẩn cấp (như dừng bánh xe robot khi có chướng ngại vật hay gọi SOS) thông qua luồng MQTT được tối ưu hóa.
+2. **Tối Ưu Hóa Ràng Buộc Tài Nguyên:** Vận hành trơn tru toàn bộ các dịch vụ phức tạp (Spring Boot, Python Agents, hệ cơ sở dữ liệu và trung gian thông điệp) trên một máy chủ thử nghiệm cấu hình thấp, giới hạn tổng lượng RAM tiêu thụ dưới **<615MB RAM**.
+3. **Mô Hình Chẩn Đoán Lưỡng Tầng (Hybrid):** Kết hợp hai lớp xử lý: Lớp phản xạ cứng (Hard Reflex) dựa trên quy tắc logic ngưỡng cố định để đưa ra cảnh báo tức thời, và Lớp suy luận mềm (Soft Cognitive) tận dụng LLM và Multi-Agent để phân tích ngữ cảnh bệnh án và trò chuyện thấu cảm.
+4. **Bảo Mật Dữ Liệu Sinh Tồn Thời Gian Thực:** Bảo vệ luồng WebSocket truyền thông số y sinh bằng bộ chặn kênh Inbound của STOMP (JWT Channel Interceptor), ngăn chặn truy cập trái phép vào luồng dữ liệu y tế nhạy cảm.
 
 ---
 
-## Chi tiết Công nghệ & Nguyên lý hoạt động
+## 📦 Cấu Trúc Thư Mục
 
-### 1. Chi tiết Tech Stack toàn diện
-* **Frontend Dashboard:**
-  * **Vue 3 + TypeScript + Vite:** Khởi tạo giao diện SPA hiệu năng cao.
-  * **Pinia:** Quản lý đồng bộ trạng thái luồng dữ liệu y tế thời gian thực.
-  * **Custom Cinematic Cyber-Dark Theme:** Triết lý thiết kế FUI (Fictional User Interface) Big Hero 6 / Iron Man với hệ màu Cyber Dark-Blue, tối đa hóa trải nghiệm giám sát an ninh.
-  * **ECG Waveform Canvas:** Vẽ biểu đồ sóng điện tâm đồ thời gian thực tần số 60Hz bằng HTML5 Canvas, tận dụng tối đa tăng tốc phần cứng (GPU-acceleration).
-* **Backend Core (Trung tâm chỉ huy):**
-  * **Spring Boot 3.2 + Java 21 (Virtual Threads):** Sử dụng cơ chế luồng ảo (Virtual Threads) để xử lý hàng ngàn kết nối WebSocket đồng thời mà không nghẽn tài nguyên CPU.
-  * **Spring Security + JWT:** Hệ thống phân quyền chặt chẽ (RBAC) cho Owner, Medic, và Guest.
-  * **STOMP Broker Interceptor:** Bảo mật luồng WebSocket ở mức kênh kết nối (Inbound Channel).
-* **AI Multi-Agent Engine (Trí tuệ nhân tạo đa tác nhân):**
-  * **Python FastAPI:** Cung cấp API tương tác thấu cảm và chuyển tiếp logs AI.
-  * **Mô hình Đa tác nhân (Multi-Agent framework):**
-    * *Vitals Monitor Agent:* Giám sát dòng dữ liệu sinh học từ xa.
-    * *Emergency Diagnostics Agent:* Nhận diện biến cố sức khỏe lâm sàng khẩn cấp.
-    * *Empathetic Interactive Agent:* Sử dụng Groq Llama 3 / Gemini Pro qua API để sinh phản hồi ngôn ngữ tự nhiên, tạo cảm giác gần gũi, thấu cảm y học.
-* **Lớp thiết bị & Giả lập (IoT & Simulation):**
-  * **Eclipse Mosquitto (MQTT):** Broker trung gian giúp ingest dữ liệu sinh tồn với độ trễ cực thấp (<5ms).
-  * **Simulated ESP32 (Wokwi BLE Wristband):** Mô phỏng vòng đeo tay thông minh đo nhịp tim, nhiệt độ, SpO2 và nút khẩn cấp SOS.
-  * **Webots Simulator & ROS 2 Mock Nodes:** Mô phỏng vật lý chuyển động của robot HK-07, cảm biến khoảng cách và LiDAR tránh chướng ngại vật thời gian thực.
-* **Cơ sở dữ liệu (Database):**
-  * **MySQL:** Lưu trữ lâu dài thông tin lịch sử bệnh án, người dùng và logs hệ thống.
-  * **Redis:** Lưu cache, kiểm soát chống spam tin nhắn (Throttling) và quản lý trạng thái token đăng nhập.
-
-### 2. Nguyên lý hoạt động hệ thống (Operational Workflow)
 ```
-[Vòng đeo tay BLE / Cảm biến Robot]
-          │ (Dữ liệu 10Hz qua MQTT)
-          ▼
-[Eclipse Mosquitto (Port: 1883)]
-    ├───► [Python Multi-Agent Engine (Port: 8889)] ───► Chẩn đoán Lâm sàng & LLM Reasoning
-    └───► [Spring Boot Backend Core (Port: 8888)]
-               │ (Xử lý ưu tiên, Ghi MySQL & Redis)
-               ▼ (WebSocket STOMP qua JWT Interceptor)
-         [Vue 3 Frontend Dashboard (60FPS ECG)]
+hk-07/
+├── asset/                  ← Chứa ảnh chụp màn hình giao diện hệ thống
+├── docs/                   ← Tài liệu đặc tả kỹ thuật và hướng dẫn
+│   ├── 00-project-init/    ← Khởi động dự án, phân tích yêu cầu, techstack
+│   ├── 01-system-design/   ← Kiến trúc hệ thống, cơ sở dữ liệu, đặc tả API
+│   ├── 02-backend/         ← Hướng dẫn vận hành và nhật ký thay đổi Backend
+│   ├── 03-frontend/        ← Nhật ký thiết kế UI/UX và đặc tả Frontend
+│   ├── 04-testing/         ← Danh sách kiểm tra chất lượng và kịch bản test
+│   ├── 05-deployment/      ← Cấu hình Docker và hướng dẫn triển khai
+│   ├── 06-evolution/       ← Tài liệu cải tiến, spec nâng cấp và phân tích
+│   └── MASTER_CHANGELOG.md ← Nhật ký thay đổi phiên bản toàn bộ hệ thống
+└── source/                 ← Mã nguồn các thành phần dự án
+    ├── backend/
+    │   ├── hk07-core/      ← Mã nguồn Java Spring Boot Core
+    │   ├── hk07-agent/     ← Mã nguồn Python AI Multi-Agent
+    │   └── docker/         ← Các tệp cấu hình hạ tầng Docker
+    ├── frontend/
+    │   └── hk07-dashboard/ ← Mã nguồn Vue 3 Single Page Application
+    └── docker-compose.yml  ← Tệp điều phối tích hợp toàn bộ stack
 ```
-
-* **Bước 1: Tiếp nhận dữ liệu IoT (Ingestion):** Cảm biến vòng đeo tay y tế phát dữ liệu định dạng JSON tới MQTT topic `hk07/sensors/wristband/...`. Cùng lúc đó, Webots Robot phát dữ liệu khoảng cách laser đến `hk07/sensors/lidar/...`.
-* **Bước 2: Phản xạ và Phân phối (Routing & Reflex):**
-  * Spring Boot Core đăng ký nhận tin từ MQTT. Khi nhận gói tin sinh tồn, hệ thống kiểm tra ngưỡng an toàn. Nếu các chỉ số bình thường, nó lưu vào MySQL và đẩy trực tiếp lên Vue 3 Dashboard thông qua STOMP WebSocket để hiển thị.
-  * Nếu phát hiện chỉ số bất thường (nhịp tim > 150 BPM - Heart Attack), hệ thống lập tức bỏ qua lưu trữ đệm, kích hoạt cờ khẩn cấp (`emergency_button_pressed` hoặc `stroke_alert`), gửi lệnh khẩn cấp qua MQTT buộc robot Webots dừng di chuyển lập tức để đảm bảo an toàn, đồng thời thông báo SOS nổi trên Dashboard.
-* **Bước 3: Suy luận AI thấu cảm (AI Dialogue):** AI Agent tiếp nhận luồng sự kiện khẩn cấp, phân tích bệnh án lịch sử của bệnh nhân, gọi mô hình ngôn ngữ lớn (LLM Groq/Gemini) để đưa ra lời khuyên y khoa sơ cấp và câu nói trấn an tâm lý phù hợp, gửi trực tiếp về khung chat Companion trên giao diện Vue 3.
 
 ---
 
-## Cấu trúc thư mục
+## 🚀 Hướng Dẫn Khởi Động Nhanh
 
-```
-source/
-├── backend/
-│   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
-│   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
-│   └── docker/             ← Mosquitto + MySQL configs
-├── frontend/
-│   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
-└── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
-```
+Hệ thống hỗ trợ 2 chế độ vận hành: **Chạy Tích Hợp Bằng Docker** hoặc **Khởi Động Thủ Công Từng Thành Phần (Local Developer Mode)**.
 
-## Quick Start & Testing Guide
-
-Hệ thống hỗ trợ 2 chế độ chạy: **Full Docker Stack** (Môi trường dịch vụ tích hợp Docker) hoặc **Local Dev** (Khởi động thủ công từng module rời).
-
-### 1. Chế độ Docker Deployment (Docker Stack)
-Trong chế độ này, tất cả cơ sở dữ liệu nền, các cổng MQTT Broker, API chính của Spring Boot và Động cơ AI Multi-Agent đều được đóng gói và chạy dưới dạng Container.
+### 1. Vận Hành Qua Docker Compose
 
 ```bash
-# 1. Cấu hình biến môi trường
+# 1. Di chuyển vào thư mục chứa cấu hình backend
 cd source/backend
 cp .env.example .env
-# Mở file .env và điền GROQ_API_KEY hoặc GEMINI_API_KEY
+# Mở file .env và điền GROQ_API_KEY hoặc GEMINI_API_KEY phù hợp
 
-# 2. Khởi động toàn bộ stack dịch vụ
+# 2. Khởi động toàn bộ stack dịch vụ bằng container
 docker compose up -d --build
 
-# 3. Kiểm tra các dịch vụ đang chạy
-docker ps
-# Dashboard Frontend: http://localhost:4205 (Được định tuyến qua Nginx)
+# 3. Các cổng kết nối
+# Dashboard Frontend:  http://localhost:4205 (Định tuyến qua Nginx)
 # Backend Swagger Docs: http://localhost:8888/swagger-ui.html
-# AI Agent API: http://localhost:8889
-# Mosquitto MQTT Broker: http://localhost:1883 / Bản sao Replica: http://localhost:1884
+# AI Agent API Docs:   http://localhost:8889/docs
 ```
 
-Để khởi chạy các node robot điều khiển và cảm biến kết nối đến Docker stack, hãy thiết lập biến môi trường và chạy thủ công trên máy chủ (host) hoặc WSL:
+Để chạy các tệp kịch bản giả lập thị giác máy tính và điều khiển robot hướng tới cụm Docker, thiết lập các biến môi trường và chạy:
 ```bash
-# Cấu hình biến kết nối đến Broker MQTT Docker
 export MQTT_BROKER_HOST=localhost
 export MQTT_BROKER_PORT=1883
 export MQTT_USERNAME=hk07sim
-export MQTT_PASSWORD=...   # dùng đúng giá trị MQTT_PASSWORD đã khai báo trong source/backend/.env
+export MQTT_PASSWORD=mật_khẩu_mqtt_trong_file_env
 
-# Khởi động Node Sensor Fusion (OpenCV Camera)
-cd source/sensors/vision_sensor
-python hk07_sensor_fusion.py
+# Chạy node xử lý thị giác máy tính OpenCV & MediaPipe
+python source/sensors/vision_sensor/hk07_sensor_fusion.py
 
-# Khởi động Node Robotics Edge Controller (Webots Robot)
-cd source/robotics/controllers
-python hk07_edge_controller.py
-
-# Khởi động Node Vivo HTTP-MQTT Sensor Bridge
-cd source/sensors/mobile_gateway
-python vivo_http_mqtt_bridge.py
+# Chạy node điều khiển động cơ robot giả lập Webots
+python source/robotics/controllers/hk07_edge_controller.py
 ```
 
 ---
 
-### 2. Chế độ Local Dev (Khởi động thủ công từng Node hệ thống)
+### 2. Khởi Động Thủ Công Trong Phát Triển Cục Bộ (Local Dev)
 
-Để phát triển mã nguồn cục bộ, bạn có thể khởi động các cơ sở hạ tầng nền và từng module một cách độc lập.
-
-#### Bước 0: Khởi động các dịch vụ hạ tầng (Broker & Database)
+#### Bước 0: Khởi động các cơ sở dữ liệu và Broker nền
 ```bash
-# Chạy MQTT, MySQL và Redis ở chế độ nền:
 cd source/backend
 docker compose up -d redis hk07-mysql mosquitto
 ```
-*Hoặc bạn có thể cài đặt chạy dịch vụ Mosquitto (port 1883), Redis (port 6379), MySQL (port 3306) trực tiếp trên máy cục bộ.*
+*(Hoặc chạy các dịch vụ cài đặt cục bộ trên máy chủ gồm: Mosquitto broker cổng 1883, Redis cổng 6379, và MySQL cổng 3306).*
 
 #### Bước 1: Khởi động Backend Core (Spring Boot)
 ```bash
 cd source/backend/hk07-core
 mvn clean install -DskipTests
 mvn spring-boot:run
-# Chạy tại cổng http://localhost:8888
+# Backend lắng nghe tại: http://localhost:8888
 ```
 
-#### Bước 2: Khởi động Node AI Engine (Python Multi-Agent FastAPI)
+#### Bước 2: Khởi động Python AI Multi-Agent API
 ```bash
 cd source/backend/hk07-agent
 pip install -r requirements.txt
 python -m uvicorn main:app --reload --port 8889
-# Chạy tại cổng http://localhost:8889
+# Đặc vụ AI lắng nghe tại: http://localhost:8889
 ```
 
-#### Bước 3: Khởi động Node Frontend Dashboard (Vue 3)
+#### Bước 3: Khởi động Giao diện Frontend (Vue 3)
 ```bash
 cd source/frontend/hk07-dashboard
 npm install
 npm run dev
-# Chạy tại cổng http://localhost:5173 (Vite Dev Server)
+# Giao diện hoạt động tại: http://localhost:5173
 ```
 
-#### Bước 4: Khởi động Node Webots Edge Controller (Robotics Node)
-Node này giả lập phần khung gầm robot di động, lắng nghe các lệnh phanh khẩn cấp từ cơ chế an toàn và điều chỉnh tốc độ bánh xe.
+#### Bước 4: Khởi chạy các công cụ giả lập sự cố y tế
 ```bash
-cd source/robotics/controllers
-# Đảm bảo đường dẫn thư viện Webots đã được cấu hình hoặc chạy mock-fallback
-python hk07_edge_controller.py
-```
-
-#### Bước 5: Khởi động Node OpenCV Sensor Fusion (Vision Node)
-Quét và xử lý hình ảnh luồng camera nội bộ nhằm cập nhật tệp buffer ảnh `latest_frame.jpg` cho Gemini Vision và nhận diện tư thế ngã.
-```bash
-cd source/sensors/vision_sensor
-python hk07_sensor_fusion.py
-```
-
-#### Bước 6: Khởi động Node Vivo HTTP-MQTT Sensor Bridge (Mobile Ingestion)
-Lắng nghe tại cổng 8080 để tiếp nhận luồng dữ liệu gia tốc và thông số sinh tồn đẩy từ ứng dụng cảm biến di động.
-```bash
-cd source/sensors/mobile_gateway
-python vivo_http_mqtt_bridge.py
-```
-
-#### Bước 7: Khởi chạy các công cụ kiểm thử giả lập
-Sử dụng giao diện dòng lệnh giả lập tương tác để kiểm tra cơ chế cảnh báo ngã, chướng ngại vật hay tình huống khẩn cấp:
-```bash
-cd source/robotics/simulation
-./run_full_simulation.sh
-# Hoặc phát trực tiếp từng sự kiện y tế cụ thể:
-python trigger_normal_vitals.py
-python trigger_heart_attack.py
-python trigger_fall.py
-python trigger_obstacle.py
-python trigger_emergency_button.py
+# Phát các tín hiệu giả lập đột quỵ, nhịp tim cao, vật cản trực tiếp tới broker
+python source/robotics/simulation/trigger_heart_attack.py
+python source/robotics/simulation/trigger_fall.py
+python source/robotics/simulation/trigger_obstacle.py
 ```
 
 ---
 
-## Troubleshooting (Sửa lỗi thường gặp)
+## 💾 Phân Bổ Tài Nguyên Bộ Nhớ RAM Thực Tế
 
-### 1. Lỗi `RedisConnectionFailureException` khi login
-* **Triệu chứng:** Khi đăng nhập thành công ở giao diện, Backend trả về lỗi ngoại lệ `Unable to connect to Redis`.
-* **Khắc phục:** Đảm bảo container `hk07-redis` đang chạy bằng lệnh `docker ps`. Nếu chưa chạy, hãy thực hiện bước **0** (Khởi động cơ sở hạ tầng nền) ở trên.
-
-### 2. Lỗi `no configuration file provided: not found` khi chạy Docker Compose
-* **Triệu chứng:** Chạy `docker compose up -d` bị báo lỗi không tìm thấy file cấu hình.
-* **Khắc phục:** File `docker-compose.yml` nằm ở thư mục `source/backend/`. Hãy chắc chắn đã chuyển hướng `cd source/backend` trước khi chạy lệnh, hoặc chỉ định rõ file cấu hình bằng tham số `-f`:
-  ```bash
-  docker compose -f source/backend/docker-compose.yml up -d redis hk07-mysql mosquitto
-  ```
-
-## RAM Budget (8GB Host Dell Latitude E7270)
-
-| Service | RAM Limit | Purpose |
-|---------|-----------|---------|
-| Mosquitto | 32MB | MQTT Broker |
-| Redis | 64MB | Lag Compensation Buffer |
-| MySQL | 256MB | Persistent Health Records |
-| hk07-core | 512MB | Spring Boot (JVM: -Xmx512m) |
-| hk07-agent | 256MB | Python Multi-Agent |
-| **Total** | **~615MB** | ✅ Safe on WSL2 4GB |
-
-## Phase Status
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 01-foundation | ✅ DONE | Spring Boot core + Docker stack + Python agents |
-| 02-auth | ✅ DONE | JWT + RBAC + In-Memory Token Handling |
-| 03-data-closure | ✅ DONE | Flyway migrations, REST agent logging pipeline |
-| 04-evolution | ✅ DONE | Red Teaming, Fix Leaks, Race conditions, MQTT Throttle |
-| FE-01-dashboard | ✅ DONE | Vue 3 + Cyber-Cinematic UI, Subsumption Radar |
-| FE-02-auth | ✅ DONE | Cinematic Terminal Login + Interceptor |
+| Tên Dịch Vụ | Giới Hạn RAM | Trách Nhiệm Chi Tiết Trong Hệ Thống |
+| :--- | :--- | :--- |
+| **Mosquitto** | 32 MB | Broker MQTT trao đổi dữ liệu cảm biến thời gian thực |
+| **Redis** | 64 MB | Bộ nhớ tạm lưu token & kiểm soát tần suất gửi tin |
+| **MySQL** | 256 MB | Lưu trữ dữ liệu lịch sử sinh vật học & thông tin người dùng |
+| **hk07-core** | 512 MB | Máy ảo JVM chạy dịch vụ Spring Boot Core |
+| **hk07-agent** | 256 MB | Tiến trình Python chạy vòng lặp suy luận AI Multi-Agent |
+| **TỔNG CỘNG** | **~615 MB** | **Tối ưu hóa tuyệt đối cho môi trường nhúng WSL2/Docker** |

@@ -21,6 +21,7 @@
  */
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useVitalsStore } from '../stores/vitals'
+import { useTelemetryStore } from '../stores/telemetry'
 
 const props = withDefaults(defineProps<{
   width?: number
@@ -31,6 +32,7 @@ const props = withDefaults(defineProps<{
 })
 
 const vitalsStore = useVitalsStore()
+const telemetryStore = useTelemetryStore()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let animFrameId: number
 let isUnmounted = false
@@ -135,24 +137,18 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
   }
 
-  // ── Determine data source ─────────────────────────────────────────────────
-  const isConnected = vitalsStore.isConnected
-  const size = vitalsStore.RING_BUFFER_SIZE
-  const writeIdx = vitalsStore.bufferWriteIdx
-  const history = vitalsStore.heartRateHistory
+  // ── Data source priority ──────────────────────────────────────────────────
+  // Priority 1: telemetryStore (MockSensorService or WebSocket adapter)
+  // Priority 2: vitalsStore ring buffer (legacy direct WebSocket path)
+  const telemetry = telemetryStore.current
+  const hasTelemetry = telemetry.heartRate > 0 && telemetry.ecgPoints.length > 0
+  const isConnectedLegacy = vitalsStore.isConnected
 
-  // Find the most recent non-zero HR in ring buffer
-  let currentHR = 0
-  for (let k = 1; k <= size; k++) {
-    const val = history[(writeIdx - k + size) % size]
-    if (val > 0) { currentHR = val; break }
-  }
-
-  if (isConnected && currentHR > 0) {
-    // ── LIVE MODE: Build ECG from real HR cadence ─────────────────────────
-    rebuildWaveformCache(currentHR)
-
-    // Determine R-spike scaling: normal HR=72 → R=1.0, high HR → slightly taller
+  if (hasTelemetry) {
+    // ── TELEMETRY MODE: Pre-computed ECG points from store ────────────────
+    const points = telemetry.ecgPoints
+    const size = points.length
+    const currentHR = telemetry.heartRate
     const rScale = 0.8 + (currentHR / 72) * 0.2
 
     ctx.beginPath()
@@ -163,22 +159,56 @@ function draw() {
 
     for (let i = 0; i < size; i++) {
       const x = (i / size) * w
-      // Blend waveform template with actual HR ring buffer variation
-      const rawHR = history[(writeIdx + i) % size]
-      const hrVariation = rawHR > 0 ? (rawHR - currentHR) / currentHR : 0
-      const ecgVal = waveformCache[i] * rScale * (1 + hrVariation * 0.3)
-      const y = mid - ecgVal * amp
+      const y = mid - points[i] * rScale * amp
       if (i === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
     }
-
     ctx.stroke()
     ctx.shadowBlur = 0
 
-    // HR label overlay
+    // HR overlay
     ctx.fillStyle = 'rgba(0, 255, 102, 0.7)'
     ctx.font = '10px "Roboto Mono", monospace'
-    ctx.fillText(`${currentHR} BPM`, 8, 14)
+    ctx.fillText(`${currentHR} BPM  |  SpO₂: ${telemetry.spo2?.toFixed(1)}%  |  BP: ${telemetry.systolic}/${telemetry.diastolic}`, 8, 14)
+
+  } else if (isConnectedLegacy) {
+    // ── LEGACY LIVE MODE: Build ECG from vitalsStore ring buffer ─────────
+    const size = vitalsStore.RING_BUFFER_SIZE
+    const writeIdx = vitalsStore.bufferWriteIdx
+    const history = vitalsStore.heartRateHistory
+
+    let currentHR = 0
+    for (let k = 1; k <= size; k++) {
+      const val = history[(writeIdx - k + size) % size]
+      if (val > 0) { currentHR = val; break }
+    }
+
+    if (currentHR > 0) {
+      rebuildWaveformCache(currentHR)
+      const rScale = 0.8 + (currentHR / 72) * 0.2
+
+      ctx.beginPath()
+      ctx.strokeStyle = '#00FF66'
+      ctx.lineWidth = 1.5
+      ctx.shadowColor = '#00FF66'
+      ctx.shadowBlur = 5
+
+      for (let i = 0; i < size; i++) {
+        const x = (i / size) * w
+        const rawHR = history[(writeIdx + i) % size]
+        const hrVariation = rawHR > 0 ? (rawHR - currentHR) / currentHR : 0
+        const ecgVal = waveformCache[i] * rScale * (1 + hrVariation * 0.3)
+        const y = mid - ecgVal * amp
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+
+      ctx.stroke()
+      ctx.shadowBlur = 0
+      ctx.fillStyle = 'rgba(0, 255, 102, 0.7)'
+      ctx.font = '10px "Roboto Mono", monospace'
+      ctx.fillText(`${currentHR} BPM`, 8, 14)
+    }
 
   } else {
     // ── OFFLINE MODE: Dim flatline with idle flutter ──────────────────────
@@ -189,6 +219,7 @@ function draw() {
     ctx.lineWidth = 1.0
     ctx.setLineDash([4, 8])
 
+    const size = vitalsStore.RING_BUFFER_SIZE
     for (let i = 0; i < size; i++) {
       const x = (i / size) * w
       const ecgVal = waveformCache[i] * 0.3

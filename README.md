@@ -1,55 +1,106 @@
-# HK-07 // HUGO SANITAS ROBOT COMPANION
+# ─── [ HK-07 // HUGO SANITAS ROBOT COMPANION ] ──────────────────────────────
 
 <p align="center">
-  <img src="./asset/main_logo.jpg" alt="Brand Logo" height="100" />
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="./asset/logo_name.jpg" alt="Logo Name" height="100" />
+  <img src="./asset/main_logo.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
+  <img src="./asset/logo_name.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
 </p>
 
-> **Identifier:** HK.Huang07 | **Version:** 1.0.0-ALPHA | **Initiated:** 2026-05-31
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  IDENTIFIER: HK.Huang07         │  VERSION: 1.0.0-ALPHA                      │
+│  INITIATED:  2026-05-31         │  STATUS:  OPERATIONAL                      │
+│  PLATFORM:   Linux / WSL2       │  THEME:   CYBER-CINEMATIC (PURE HUD)       │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-A next-generation healthcare robot companion — assisting in daily life through multi-agent artificial intelligence, real-time vitals monitoring, and <5ms emergency safety reflexes.
-
----
-
-## System Interface Showcase
-
-### 1. Vitals Dashboard Monitor (60FPS)
-![Vitals Dashboard](./asset/dashboard-ui.jpg)
-
-### 2. Empathetic AI Companion Chat & Reasoning
-![Agent Chat](./asset/agent-chat.jpg)
-![Agent Companion](./asset/agent-companion.jpg)
-
-### 3. Multi-Agent System Logs (Agents Log)
-![Agents Log](./asset/agent_logs.jpg)
-
-### 4. Safety Control Coordination (Safety Radar)
-![Safety Radar](./asset/safemode-tab.jpg)
-
-### 5. Historical Vitals Metrics (History)
-![Historical Metrics](./asset/history_tab.jpg)
-
-### 6. Robot Camera Simulation (Vision Stream Online / Offline)
-![Robot Camera Simulation Online](./asset/robot-cam-simulate.jpg)
-![Robot Camera Simulation Lost](./asset/robot-cam-simulate-vision-lost.jpg)
-
-### 7. Robot Computer Visualization
-![Robot Computer Visualization](./asset/robot-computer-visualize.jpg)
-
-### 8. OpenCV & MediaPipe Computer Vision Processing
-![OpenCV MediaPipe Process](./asset/opencv_medipipe_webcam_process.jpg)
-
-
-
+> **HK-07 // HUGO SANITAS** is a next-generation healthcare robot companion designed to assist elderly patients and individuals with cardiovascular conditions. The system combines multi-agent artificial intelligence, real-time vital signs telemetry, computer vision fall-detection, and a <5ms emergency safety reflex system, operating efficiently under strict hardware constraints (<615MB RAM total).
 
 ---
 
-## System Architecture
+## 🖥️ System Interface Showcase
+
+The interface is built using a **Cyber-Cinematic HUD** design language (True Black `#000000` base, Holographic Cyan `#00E5FF` grids, Emerald Green `#00FF66` active telemetry, and Crimson `#FF3333` alarm warnings).
+
+--- 
+
+### 1. AI Cognitive & Agent Systems
+
+#### A. Empathetic AI Companion Dialogue (Uplink)
+![Companion Uplink](./asset/companion-uplink.jpg)
+* **Description:** Empathetic dialogue interface powered by a Groq/Gemini Multi-Agent loop. Provides psychological comfort, primary diagnostics feedback, and sentiment classification.
+
+#### B. Multi-Agent System Logs Event Stream
+![Agent System Log](./asset/agent_system_log.jpg)
+* **Description:** Terminal log telemetry showing real-time thought loops, decision-making, and diagnostic logs from the `Vitals Monitor Agent`, `Emergency Agent`, and `Empathetic Agent`.
+
+---
+
+---
+### 2. Robotics & Spatial Safety Systems
+
+#### A. Holographic Twin & Subsumption Radar
+![Holographic Twin](./asset/holographic_twin.jpg)
+* **Description:** A virtual 3D wireframe radar showing the physical status, sensor fields, and orientation of the robot chassis in real-time.
+
+#### B. Safety Coordinates & Motion Inhibition Control
+![Safety Coordinates](./asset/safety_cooroinates.jpg)
+* **Description:** Monitors LiDAR sensor ranges, coordinates, and triggers the hard reflex inhibition system to stop motors instantly if an obstacle or fall is detected.
+
+---
+
+### 3. Clinical Telemetry & Patient Monitoring
+
+#### A. Dynamic Vitals Telemetry Monitor (60FPS)
+![Dynamic Telemetry](./asset/dynamic-telemetry.jpg)
+* **Description:** The central operations cockpit. Renders live bio-metrics (Heart Rate, SpO2, Body Temperature, Blood Pressure) with a GPU-accelerated HTML5 Canvas displaying real-time 60Hz ECG waveforms.
+
+#### B. Vitals History Timeline Analytics
+![History Metrics](./asset/history_metric.jpg)
+* **Description:** Allows operators to customize historical search ranges (From Date / To Date) to load, plot, and analyze patient physiological trends and anomalies.
+
+---
+
+### 4. Security & Authentication Access
+
+#### A. Cinematic Terminal Login
+![Terminal Login](./asset/auth_login.jpg)
+* **Description:** A futuristic terminal-style authentication interface. Built to look like a medical/military operations control panel, prompting operators for secure system credentials.
+
+#### B. Multi-Factor Authentication & Backup Code Verify
+![Backup Code Verification](./asset/auth_by_backupcode.jpg)
+* **Description:** Fallback authentication using cryptographically secure Multi-Factor Authentication (MFA) backup codes when normal authenticator tokens are unavailable.
+
+---
+
+### 5. Edge Vision & Environment Simulation
+
+#### A. Robot Camera Vision (Online)
+![Robot Camera Online](./asset/robot-cam-simulate.jpg)
+* **Description:** Live feed simulator from the robot's onboard camera tracking its environment and path inside the Webots simulator workspace.
+
+#### B. Robot Camera Vision (Offline / Stream Lost)
+![Robot Camera Lost](./asset/robot-cam-simulate-vision-lost.jpg)
+* **Description:** Safety visual state triggered when visual feed telemetry is disconnected, alerting remote operators of sensor failure.
+
+#### C. OpenCV & MediaPipe Computer Vision Processing
+![Computer Vision Processing](./asset/robot-computer-visualize.jpg)
+* **Description:** Edge vision telemetry showing real-time facial feature tracking, posture coordinates, and skeletal keypoints processing for automated fall detection.
+
+---
+
+### 6. User Profile & Security Settings
+
+#### A. Profile Configuration & MFA Controls
+![Profile Settings](./asset/profile-settings.jpg)
+* **Description:** Management control panel containing patient medical profiles, user credentials, and active configuration of MFA keys.
+
+---
+
+## ⚙️ System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│         HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE           │
+│          HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE           │
 ├─────────────────┬───────────────────┬───────────────────────┤
 │  [FRONTEND]     │   [BACKEND CORE]  │   [AGENT ENGINE]      │
 │  Vue 3 + Vite   │  Spring Boot 3.2  │   Python FastAPI      │
@@ -74,236 +125,128 @@ A next-generation healthcare robot companion — assisting in daily life through
 
 ---
 
-## Mission & Resolved Problems
+## 🛠️ Practical Problems Solved
 
-### 1. Project Mission (Mission & Philosophy)
-The **HK-07 // HUGO SANITAS** project is designed to build an intelligent care-robot companion for the elderly and patients with cardiovascular conditions. The robot is not merely a passive vitals monitoring device but acts as an empathetic, fast-reacting interactive companion bridging patients, families, and medical staff.
-
-### 2. Practical Problems Solved
-* **Emergency Reflex Latency:** In medicine, every second counts. The system processes and reacts to critical health events (such as stroke detection, or stopping robot movement upon obstacle collision) in under 5ms using prioritized MQTT queues and STOMP WebSockets.
-* **Hardware Resource Optimization:** The entire stack runs comfortably on resource-constrained embedded systems and legacy computers (e.g., Dell Latitude E7270 with a 1.6GHz CPU, 8GB RAM) with an extremely low memory footprint (<615MB RAM total).
-* **Deterministic Rules & Empathetic AI Hybrid:** The system separates reflex responses into two layers: a Hard Reflex layer (triggering immediate SOS alerts based on fixed clinical thresholds) and a Soft Interaction layer (providing psychological comfort and secondary diagnostics using an LLM-powered Multi-Agent loop).
-* **Secured Real-Time Telemetry:** Secures live health streams over WebSockets via a JWT Inbound Channel interceptor on STOMP, preventing unauthorized interception of sensitive medical telemetry.
+1. **Emergency Reflex Latency (<5ms):** Bypasses standard database persistence blocks to execute critical safety scripts (e.g. stopping motors upon collision threat or triggering medical alarms) utilizing optimized MQTT pipelines.
+2. **Resource Constraints Optimization:** Runs a full suite of services (Spring Boot, Python Agents, databases, and message brokers) comfortably on host systems with limited resources, budgeting total memory usage to **<615MB RAM**.
+3. **Hybrid Diagnostic System:** Implements a two-layer control system. A *Hard Reflex Layer* executes static medical threshold rules to trigger immediate alerts, while a *Soft Cognitive Layer* leverages AI Agents and LLMs for contextual medical evaluation and comforting communication.
+4. **Secured Real-Time Telemetry:** Secures live health streams over WebSockets via a JWT Inbound Channel Interceptor on STOMP, ensuring that only authenticated users can access real-time medical data.
 
 ---
 
-## Tech Stack & Operational Workflow
-
-### 1. Comprehensive Tech Stack
-* **Frontend Dashboard:**
-  * **Vue 3 + TypeScript + Vite:** High-performance SPA frontend.
-  * **Pinia:** Synced state management for real-time vitals streams.
-  * **Custom Cinematic Cyber-Dark Theme:** FUI (Fictional User Interface) aesthetic inspired by Big Hero 6 and Iron Man, featuring a Dark-Blue theme for professional operations monitoring.
-  * **ECG Waveform Canvas:** GPU-accelerated HTML5 Canvas rendering a 60Hz real-time electrocardiogram wave.
-* **Backend Core (Command Center):**
-  * **Spring Boot 3.2 + Java 21 (Virtual Threads):** Thread-per-task concurrency model allowing thousands of concurrent WebSocket client connections with minimal CPU overhead.
-  * **Spring Security + JWT:** Strict role-based access control (RBAC) supporting Owner, Medic, and Guest.
-  * **STOMP Broker Interceptor:** Token-based security validation at the WebSocket connection layer.
-* **AI Multi-Agent Engine (Cognitive Layer):**
-  * **Python FastAPI:** Empathetic dialogue API and structured log forwarding.
-  * **Multi-Agent Architecture:**
-    * *Vitals Monitor Agent:* Tracks remote bio-metrics.
-    * *Emergency Diagnostics Agent:* Clinical event detection.
-    * *Empathetic Interactive Agent:* Natural conversation generator powered by Groq Llama 3 / Gemini Pro APIs for healthcare interactions.
-* **IoT & Simulation (Hardware Layer):**
-  * **Eclipse Mosquitto (MQTT Broker):** Ultra-low latency (<5ms) publish-subscribe message broker.
-  * **Simulated ESP32 (Wokwi BLE Wristband):** Simulated smart band emitting heart rate, SpO2, body temperature, and an SOS panic button.
-  * **Webots Simulator & ROS 2 Mock Nodes:** Physics-based simulation of the HK-07 robot chassis, distance sensors, and LiDAR obstacle avoidance.
-* **Database:**
-  * **MySQL:** Relational database storing patient history, logs, and user metadata.
-  * **Redis:** In-memory caching, WebSocket session management, and rate-limiting (throttling).
-
-### 2. Operational Workflow
-```
-[BLE Wristband / Robot Sensors]
-          │ (10Hz telemetry via MQTT)
-          ▼
-[Eclipse Mosquitto (Port: 1883)]
-    ├───► [Python Multi-Agent Engine (Port: 8889)] ───► AI Reasoning & LLM Diagnosis
-    └───► [Spring Boot Backend Core (Port: 8888)]
-               │ (Priority handling, Database storage)
-               ▼ (WebSocket STOMP via JWT Interceptor)
-         [Vue 3 Frontend Dashboard (60FPS ECG)]
-```
-
-* **Step 1: IoT Ingestion:** The smart band simulator publishes JSON packets to `hk07/sensors/wristband/...` while the Webots robot emits obstacle distance metrics to `hk07/sensors/lidar/...`.
-* **Step 2: Routing & Reflex Loop:**
-  * Spring Boot Core intercepts the MQTT packets. If metrics fall within normal ranges, it persists them in MySQL and broadcasts them instantly to the Vue 3 Dashboard via STOMP WebSockets.
-  * If vitals exceed clinical thresholds (e.g. Heart Rate > 150 BPM - Heart Attack), the backend skips standard buffers, flags the event as an EMERGENCY, sends a command via MQTT to immediately halt the Webots robot, and triggers an overlay SOS modal on the frontend dashboard.
-* **Step 3: Empathetic AI Dialogue:** The Python AI Agent catches the health event, reviews the patient's historical records, and calls the Groq/Gemini APIs to generate clinical advice and supportive dialogue, instantly routing it to the companion chat widget in the Vue 3 dashboard.
-
----
-
-## Directory Structure
+## 📦 Directory Structure
 
 ```
-source/
-├── backend/
-│   ├── hk07-core/          ← Spring Boot (Java 21 Virtual Threads)
-│   ├── hk07-agent/         ← Python Multi-Agent Engine (FastAPI)
-│   └── docker/             ← Mosquitto + MySQL configs
-├── frontend/
-│   └── hk07-dashboard/     ← Vue 3 + Vite Cyber-Cinematic UI
-└── docker-compose.yml      ← Full stack (RAM budget: ~615MB)
+hk-07/
+├── asset/                  ← System screenshots and UI graphics
+├── docs/                   ← Document specifications and walkthroughs
+│   ├── 00-project-init/    ← Project scope, requirements, techstack setup
+│   ├── 01-system-design/   ← Architecture, database design, API specs
+│   ├── 02-backend/         ← Core backend manuals & changelogs
+│   ├── 03-frontend/        ← UI/UX manuals & frontend specifications
+│   ├── 04-testing/         ← QA check-lists & testing guides
+│   ├── 05-deployment/      ← Docker configuration and production guides
+│   ├── 06-evolution/       ← System upgrade specs, post-mortems, and specs
+│   └── MASTER_CHANGELOG.md ← Entire project version history changelog
+└── source/                 ← Target codebases
+    ├── backend/
+    │   ├── hk07-core/      ← Java Spring Boot core service
+    │   ├── hk07-agent/     ← Python AI Multi-Agent service
+    │   └── docker/         ← Infrastructure config files
+    ├── frontend/
+    │   └── hk07-dashboard/ ← Vue 3 Single Page Application
+    └── docker-compose.yml  ← Integration orchestrator
 ```
 
 ---
 
-## Quick Start & Testing Guide
+## 🚀 Quick Start Guide
 
-The system supports two operating modes: **Full Docker Stack** (highly integrated services) or **Local Dev** (manually starting each system component).
+The system supports two operating modes: **Docker Orchestration** (fully integrated) or **Component-by-Component Developer Mode**.
 
-### 1. Docker Deployment Mode (Docker Stack)
-In this mode, all key databases, message brokers, core APIs, and AI agent services run containerized.
+### 1. Docker Deployment Mode
 
 ```bash
-# 1. Configure environment variables
+# 1. Enter target backend configuration folder
 cd source/backend
 cp .env.example .env
-# Open .env and fill in GROQ_API_KEY or GEMINI_API_KEY
+# Fill in either your GROQ_API_KEY or GEMINI_API_KEY inside the .env file
 
-# 2. Build and start the infrastructure + application services
+# 2. Spin up the integrated container stack
 docker compose up -d --build
 
-# 3. Verify services are up
-docker ps
-# Dashboard Frontend: http://localhost:4205 (Nginx routing)
+# 3. Access endpoints
+# Frontend Dashboard:  http://localhost:4205 (nginx reverse proxy)
 # Backend Swagger Docs: http://localhost:8888/swagger-ui.html
-# AI Agent API: http://localhost:8889
-# Mosquitto MQTT Broker: http://localhost:1883 / Replica: http://localhost:1884
+# AI Agent API Docs:   http://localhost:8889/docs
 ```
 
-To run simulation and robotics edge nodes against the Docker stack, configure the host environment variables to point to the exposed Docker broker, then execute:
+To run localized edge simulation scripts against the Docker cluster, set the appropriate host parameters and execute:
 ```bash
-# Configure environment (or use default values)
 export MQTT_BROKER_HOST=localhost
 export MQTT_BROKER_PORT=1883
 export MQTT_USERNAME=hk07sim
-export MQTT_PASSWORD=...   # use the same MQTT_PASSWORD value defined in source/backend/.env
+export MQTT_PASSWORD=your_configured_mqtt_password
 
-# Start OpenCV Camera Sensor Fusion Node
-cd source/sensors/vision_sensor
-python hk07_sensor_fusion.py
+# Launch OpenCV & MediaPipe webcam capture
+python source/sensors/vision_sensor/hk07_sensor_fusion.py
 
-# Start Webots Edge Controller Robotics Node
-cd source/robotics/controllers
-python hk07_edge_controller.py
-
-# Start Vivo HTTP-MQTT Sensor Bridge
-cd source/sensors/mobile_gateway
-python vivo_http_mqtt_bridge.py
+# Launch Webots robotics edge driver
+python source/robotics/controllers/hk07_edge_controller.py
 ```
 
 ---
 
-### 2. Manual Dev Mode (Component-by-Component Startup)
+### 2. Local Developer Mode
 
-To run components locally in development mode, you can start the databases and MQTT brokers either via docker or manually.
-
-#### Step 0: Start Infrastructure Services (Brokers & Databases)
+#### Step 0: Boot Infrastructure Databases & Broker
 ```bash
-# Spin up MQTT, MySQL, and Redis in the background:
 cd source/backend
 docker compose up -d redis hk07-mysql mosquitto
 ```
-*Alternatively, you can run native local instances of Mosquitto broker (port 1883), Redis (port 6379), and MySQL (port 3306) on your machine.*
+*(Alternatively, you can run native local instances of Mosquitto broker (1883), Redis (6379), and MySQL (3306) on your machine).*
 
-#### Step 1: Start Backend Core (Spring Boot)
+#### Step 1: Run Spring Boot Backend
 ```bash
 cd source/backend/hk07-core
 mvn clean install -DskipTests
 mvn spring-boot:run
-# Running at http://localhost:8888
+# Listening on: http://localhost:8888
 ```
 
-#### Step 2: Start AI Engine Node (Python Multi-Agent FastAPI)
+#### Step 2: Run Python AI Multi-Agent API
 ```bash
 cd source/backend/hk07-agent
 pip install -r requirements.txt
 python -m uvicorn main:app --reload --port 8889
-# Running at http://localhost:8889
+# Listening on: http://localhost:8889
 ```
 
-#### Step 3: Start Frontend Dashboard Node (Vue 3)
+#### Step 3: Run Vue 3 UI Dashboard
 ```bash
 cd source/frontend/hk07-dashboard
 npm install
 npm run dev
-# Running at http://localhost:5173 (Vite dev server)
+# Vite server active on: http://localhost:5173
 ```
 
-#### Step 4: Start Webots Simulation Edge Controller Node (Robotics Node)
-This node simulates the physical robot chassis, subscribing to inhibition commands and managing drive wheel velocities.
+#### Step 4: Run Simulation & Fallback Tools
 ```bash
-cd source/robotics/controllers
-# Make sure Webots controllers path is configured or run with fallback mock
-python hk07_edge_controller.py
-```
-
-#### Step 5: Start OpenCV & MediaPipe Sensor Fusion Node (Vision Node)
-Processes local webcam video streams to cache diagnostic frame buffers (`latest_frame.jpg`) and track body postures for fall detection.
-```bash
-cd source/sensors/vision_sensor
-python hk07_sensor_fusion.py
-```
-
-#### Step 6: Start Vivo HTTP-MQTT Sensor Bridge Node (Mobile Ingestion)
-Listens on port 8080 to receive real-time accelerometer and telemetry streams pushed from mobile sensor applications.
-```bash
-cd source/sensors/mobile_gateway
-python vivo_http_mqtt_bridge.py
-```
-
-#### Step 7: Launch Simulation Testing Tools
-Use the interactive simulation CLI to test emergencies, fall events, and critical alerts:
-```bash
-cd source/robotics/simulation
-./run_full_simulation.sh
-# Or trigger specific events directly:
-python trigger_normal_vitals.py
-python trigger_heart_attack.py
-python trigger_fall.py
-python trigger_obstacle.py
-python trigger_emergency_button.py
+# Trigger medical and spatial events manually
+python source/robotics/simulation/trigger_heart_attack.py
+python source/robotics/simulation/trigger_fall.py
+python source/robotics/simulation/trigger_obstacle.py
 ```
 
 ---
 
-## Troubleshooting
+## 💾 Hardware RAM Allocation Target
 
-### 1. `RedisConnectionFailureException` during Login
-* **Symptom:** After entering credentials, the backend throws a `Unable to connect to Redis` exception.
-* **Fix:** Ensure the `hk07-redis` container is active by checking `docker ps`. If stopped, perform **Step 0** above.
-
-### 2. `no configuration file provided: not found` during docker-compose
-* **Symptom:** Executing `docker compose up` raises a configuration missing error.
-* **Fix:** Make sure you are in `source/backend/` before executing commands, or specify the file directly:
-  ```bash
-  docker compose -f source/backend/docker-compose.yml up -d redis hk07-mysql mosquitto
-  ```
-
----
-
-## RAM Budget (8GB Host Dell Latitude E7270)
-
-| Service | RAM Limit | Purpose |
-|---------|-----------|---------|
-| Mosquitto | 32MB | MQTT Broker |
-| Redis | 64MB | Lag Compensation Buffer |
-| MySQL | 256MB | Persistent Health Records |
-| hk07-core | 512MB | Spring Boot (JVM: -Xmx512m) |
-| hk07-agent | 256MB | Python Multi-Agent |
-| **Total** | **~615MB** | ✅ Safe on WSL2 4GB |
-
----
-
-## Phase Status
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 01-foundation | ✅ DONE | Spring Boot core + Docker stack + Python agents |
-| 02-auth | ✅ DONE | JWT + RBAC + In-Memory Token Handling |
-| 03-data-closure | ✅ DONE | Flyway migrations, REST agent logging pipeline |
-| 04-evolution | ✅ DONE | Red Teaming, Fix Leaks, Race conditions, MQTT Throttle |
-| FE-01-dashboard | ✅ DONE | Vue 3 + Cyber-Cinematic UI, Subsumption Radar |
-| FE-02-auth | ✅ DONE | Cinematic Terminal Login + Interceptor |
+| Service Name | Limit (RAM) | Sub-System Responsibilities |
+| :--- | :--- | :--- |
+| **Mosquitto** | 32 MB | Real-time broker for sensor telemetry |
+| **Redis** | 64 MB | In-memory token cache & rate limiter |
+| **MySQL** | 256 MB | Relational medical logs & user info |
+| **hk07-core** | 512 MB | Spring Boot core backend JVM |
+| **hk07-agent** | 256 MB | Python multi-agent event loop |
+| **TOTAL** | **~615 MB** | **Highly optimized for low-spec WSL2/Docker** |

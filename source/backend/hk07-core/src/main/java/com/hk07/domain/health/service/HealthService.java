@@ -199,7 +199,31 @@ public class HealthService {
     /** Retrieve 24h health summary from database view mapped to DTO */
     public List<com.hk07.domain.health.dto.HourlySummaryDto> getHourlySummary(UUID userId, int hours) {
         List<Object[]> rawList = healthRepository.findHourlySummaryRaw(userId, hours);
-        java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        return mapRawToDto(rawList);
+    }
+
+    /**
+     * Custom date-range hourly summary — supports arbitrary fromDate..toDate windows.
+     * Used by the frontend CUSTOM range picker.
+     * Max window capped at 90 days server-side to prevent runaway queries.
+     */
+    public List<com.hk07.domain.health.dto.HourlySummaryDto> getHourlySummaryByRange(
+            UUID userId,
+            java.time.LocalDateTime fromDate,
+            java.time.LocalDateTime toDate) {
+
+        // Safety cap: max 90 day window to prevent accidental full-table scans
+        java.time.LocalDateTime cappedFrom = toDate.minusDays(90).isAfter(fromDate)
+                ? toDate.minusDays(90) : fromDate;
+
+        List<Object[]> rawList = healthRepository.findHourlySummaryByRangeRaw(userId, cappedFrom, toDate);
+        return mapRawToDto(rawList);
+    }
+
+    /** Shared Object[] row → HourlySummaryDto mapper (native query result rows) */
+    private List<com.hk07.domain.health.dto.HourlySummaryDto> mapRawToDto(List<Object[]> rawList) {
+        java.time.format.DateTimeFormatter formatter =
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
         return rawList.stream().map(row -> {
             String bucketHourStr = null;
             if (row[0] != null) {
@@ -228,3 +252,4 @@ public class HealthService {
     /** Minimal inner DTO — avoids creating a full class, reduces GC pressure */
     public record VitalSignWithAlertDto(VitalSignDto vitals, String alertLevel, String userId) {}
 }
+

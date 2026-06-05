@@ -36,7 +36,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from("hk07_refresh_token", refreshToken)
                 .httpOnly(true)
                 .secure(false) // Set to true if running over HTTPS in production
-                .sameSite("Strict")
+                .sameSite("Lax")
                 .path("/api/v1/auth")
                 .maxAge(Duration.ofDays(7))
                 .build();
@@ -56,7 +56,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from("hk07_refresh_token", refreshToken)
                 .httpOnly(true)
                 .secure(false)
-                .sameSite("Strict")
+                .sameSite("Lax")
                 .path("/api/v1/auth")
                 .maxAge(Duration.ofDays(7))
                 .build();
@@ -82,7 +82,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from("hk07_refresh_token", newRefreshToken)
                 .httpOnly(true)
                 .secure(false)
-                .sameSite("Strict")
+                .sameSite("Lax")
                 .path("/api/v1/auth")
                 .maxAge(Duration.ofDays(7))
                 .build();
@@ -102,7 +102,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from("hk07_refresh_token", "")
                 .httpOnly(true)
                 .secure(false)
-                .sameSite("Strict")
+                .sameSite("Lax")
                 .path("/api/v1/auth")
                 .maxAge(0) // Immediately expire cookie
                 .build();
@@ -156,7 +156,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from("hk07_refresh_token", refreshToken)
                 .httpOnly(true)
                 .secure(false)
-                .sameSite("Strict")
+                .sameSite("Lax")
                 .path("/api/v1/auth")
                 .maxAge(Duration.ofDays(7))
                 .build();

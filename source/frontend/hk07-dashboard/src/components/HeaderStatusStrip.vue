@@ -95,33 +95,50 @@ function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 12px;
   background: var(--color-bg-void);
   border-bottom: 1px solid var(--color-border-dim);
   font-family: var(--font-hud);
-  font-size: 10px;
+  font-size: clamp(7px, 0.8vw, 10px);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-text-dim);
   flex-shrink: 0;
   user-select: none;
-  flex-wrap: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  min-height: 48px;
 }
-.header-left, .header-nav, .header-right {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   flex-shrink: 0;
-  white-space: nowrap;
 }
 .logo-img {
-  height: 40px;
+  height: 36px;
   flex-shrink: 0;
 }
 .logo-name-img {
-  height: 40px;
+  height: 36px;
   flex-shrink: 0;
 }
 .main-logo-img {
@@ -132,31 +149,31 @@ function handleLogout() {
 .terminal-id {
   color: var(--color-accent-green);
   font-weight: bold;
-  flex-shrink: 0;
-  white-space: nowrap;
+  flex-shrink: 1;
+  white-space: normal;
+  word-break: break-word;
+  font-size: clamp(7px, 0.75vw, 10px);
 }
 .current-path {
-  font-size: 8px;
+  font-size: clamp(7px, 0.65vw, 9px);
   font-family: var(--font-data);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
+  max-width: clamp(80px, 12vw, 180px);
   flex-shrink: 1;
-}
-.header-nav {
-  gap: 8px;
 }
 .nav-item {
   color: var(--color-text-dim);
   text-decoration: none;
   font-weight: bold;
-  padding: 3px 6px;
+  padding: 3px 5px;
   border: 1px solid transparent;
   transition: all 0.2s ease;
   white-space: nowrap;
   flex-shrink: 0;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  font-size: clamp(7px, 0.7vw, 10px);
 }
 .nav-item:hover {
   color: var(--color-accent-green);

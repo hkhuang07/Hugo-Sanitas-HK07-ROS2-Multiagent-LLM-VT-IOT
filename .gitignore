@@ -125,6 +125,18 @@ source/robotics/log/
 .webots-project/
 *.wbt.bak
 
+# AI Agent & Plan Temps
 .active_plan.tmp
 .aider*
 .command.md
+.claude/
+.copilot/
+.history/
+*.tmp
+*.temp
+*.bak
+
+# Additional Local Databases & Volumes
+mysql-data/
+redis-data/
+influx-data/

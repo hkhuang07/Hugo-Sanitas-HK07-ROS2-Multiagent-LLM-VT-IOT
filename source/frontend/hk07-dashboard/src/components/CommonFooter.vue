@@ -46,26 +46,29 @@ const latencyClass = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 16px;
   background: var(--color-bg-void);
   border-top: 1px solid var(--color-border-dim);
   font-family: var(--font-hud);
-  font-size: 8px;
-  letter-spacing: 0.15em;
+  font-size: clamp(6px, 0.65vw, 8px);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-text-dim);
   flex-shrink: 0;
   user-select: none;
-  flex-wrap: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  min-height: 28px;
 }
 .footer-left, .footer-center, .footer-right {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
-  flex-shrink: 0;
-  white-space: nowrap;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
+  word-break: break-word;
+  white-space: normal;
 }
 .system-revision {
   color: var(--color-accent-green);

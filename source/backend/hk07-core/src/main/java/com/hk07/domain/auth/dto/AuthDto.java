@@ -56,6 +56,7 @@ public class AuthDto {
         private long accessTokenExpiresAt;  // Unix epoch ms
         private String userId;
         private String role;
+        private String email;               // Added: allows frontend to restore full user profile on refresh
         private List<String> recoveryCodes; // Set only during registration
     }
 

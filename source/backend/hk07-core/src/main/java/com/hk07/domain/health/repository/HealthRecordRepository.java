@@ -6,7 +6,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,5 +36,28 @@ public interface HealthRecordRepository extends JpaRepository<HealthRecordEntity
     List<Object[]> findHourlySummaryRaw(
         @org.springframework.data.repository.query.Param("userId") UUID userId, 
         @org.springframework.data.repository.query.Param("hours") int hours
+    );
+    /** Hourly bucket summary within an explicit date-time range */
+    @Query(value =
+        "SELECT bucket_hour, avg_hr, max_hr, min_hr, avg_systolic, avg_spo2, avg_temp, sample_count, worst_alert " +
+        "FROM v_health_hourly_summary " +
+        "WHERE user_id = :userId " +
+        "AND bucket_hour >= :fromDate " +
+        "AND bucket_hour <= :toDate " +
+        "ORDER BY bucket_hour ASC",
+        nativeQuery = true)
+    List<Object[]> findHourlySummaryByRangeRaw(
+        @Param("userId") UUID userId,
+        @Param("fromDate") LocalDateTime fromDate,
+        @Param("toDate") LocalDateTime toDate
+    );
+
+    /** Count of records in a range — used for lightweight pagination metadata */
+    @Query("SELECT COUNT(h) FROM HealthRecordEntity h WHERE h.userId = :userId " +
+           "AND h.recordedAt >= :fromDate AND h.recordedAt <= :toDate")
+    long countByUserIdAndRange(
+        @Param("userId") UUID userId,
+        @Param("fromDate") LocalDateTime fromDate,
+        @Param("toDate") LocalDateTime toDate
     );
 }

@@ -13,26 +13,29 @@
           <div class="terminal-card-header">
             [ VITAL_SIGNS_MONITOR ]
             <span class="text-dim text-[8px] ml-auto">
-              {{ vitalsStore.current.deviceId || 'NO_DEVICE' }}
+              {{ telemetryStore.current.deviceId || 'NO_DEVICE' }}
+            </span>
+            <span :class="['source-badge ml-2', telemetryStore.isMock ? 'text-dim' : 'text-green']">
+              {{ telemetryStore.sourceLabel }}
             </span>
           </div>
           <div class="vitals-grid">
             <div class="vital-item">
-              <div :class="['vital-value text-sm', hrClass]">{{ vitalsStore.current.heartRate || '--' }}</div>
+              <div :class="['vital-value text-sm', hrClass]">{{ telemetryStore.current.heartRate || '--' }}</div>
               <div class="vital-unit">HR (BPM)</div>
             </div>
             <div class="vital-item">
-              <div :class="['vital-value text-sm', spo2Class]">{{ vitalsStore.current.spo2?.toFixed(1) || '--' }}</div>
+              <div :class="['vital-value text-sm', spo2Class]">{{ telemetryStore.current.spo2?.toFixed(1) || '--' }}</div>
               <div class="vital-unit">SpO₂ (%)</div>
             </div>
             <div class="vital-item">
               <div :class="['vital-value text-sm', bpClass]">
-                {{ vitalsStore.current.systolic || '--' }}/{{ vitalsStore.current.diastolic || '--' }}
+                {{ telemetryStore.current.systolic || '--' }}/{{ telemetryStore.current.diastolic || '--' }}
               </div>
               <div class="vital-unit">BP (mmHg)</div>
             </div>
             <div class="vital-item">
-              <div :class="['vital-value text-sm', tempClass]">{{ vitalsStore.current.bodyTemperature?.toFixed(1) || '--' }}</div>
+              <div :class="['vital-value text-sm', tempClass]">{{ telemetryStore.current.bodyTemperature?.toFixed(1) || '--' }}</div>
               <div class="vital-unit">TEMP (°C)</div>
             </div>
           </div>
@@ -187,7 +190,7 @@
                  :class="['event-line', ev.alertLevel === 'CRITICAL' ? 'ev-critical' : '']">
               <span class="event-time text-dim">{{ formatTime(ev.triggeredAt) }}</span>
               <span :class="['event-agent', agentColor(ev.agentType)]"> [{{ ev.agentType }}]</span>
-              <span class="event-msg"> {{ ev.outputDecision?.slice(0, 90) }}</span>
+              <span class="event-msg"> {{ ev.outputDecision?.slice(0, 120) }}</span>
             </div>
             <div v-if="agentsStore.events.length === 0" class="text-dim p-2">
               &gt;&gt;&gt; AWAITING AGENT EVENTS...
@@ -204,12 +207,22 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useVitalsStore } from '../stores/vitals'
 import { useAgentsStore } from '../stores/agents'
+import { useTelemetryStore } from '../stores/telemetry'
+import { MockSensorService } from '../services/MockSensorService'
 import EcgWaveform from '../components/EcgWaveform.vue'
 import api from '../services/api'
 
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
 const agentsStore = useAgentsStore()
+const telemetryStore = useTelemetryStore()
+
+// Start mock sensor if not already running (idempotent)
+onMounted(() => {
+  if (!MockSensorService.isRunning) {
+    MockSensorService.start()
+  }
+})
 
 // Robot State
 const robotState = ref('ACTIVE')
@@ -219,34 +232,31 @@ const robotStateClass = computed(() => {
   return 'text-red'
 })
 
-// Vitals thresholds color mapping
+// Vitals thresholds color mapping — now reads from telemetryStore
 const hrClass = computed(() => {
-  const hr = vitalsStore.current.heartRate
-  if (!hr) return 'text-dim'
-  if (hr < 50 || hr > 120) return 'text-red font-bold glow-red'
-  if (hr < 60 || hr > 100) return 'text-orange font-bold'
+  const s = telemetryStore.hrStatus
+  if (s === 'critical') return 'text-red font-bold glow-red'
+  if (s === 'warning') return 'text-orange font-bold'
   return 'text-green font-bold'
 })
 
 const spo2Class = computed(() => {
-  const s = vitalsStore.current.spo2
-  if (!s) return 'text-dim'
-  if (s < 90) return 'text-red font-bold glow-red'
-  if (s < 94) return 'text-orange font-bold'
+  const s = telemetryStore.spo2Status
+  if (s === 'critical') return 'text-red font-bold glow-red'
+  if (s === 'warning') return 'text-orange font-bold'
   return 'text-green font-bold'
 })
 
 const bpClass = computed(() => {
-  const sys = vitalsStore.current.systolic
-  if (!sys) return 'text-dim'
-  if (sys > 140 || sys < 90) return 'text-red font-bold glow-red'
+  const s = telemetryStore.bpStatus
+  if (s === 'critical') return 'text-red font-bold glow-red'
   return 'text-green font-bold'
 })
 
 const tempClass = computed(() => {
-  const t = vitalsStore.current.bodyTemperature
-  if (!t) return 'text-dim'
-  if (t > 38 || t < 36) return 'text-orange font-bold'
+  const s = telemetryStore.tempStatus
+  if (s === 'critical') return 'text-red font-bold glow-red'
+  if (s === 'warning') return 'text-orange font-bold'
   return 'text-green font-bold'
 })
 
@@ -577,8 +587,10 @@ onUnmounted(() => {
 }
 
 .event-line {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(58px, 62px) minmax(80px, 100px) minmax(0, 1fr);
   gap: 6px;
+  align-items: start;
 }
 
 .ev-critical .event-msg {
@@ -586,10 +598,24 @@ onUnmounted(() => {
 }
 
 .event-time {
-  min-width: 58px;
+  white-space: nowrap;
 }
 
 .event-agent {
-  min-width: 90px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-msg {
+  word-break: break-word;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.source-badge {
+  font-family: var(--font-hud);
+  font-size: 7px;
+  letter-spacing: 0.1em;
 }
 </style>

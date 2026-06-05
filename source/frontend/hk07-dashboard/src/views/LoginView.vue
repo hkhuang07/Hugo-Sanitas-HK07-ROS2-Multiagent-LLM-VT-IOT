@@ -18,7 +18,7 @@
         <!-- Emergency Override Button -->
         <div class="emergency-container" v-if="activeTab !== 'register' || registerStep !== 4">
           <router-link to="/emergency" class="cmd-btn emergency-btn mono text-red glow-red">
-            >>> EMERGENCY ACCESS (CẤP CỨU) &lt;&lt;&lt;
+            >>> EMERGENCY ACCESS &lt;&lt;&lt;
           </router-link>
         </div>
 
