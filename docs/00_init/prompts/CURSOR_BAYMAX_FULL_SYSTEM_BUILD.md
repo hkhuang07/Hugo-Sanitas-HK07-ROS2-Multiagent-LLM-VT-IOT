@@ -108,7 +108,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 0 — Audit & Doc sync (2h)
+### PHASE 0 — Audit & Doc sync (2h) (Completed ✅)
 **Tasks:**
 1. Sửa `docs/MASTER_CHANGELOG.md` §1.2: phân biệt **Implemented (v1)** vs **Planned (v2)**.
 2. Tạo `docs/architecture/baymax_capability_matrix.md` từ bảng §3.
@@ -117,7 +117,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 1 — Blackboard + Orchestrator V2 (12–16h)
+### PHASE 1 — Blackboard + Orchestrator V2 (12–16h) (Completed ✅)
 **Files tạo/sửa:**
 - `source/backend/hk07-agent/services/blackboard_service.py`
 - `source/backend/hk07-agent/agents/agent_orchestrator_v2.py`
@@ -144,7 +144,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 2 — Perception Agent (Full Scan) (10–14h)
+### PHASE 2 — Perception Agent (Full Scan) (10–14h) (Completed ✅)
 **Files:**
 - `agents/perception_agent.py`
 - `services/sensor_fusion_buffer.py` — ring buffer camera + vitals + lidar
@@ -170,7 +170,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 3 — Medical Depth + Stress Proxy (8–10h)
+### PHASE 3 — Medical Depth + Stress Proxy (8–10h) (Completed ✅)
 **Tasks:**
 1. `MedicalAgent` thêm `compute_stress_index(vitals_history)` — HRV SDNN proxy, không gọi là "dopamine/serotonin".
 2. Kết hợp `PerceptionScan` + vitals → `ClinicalEntry` đa modal.
@@ -188,7 +188,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 4 — RAG / Internet Knowledge (10–12h)
+### PHASE 4 — RAG / Internet Knowledge (10–12h) (Completed ✅)
 **Files:**
 - `services/knowledge_ingestion.py` — ingest PDF/URL (allowlist domains: WHO, CDC, MoH VN)
 - `scripts/ingest_medical_guidelines.py`
@@ -198,7 +198,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 5 — Action Agent (Đề xuất → Thực thi) (12–16h)
+### PHASE 5 — Action Agent (Đề xuất → Thực thi) (12–16h) (Completed ✅)
 **Files:**
 - `agents/action_agent.py`
 - `ActionPlan` schema: steps `[{ type, mqtt_topic, payload, requires_confirm }]`
@@ -216,7 +216,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 6 — Balance & Navigation Agents (14–18h)
+### PHASE 6 — Balance & Navigation Agents (14–18h) (Completed ✅)
 **Files:**
 - `source/robotics/nodes/balance_controller.py` — PID từ IMU `hk07/sensors/imu/state`
 - `source/robotics/nodes/navigation_agent.py` — local planner + LiDAR costmap
@@ -230,20 +230,20 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 
 ---
 
-### PHASE 7 — Proactive Baymax (8h)
+### PHASE 7 — Proactive Baymax (8h) (Completed ✅)
 **Spec:** `docs/specs/hk07_baymax_multimodal_upgrade.md` Mũi nhọn 2.
 
 **Tasks:**
-1. Medical loop MQTT → nếu CRITICAL → emit `AI_EMERGENCY_WAKEUP` qua agent-events WS.
-2. Frontend modal countdown SOS (đã có skeleton `App.vue` — wire đầy đủ).
-3. Empathy proactive message khi stress_index tăng 3 lần liên tiếp.
+1. [x] Medical loop MQTT → nếu CRITICAL → emit `AI_EMERGENCY_WAKEUP` qua agent-events WS.
+2. [x] Frontend modal countdown SOS (đã có skeleton `App.vue` — wire đầy đủ).
+3. [x] Empathy proactive message khi stress_index tăng 3 lần liên tiếp.
 
 ---
 
-### PHASE 8 — Voice UI (6–8h)
+### PHASE 8 — Voice UI (6–8h) (Completed ✅)
 **Frontend:**
-- Web Speech API push-to-talk `CompanionView`
-- SpeechSynthesis đọc câu trả lời Empathy (giọng trầm ấm)
+- [x] Web Speech API push-to-talk `CompanionView`
+- [x] SpeechSynthesis đọc câu trả lời Empathy (giọng trầm ấm)
 
 **Backend:** optional STT proxy nếu browser không đủ.
 
@@ -252,6 +252,54 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 ### PHASE 9 — Manipulation (FUTURE / OPTIONAL)
 - Chỉ sau Navigation ổn định.
 - Gripper sim Webots + `ManipulationAgent`.
+
+---
+
+### PHASE 16 — ROS 2 Migration & DDS Integration (Completed ✅)
+- Convert `sensors/` to a valid ROS2 Python package (add `setup.py`, `package.xml`).
+- Refactor simulator scripts into ROS2 `rclpy` Nodes.
+- Set up middle bridge node to link ROS2 DDS with MQTT.
+
+---
+
+### PHASE 17 — Clinical Depth & Multimodal Blackboard Integration (Completed ✅)
+- Add Dynamic Threshold configuration from Spring Boot.
+- Implement HRV Stress Index calculator.
+- Integrate multimodal Blackboard diagnostics in Medical Agent.
+
+---
+
+### PHASE 18 — OpenCV rPPG & Thermal Vision Simulation & Integration (Completed ✅)
+- Publish simulated thermal forehead temperature and rPPG heart rates to ROS 2 topics.
+- Bridge topics to MQTT and Spring Boot WebSocket STOMP.
+- Bind store data and display real-time forehead scans on Vue companion view.
+
+---
+
+### PHASE 19 — Local Edge LLM Fallback (Zero-Dependency) (Completed ✅)
+- Implement `LocalOfflineFallback` engine inside `LLMClient`.
+- Filter keywords for clinical concerns, greetings, and system status checks.
+- Handle unaccented Vietnamese search queries and conceptual vs hardware queries.
+
+---
+
+### PHASE 20 — Clinical EHR / FHIR Standard Gateway (Completed ✅)
+- Implement `FhirGatewayService` to format clinical entries to HL7 FHIR Observation & Condition schemas.
+- Standardize REST and WebSocket data exchanges in the middleware.
+
+---
+
+### PHASE 21 — RTOS Fail-Safe Watchdog Simulation (Completed ✅)
+- Develop a ROS 2 hardware watchdog simulating an ESP32 co-processor.
+- Set relief actuator command if primary OS/middleware heartbeat fails.
+
+---
+
+### PHASE 22 — Real-Vision Integration & Quantized Edge SLM (Completed ✅)
+- Integrate OpenCV + MediaPipe face detection to isolate cheek/forehead ROI for green-channel average BVP.
+- Implement llama-cpp-python lazy-loaded GGUF models fallback engine in `llm_client.py`.
+- Formulate system/user prompts with Phi-3 and Llama-3 instruct templates for text completion and structured JSON tool calls fallback.
+- Run integration tests covering the local SLM path and rule-based fallback matrix.
 
 ---
 
@@ -301,7 +349,7 @@ Khi thực thi Phase liên quan đến môi trường giả lập 3D (Holographi
 ## 7. PROMPT KÍCH HOẠT NHANH (COPY 1 DÒNG)
 
 ```
-Đọc docs/MASTER_CHANGELOG.md §6 và docs/prompts/CURSOR_BAYMAX_FULL_SYSTEM_BUILD.md — thực hiện Phase tiếp theo chưa hoàn thành, tuân Subsumption, cập nhật changelog khi xong.
+Đọc docs/MASTER_CHANGELOG.md §6 và docs/prompts/CURSOR_BAYMAX_FULL_SYSTEM_BUILD.md — thực hiện Phase tiếp theo chưa hoàn thành, tuân Subsumption, cập nhật changelog khi xong. Phải dùng tư duy của một Software Architechture,Robotics Architechture, Frontend Designer, AI Engineer và Medical Device Engineer để triển khai một cách tối ưu, hiệu suất cao có khả năng mở rộng cao mà không khắc phục chắp vá hay tối ưu tạm bợ. 
 ```
 
 ---

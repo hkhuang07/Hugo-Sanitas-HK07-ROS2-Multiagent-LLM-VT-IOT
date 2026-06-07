@@ -1,16 +1,15 @@
 # ─── [ HUGO SANITAS HK-07 ROBOT COMPANION ] ───
 
 <p align="center">
-  <img src="./asset/main_logo.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
-  <img src="./asset/logo_name.jpg" alt="HK-07 Brand Logo" height="75" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
+  <img src="./asset/logo.jpg" alt="HK-07 Brand Logo" height="150" style="border-radius: 8px; filter: drop-shadow(0 0 10px #00E5FF);" />
 </p>
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  IDENTIFIER: HK.Huang07         │  VERSION: 1.0.0-ALPHA                      │
-│  INITIATED:  2026-05-31         │  STATUS:  OPERATIONAL                      │
-│  PLATFORM:   Linux / WSL2       │  THEME:   CYBER-CINEMATIC (PURE HUD)       │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  IDENTIFIER: HK.Huang07                │  VERSION: 1.0.0-ALPHA          │
+│  INITIATED:  2026-05-31                │  STATUS:  OPERATIONAL          │
+│  PLATFORM:   Linux / WSL2 / ROS2       │  THEME:   CYBER-CINEMATIC      │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 > **HK-07 // HUGO SANITAS** is a next-generation healthcare robot companion designed to assist elderly patients and individuals with cardiovascular conditions. The system combines multi-agent artificial intelligence, real-time vital signs telemetry, computer vision fall-detection, and a <5ms emergency safety reflex system, operating efficiently under strict hardware constraints (<615MB RAM total).
@@ -40,6 +39,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 #### A. Holographic Twin & Subsumption Radar
 ![Holographic Twin](./asset/holographic_twin.jpg)
+![Holographic Twin](./asset/holographic_twin_01.jpg)
 * **Description:** A virtual 3D wireframe radar showing the physical status, sensor fields, and orientation of the robot chassis in real-time.
 
 #### B. Safety Coordinates & Motion Inhibition Control
@@ -117,9 +117,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
                                               ▲
                               ┌───────────────┴───────────────┐
                               │     SENSOR LAYER (Simulated)  │
-                              │  Wokwi ESP32 (BLE Wristband)  │
-                              │  ROS 2 LiDAR Mock Nodes       │
-                              │  Webots Robot Simulator       │
+                              │            ROS 2 Nodes        │
                               └───────────────────────────────┘
 ```
 
@@ -155,6 +153,14 @@ hk-07/
     │   └── docker/         ← Infrastructure config files
     ├── frontend/
     │   └── hk07-dashboard/ ← Vue 3 Single Page Application
+    ├── robotics/
+    |   ├─── build/  
+    |   ├─── install/  
+    |   ├─── logs/  
+    │   └── sensor/             ← Sensor Node run in ROS2 
+    │       ├───mobile_gateway  ← Gravity sensor
+    │       ├───simulation      ← Nodes in ROS2 + Bridge
+    │       └───vision_sensor   ← IP WebCam  
     └── docker-compose.yml  ← Integration orchestrator
 ```
 
@@ -230,12 +236,26 @@ npm run dev
 # Vite server active on: http://localhost:5173
 ```
 
-#### Step 4: Run Simulation & Fallback Tools
+#### Step 4: Deploying the Unified ROS 2 Robotics Core
+To run the high-performance unified robotics node execution loop without memory leaks, open a dedicated **WSL2 Ubuntu Terminal**:
+
 ```bash
-# Trigger medical and spatial events manually
-python source/robotics/simulation/trigger_heart_attack.py
-python source/robotics/simulation/trigger_fall.py
-python source/robotics/simulation/trigger_obstacle.py
+# 1. Enter the target robotics workspace
+cd source/robotics
+
+# 2. Source the global ROS 2 Humble environment
+source /opt/ros/humble/setup.bash
+
+# 3. Compile the sensors package using a clean build configuration
+rm -rf build log
+colcon build --packages-select sensors
+
+# 4. Source the localized workspace installation variables
+source install/setup.bash
+
+# 5. Launch all 8 robotics nodes consolidated under a single OS thread process
+ros2 run sensors hk07_runtime_orchestrator
+
 ```
 
 ---
