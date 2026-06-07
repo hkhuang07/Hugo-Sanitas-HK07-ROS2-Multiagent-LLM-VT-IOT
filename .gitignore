@@ -142,3 +142,5 @@ redis-data/
 influx-data/
 
 
+.claude/
+data/
