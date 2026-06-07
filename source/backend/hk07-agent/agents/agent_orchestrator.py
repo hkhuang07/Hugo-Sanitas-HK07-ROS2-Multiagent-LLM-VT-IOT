@@ -29,6 +29,7 @@ class AgentOrchestrator:
         self.safety_agent = SafetyAgent(arbitrator)
         self.medical_agent = MedicalAgent(memory, arbitrator)
         self.empathetic_agent = EmpatheticAgent(memory, arbitrator)
+        self.memory = memory
 
     async def initialize(self):
         log.info("[ORCHESTRATOR] Sub-agents initialized successfully.")
@@ -150,12 +151,17 @@ class AgentOrchestrator:
         # Save routing & processing audit log
         log.info("[AUDIT_TRAIL] Processed event. Agent: %s, Alert: %s, Action: %s", 
                  state["current_agent"], state["alert_level"], state["action"])
+        
+        if self.memory and state.get("output"):
+            await self.memory.ingest_chat_cycle(user_message, state["output"])
+            
         return state
 
     async def close(self):
         await self.router_agent.close()
         # Clean up client pools
-        if self.medical_agent._client:
+        if hasattr(self.medical_agent, '_client') and self.medical_agent._client:
             await self.medical_agent._client.aclose()
-        if self.empathetic_agent._client:
+        if hasattr(self.empathetic_agent, '_client') and self.empathetic_agent._client:
             await self.empathetic_agent._client.aclose()
+

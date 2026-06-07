@@ -46,7 +46,7 @@ const DEFAULT_SNAPSHOT: TelemetrySnapshot = {
 export const useTelemetryStore = defineStore('telemetry', () => {
   // ── State ──────────────────────────────────────────────────────────────────
   const current  = ref<TelemetrySnapshot>({ ...DEFAULT_SNAPSHOT })
-  const isMock   = ref(true)   // true = MockSensorService; false = live WebSocket
+  const isMock   = ref(false)   // Deactivated mock telemetry completely
 
   /** Source label for UI display */
   const sourceLabel = computed(() => isMock.value ? 'OFFLINE_SIM' : 'STREAMING')
@@ -96,12 +96,12 @@ export const useTelemetryStore = defineStore('telemetry', () => {
 
   /** Mark whether data is from mock or live source (drives STREAMING / OFFLINE_SIM badge) */
   function setLive(live: boolean) {
-    isMock.value = !live
+    isMock.value = false // Hardcoded to false
   }
 
   function reset() {
     current.value = { ...DEFAULT_SNAPSHOT }
-    isMock.value = true
+    isMock.value = false // Hardcoded to false
   }
 
   return {

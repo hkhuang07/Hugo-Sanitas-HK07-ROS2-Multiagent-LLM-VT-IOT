@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import api from '../services/api'
 
 export interface VitalSign {
@@ -12,6 +12,18 @@ export interface VitalSign {
   epochTimestampMs: number
   alertLevel?: 'NORMAL' | 'WARNING' | 'CRITICAL' | 'STROKE'
   userId?: string
+}
+
+export interface HourlyBucket {
+  bucket_hour: string
+  avg_hr: number | null
+  max_hr: number | null
+  min_hr: number | null
+  avg_systolic: number | null
+  avg_spo2: number | null
+  avg_temp: number | null
+  sample_count: number | null
+  worst_alert: string | null
 }
 
 const RING_BUFFER_SIZE = 120  // 2 seconds @ 60Hz — Lag Compensation buffer
@@ -101,6 +113,10 @@ export const useVitalsStore = defineStore('vitals', () => {
     alertLevel: 'NORMAL',
   })
 
+  // Persisted state from localStorage
+  const savedBuckets = localStorage.getItem('hk07_vitals_buckets')
+  const hourlyBuckets = ref<HourlyBucket[]>(savedBuckets ? JSON.parse(savedBuckets) : [])
+
   // Ring buffer for ECG waveform — pre-allocated array of fixed size
   const heartRateHistory = ref<number[]>(Array(RING_BUFFER_SIZE).fill(0))
   const spo2History = ref<number[]>(Array(RING_BUFFER_SIZE).fill(99))
@@ -130,6 +146,63 @@ export const useVitalsStore = defineStore('vitals', () => {
     heartRateHistory.value[idx] = data.heartRate
     spo2History.value[idx] = data.spo2
     bufferWriteIdx.value++
+
+    // Update hourly buckets in real-time
+    const date = new Date(data.epochTimestampMs || Date.now())
+    const pad = (n: number) => n.toString().padStart(2, '0')
+    const bucketHour = `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:00:00`
+
+    let bucket = hourlyBuckets.value.find(b => b.bucket_hour.startsWith(bucketHour.slice(0, 13)))
+    if (!bucket) {
+      bucket = {
+        bucket_hour: bucketHour,
+        avg_hr: data.heartRate > 0 ? data.heartRate : null,
+        max_hr: data.heartRate > 0 ? data.heartRate : null,
+        min_hr: data.heartRate > 0 ? data.heartRate : null,
+        avg_systolic: data.systolic > 0 ? data.systolic : null,
+        avg_spo2: data.spo2 > 0 ? data.spo2 : null,
+        avg_temp: data.bodyTemperature > 0 ? data.bodyTemperature : null,
+        sample_count: 1,
+        worst_alert: data.alertLevel || 'NORMAL'
+      }
+      hourlyBuckets.value.push(bucket)
+      if (hourlyBuckets.value.length > 200) {
+        hourlyBuckets.value.shift()
+      }
+    } else {
+      const count = bucket.sample_count || 0
+      bucket.sample_count = count + 1
+
+      if (data.heartRate > 0) {
+        bucket.avg_hr = bucket.avg_hr 
+          ? Math.round((bucket.avg_hr * count + data.heartRate) / (count + 1))
+          : data.heartRate
+        bucket.max_hr = bucket.max_hr ? Math.max(bucket.max_hr, data.heartRate) : data.heartRate
+        bucket.min_hr = bucket.min_hr ? Math.min(bucket.min_hr, data.heartRate) : data.heartRate
+      }
+      if (data.systolic > 0) {
+        bucket.avg_systolic = bucket.avg_systolic
+          ? Math.round((bucket.avg_systolic * count + data.systolic) / (count + 1))
+          : data.systolic
+      }
+      if (data.spo2 > 0) {
+        bucket.avg_spo2 = bucket.avg_spo2
+          ? (bucket.avg_spo2 * count + data.spo2) / (count + 1)
+          : data.spo2
+      }
+      if (data.bodyTemperature > 0) {
+        bucket.avg_temp = bucket.avg_temp
+          ? (bucket.avg_temp * count + data.bodyTemperature) / (count + 1)
+          : data.bodyTemperature
+      }
+      
+      const alertPriority: Record<string, number> = { NORMAL: 0, WARNING: 1, CRITICAL: 2, STROKE: 3 }
+      const newLevel = data.alertLevel || 'NORMAL'
+      const currentLevel = bucket.worst_alert || 'NORMAL'
+      if ((alertPriority[newLevel] ?? 0) > (alertPriority[currentLevel] ?? 0)) {
+        bucket.worst_alert = newLevel
+      }
+    }
   }
 
   // [P1-2] Called when WebSocket drops — cache incoming vitals to IndexedDB
@@ -173,8 +246,14 @@ export const useVitalsStore = defineStore('vitals', () => {
     isConnected.value = false
   }
 
+  // Watchers to update localStorage automatically on changes
+  watch(hourlyBuckets, (newVal) => {
+    localStorage.setItem('hk07_vitals_buckets', JSON.stringify(newVal))
+  }, { deep: true })
+
   return {
     current,
+    hourlyBuckets,
     alertLevel,
     alertClass,
     isEmergency,

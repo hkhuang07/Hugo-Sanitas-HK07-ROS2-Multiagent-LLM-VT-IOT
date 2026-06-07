@@ -158,6 +158,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { Chart, registerables } from 'chart.js'
 import api from '../services/api'
+import { useVitalsStore } from '../stores/vitals'
 
 Chart.register(...registerables)
 
@@ -187,7 +188,11 @@ const customFrom     = ref('')       // datetime-local string
 const customTo       = ref('')
 const customRangeLabel = ref('')
 
-const hourlyBuckets  = ref<HourlyBucket[]>([])
+const vitalsStore = useVitalsStore()
+const hourlyBuckets = computed({
+  get: () => vitalsStore.hourlyBuckets,
+  set: (val) => { vitalsStore.hourlyBuckets = val }
+})
 
 const hrChartCanvas  = ref<HTMLCanvasElement | null>(null)
 const spo2ChartCanvas = ref<HTMLCanvasElement | null>(null)
@@ -250,17 +255,11 @@ async function fetchHistory() {
     dataSource.value = data.length > 0 ? 'LIVE_DB' : 'LIVE_DB (EMPTY)'
     loadingProgress.value = 20
   } catch (e: any) {
-    // Surface real errors — DO NOT silently fall back to mock in production
     const status = e.response?.status
     apiError.value = status
       ? `HTTP ${status}: ${e.response?.data?.message ?? e.message}`
       : `CONNECTION_FAILED: ${e.message}`
-    // Only use mock in local dev mode (when backend is not running)
-    if (!e.response || status === 503 || status === 0) {
-      hourlyBuckets.value = generateMockData(activeHours.value)
-      dataSource.value = 'OFFLINE_MOCK'
-      apiError.value = '' // Clear error — mock data is available
-    }
+    dataSource.value = 'ERROR'
   } finally {
     stopProgressSim()
     loading.value = false
@@ -510,24 +509,7 @@ async function renderCharts() {
   })
 }
 
-// ─── Mock Data (dev only — never shown if backend is reachable) ──────────────
-function generateMockData(hours: number): HourlyBucket[] {
-  return Array.from({ length: hours }, (_, i) => {
-    const hrVariation = Math.sin(i * 0.5) * 8 + Math.random() * 5
-    const baseHr = 72 + hrVariation
-    return {
-      bucket_hour:  new Date(Date.now() - (hours - i) * 3600_000).toISOString(),
-      avg_hr:       Math.round(baseHr),
-      max_hr:       Math.round(baseHr + 6),
-      min_hr:       Math.round(baseHr - 6),
-      avg_systolic: 118 + Math.random() * 8,
-      avg_spo2:     97.5 + Math.random() * 1.5,
-      avg_temp:     36.7 + Math.random() * 0.3,
-      worst_alert:  i === 3 ? 'WARNING' : i === 8 ? 'CRITICAL' : 'NORMAL',
-      sample_count: Math.round(50 + Math.random() * 20),
-    }
-  })
-}
+// generateMockData deleted completely as per specs
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function formatHour(iso: string): string {
@@ -556,6 +538,10 @@ onUnmounted(() => {
   spo2Chart?.destroy()
   stopProgressSim()
 })
+
+watch(() => vitalsStore.hourlyBuckets, async () => {
+  await renderCharts()
+}, { deep: true })
 </script>
 
 <style scoped>

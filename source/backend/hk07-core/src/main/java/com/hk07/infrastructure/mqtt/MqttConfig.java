@@ -84,7 +84,17 @@ public class MqttConfig {
                 "hk07/sensors/imu/state",
                 "hk07/control/subsumption/inhibit",
                 "hk07/agents/+/output",
-                "hk07/system/heartbeat"
+                "hk07/system/heartbeat",
+                "hk07/telemetry/imu",
+                "hk07/telemetry/pneumatic",
+                "hk07/telemetry/sensors/tactile",
+                "hk07/telemetry/actuators/joints",
+                "hk07/telemetry/pmu",
+                "hk07/perception/clinical",
+                "hk07/telemetry/lidar/points",
+                "hk07/telemetry/avoidance",
+                "hk07/telemetry/joint_states",
+                "hk07/sensors/camera/thermal_rppg"
             );
 
         adapter.setCompletionTimeout(5000);

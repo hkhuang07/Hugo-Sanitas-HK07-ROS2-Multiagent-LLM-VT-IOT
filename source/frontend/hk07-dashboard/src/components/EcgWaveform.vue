@@ -233,7 +233,7 @@ function draw() {
 
     ctx.fillStyle = 'rgba(0, 255, 102, 0.25)'
     ctx.font = '9px "Roboto Mono", monospace'
-    ctx.fillText('NO_SIGNAL — OFFLINE_SIM', 8, 14)
+    ctx.fillText('NO_SIGNAL — OFFLINE', 8, 14)
   }
 
   animFrameId = requestAnimationFrame(draw)

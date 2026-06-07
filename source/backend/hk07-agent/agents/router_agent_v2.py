@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
@@ -183,6 +184,53 @@ TOOLS_SCHEMA = [
                     }
                 },
                 "required": ["device"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_action_plan",
+            "description": (
+                "Propose and execute a structured plan to control robot movements, trigger SOS, "
+                "send medication reminders, speak custom TTS messages, or navigate waypoint locations. "
+                "Use when user requests physical control, waypoints navigation, reminders, or emergency actions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {
+                        "type": "string",
+                        "description": "Unique plan ID (e.g. plan-12345)"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "List of sequential steps to execute",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["SAFE_HOLD", "RESUME", "SOS_DISPATCH", "REMINDER_MEDICATION", "NAVIGATE_TO", "SPEAK_MESSAGE"]
+                                },
+                                "mqtt_topic": {
+                                    "type": "string",
+                                    "description": "MQTT topic to target (e.g. 'hk07/control/subsumption/inhibit', 'hk07/control/navigation/waypoint', 'hk07/agents/action/reminder', 'hk07/agents/action/tts')"
+                                },
+                                "payload": {
+                                    "type": "object",
+                                    "description": "Dictionary of payload data to send"
+                                },
+                                "requires_confirm": {
+                                    "type": "boolean",
+                                    "description": "True if action is safety-critical (like SOS dispatch) and needs user confirmation"
+                                }
+                            },
+                            "required": ["type", "mqtt_topic", "payload"]
+                        }
+                    }
+                },
+                "required": ["plan_id", "steps"]
             }
         }
     }
@@ -378,6 +426,78 @@ class RouterAgentV2:
                 "parameters": {"device": device}
             })
 
+        # Tier 2.5 — Action Agent Commands Fallback
+        action_steps = []
+        
+        # 1. SAFE_HOLD
+        hold_kws = ["dừng lại", "dung lai", "dừng di chuyển", "dung di chuyen", "safe hold", "hold"]
+        if any(w in msg for w in hold_kws):
+            action_steps.append({
+                "type": "SAFE_HOLD",
+                "mqtt_topic": "hk07/control/subsumption/inhibit",
+                "payload": {"trigger": "SAFE_HOLD", "agent": "ACTION_AGENT", "message": "Manual hold via local command"},
+                "requires_confirm": False
+            })
+            
+        # 2. RESUME
+        resume_kws = ["đi tiếp", "di tiep", "tiếp tục", "tiep tuc", "resume"]
+        if any(w in msg for w in resume_kws):
+            action_steps.append({
+                "type": "RESUME",
+                "mqtt_topic": "hk07/control/subsumption/inhibit",
+                "payload": {"trigger": "CLEAR", "agent": "ACTION_AGENT", "message": "Manual resume via local command"},
+                "requires_confirm": False
+            })
+
+        # 3. SOS_DISPATCH
+        sos_kws = ["gửi cứu hộ", "gui cuu ho", "cứu tôi", "cuu toi", "gửi cấp cứu", "gui cap cuu", "sos"]
+        if any(w in msg for w in sos_kws):
+            action_steps.append({
+                "type": "SOS_DISPATCH",
+                "mqtt_topic": "hk07/control/subsumption/inhibit",
+                "payload": {"trigger": "OWNER_EMERGENCY", "agent": "ACTION_AGENT", "message": "SOS triggered via local command"},
+                "requires_confirm": True
+            })
+
+        # 4. REMINDER_MEDICATION
+        reminder_kws = ["uống thuốc", "uong thuoc", "nhắc nhở", "nhac nho", "reminder", "nhắc tôi"]
+        if any(w in msg for w in reminder_kws):
+            action_steps.append({
+                "type": "REMINDER_MEDICATION",
+                "mqtt_topic": "hk07/agents/action/reminder",
+                "payload": {"message": "Nhắc nhở uống thuốc huyết áp/y tế"},
+                "requires_confirm": False
+            })
+
+        # 5. NAVIGATE_TO
+        nav_kws = ["di chuyển đến", "di chuyen den", "đi ra", "di ra", "navigate to", "go to", "đến phòng", "den phong"]
+        if any(w in msg for w in nav_kws):
+            action_steps.append({
+                "type": "NAVIGATE_TO",
+                "mqtt_topic": "hk07/control/navigation/waypoint",
+                "payload": {"x": 2.0, "y": 0.0, "z": 0.0, "label": "phòng khách"},
+                "requires_confirm": False
+            })
+
+        # 6. SPEAK_MESSAGE
+        speak_kws = ["hãy nói", "hay noi", "nói rằng", "noi rang", "say that", "speak message"]
+        if any(w in msg for w in speak_kws):
+            action_steps.append({
+                "type": "SPEAK_MESSAGE",
+                "mqtt_topic": "hk07/agents/action/tts",
+                "payload": {"message": user_message},
+                "requires_confirm": False
+            })
+
+        if action_steps:
+            tool_calls.append({
+                "tool_name": "execute_action_plan",
+                "parameters": {
+                    "plan_id": f"plan-{int(time.time())}",
+                    "steps": action_steps
+                }
+            })
+
         # Tier 2 — Empathetic / Conversational
         empathy_kw = [
             "xin", "vui", "buồn", "buon", "sợ", "so", "lo",
@@ -422,3 +542,7 @@ class RouterAgentV2:
         if any(w in t for w in ["lo", "anxious", "lo lắng", "lo lang", "worried"]):
             return "ANXIOUS"
         return "NEUTRAL"
+
+    async def close(self):
+        log.info("[ROUTER_V2] Closing RouterAgentV2 resources.")
+

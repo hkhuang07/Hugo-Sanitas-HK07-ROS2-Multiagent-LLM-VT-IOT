@@ -17,10 +17,12 @@ import re
 import time
 import collections
 import httpx
+import math
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from services.agent_log_client import log_agent_decision
 from utils.enums import LLMProvider
+from services.blackboard_service import get_blackboard, ClinicalEntry
 
 # Load env variables
 load_dotenv()
@@ -58,10 +60,6 @@ MEDICAL_ADVICE_SYSTEM_PROMPT = (
 )
 
 
-HR_MIN, HR_MAX = 50, 120
-SPO2_MIN = 92.0
-TEMP_MAX = 38.5
-
 class CircuitBreaker:
     def __init__(self, failure_threshold=3, recovery_time=30.0):
         self.failure_threshold = failure_threshold
@@ -93,6 +91,7 @@ class CircuitBreaker:
                 return True
             return False
         return True
+
 
 def safe_extract_json(text: str) -> dict:
     fallback = {
@@ -129,6 +128,7 @@ def safe_extract_json(text: str) -> dict:
 
     return fallback
 
+
 class MedicalAgent:
     def __init__(self, memory, arbitrator):
         self.memory = memory
@@ -143,6 +143,8 @@ class MedicalAgent:
         self._openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
         self._client = None
         self._volatile_context = {}
+        self._thresholds_cache = {}
+        self._last_thresholds_fetch_time = 0.0
         self.latest_vitals = {
             "heartRate": 72,
             "spo2": 98.0,
@@ -169,6 +171,12 @@ class MedicalAgent:
             self._buffer.append(data)
             # Instantly update latest_vitals for live dashboard
             self.latest_vitals.update(data)
+            
+            # Extract deviceId from topic: hk07/sensors/wristband/<device_id>/vitals
+            parts = msg.topic.split('/')
+            if len(parts) >= 4:
+                device_id = parts[3]
+                self._volatile_context["device_id"] = device_id
         except Exception:
             pass
 
@@ -198,6 +206,84 @@ class MedicalAgent:
             "diastolic": total_dia / count
         }
 
+    async def _fetch_dynamic_thresholds(self, device_id: str) -> dict:
+        """
+        Fetches dynamic clinical thresholds from the Spring Boot configuration gateway.
+        Falls back to factory default constants if backend is offline or unauthenticated.
+        """
+        from services.agent_log_client import _client as log_client
+        
+        defaults = {
+            "hrMin": 50, "hrMax": 120,
+            "spo2Min": 92.0, "tempMax": 38.5,
+            "systolicMax": 140, "diastolicMax": 90
+        }
+        
+        if not log_client or not log_client._http or not log_client._token:
+            return defaults
+            
+        try:
+            resp = await log_client._http.get(
+                f"/api/thresholds/{device_id}",
+                headers={"Authorization": f"Bearer {log_client._token}"}
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                if body.get("success") and "data" in body:
+                    data = body["data"]
+                    log.info(f"[DYNAMIC_THRESHOLDS] Loaded for {device_id}: HR=[{data.get('hrMin')},{data.get('hrMax')}], SpO2_min={data.get('spo2Min')}%")
+                    return data
+            else:
+                log.warning(f"[DYNAMIC_THRESHOLDS] Fetch failed for {device_id}: HTTP {resp.status_code}")
+        except Exception as e:
+            log.warning(f"[DYNAMIC_THRESHOLDS] Error fetching from backend: {e}")
+            
+        return defaults
+
+    def compute_stress_index(self) -> dict:
+        """
+        Calculate clinical StressIndex approximated via Heart Rate Variability (HRV SDNN)
+        over the sliding buffer of physiological telemetry.
+        """
+        hr_samples = [item.get("heartRate") for item in self._buffer if item.get("heartRate")]
+        
+        if len(hr_samples) < 5:
+            return {
+                "score": 15,
+                "label": "CALM",
+                "disclaimer": (
+                    "Stress index is approximated via Heart Rate Variability (SDNN) calculated "
+                    "over the sliding window of physiological data. Insufficient samples (<5) "
+                    "for high-fidelity calculation. Not a direct chemical neurotransmitter measurement."
+                )
+            }
+            
+        # Convert HR (bpm) to RR intervals (ms)
+        rr_intervals = [60000.0 / hr for hr in hr_samples]
+        mean_rr = sum(rr_intervals) / len(rr_intervals)
+        variance = sum((rr - mean_rr) ** 2 for rr in rr_intervals) / len(rr_intervals)
+        sdnn = math.sqrt(variance)
+        
+        if sdnn > 50.0:
+            score = int(max(5, min(25, 25 - (sdnn - 50.0) * 0.5)))
+            label = "CALM"
+        elif sdnn >= 30.0:
+            score = int(max(26, min(59, 60 - (sdnn - 30.0) * 1.5)))
+            label = "ELEVATED"
+        else:
+            score = int(max(60, min(95, 95 - sdnn * 1.0)))
+            label = "ANXIOUS"
+            
+        return {
+            "score": score,
+            "label": label,
+            "sdnn_ms": round(sdnn, 2),
+            "disclaimer": (
+                "Stress index is approximated via Heart Rate Variability (SDNN) calculated "
+                "over the sliding window of physiological data. It is not direct neurotransmitter measurement."
+            )
+        }
+
     async def _process_latest_buffer(self):
         if not self._buffer:
             return
@@ -207,14 +293,49 @@ class MedicalAgent:
         if not agg:
             return
 
+        # Compute HRV Stress Index and track in Blackboard history
+        stress_info = self.compute_stress_index()
+        score = stress_info.get("score", 15)
+        bb = get_blackboard()
+        try:
+            history = await bb.read_value("blackboard:clinical:stress_history")
+            if not history:
+                history = []
+            if not history or history[-1] != score:
+                history.append(score)
+                if len(history) > 3:
+                    history.pop(0)
+                await bb.write_value("blackboard:clinical:stress_history", history, ttl_seconds=300)
+                log.debug("[STRESS_HISTORY_TRACK] Updated stress history on Blackboard: %s", history)
+        except Exception as e:
+            log.error("[STRESS_HISTORY_ERROR] Error updating stress history: %s", e)
+
+
         hr = agg["heartRate"]
         spo2 = agg["spo2"]
         temp = agg["bodyTemperature"]
 
-        # Check if the aggregated vitals are critical
+        # Dynamic Threshold resolution
+        now_time = time.time()
+        device_id = self._volatile_context.get("device_id", "default")
+        if device_id not in self._thresholds_cache or (now_time - self._last_thresholds_fetch_time) > 5.0:
+            self._thresholds_cache[device_id] = await self._fetch_dynamic_thresholds(device_id)
+            self._last_thresholds_fetch_time = now_time
+            
+        thresholds = self._thresholds_cache[device_id]
+        hr_min = thresholds.get("hrMin", 50)
+        hr_max = thresholds.get("hrMax", 120)
+        spo2_min = thresholds.get("spo2Min", 92.0)
+        temp_max = thresholds.get("tempMax", 38.5)
+
+        # Check if the aggregated vitals are critical using dynamic thresholds
+        is_falling = any(item.get("is_falling") in (True, 1, 1.0, "true", "True") for item in self._buffer)
+        emergency_pressed = any(item.get("emergency_button_pressed") in (True, 1, 1.0, "true", "True") for item in self._buffer)
+
         is_critical = (
-            hr < HR_MIN or hr > HR_MAX or
-            spo2 < SPO2_MIN or temp > TEMP_MAX
+            hr < hr_min or hr > hr_max or
+            spo2 < spo2_min or temp > temp_max or
+            is_falling or emergency_pressed
         )
 
         current_state = "CRITICAL" if is_critical else "NORMAL"
@@ -222,6 +343,40 @@ class MedicalAgent:
         # 2. State-Transition Filtering & Delta calculation
         state_changed = (current_state != self._last_state)
         
+        if current_state == "CRITICAL" and self._last_state != "CRITICAL":
+            # State transitioned to CRITICAL - publish immediate WAKEUP event to MQTT
+            triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            trigger_reasons = []
+            if hr < hr_min or hr > hr_max:
+                trigger_reasons.append(f"nhịp tim ({hr:.1f} bpm) ngoài ngưỡng")
+            if spo2 < spo2_min:
+                trigger_reasons.append(f"nồng độ oxy SpO2 ({spo2:.1f}%) tụt thấp")
+            if temp > temp_max:
+                trigger_reasons.append(f"nhiệt độ cơ thể ({temp:.1f}°C) sốt cao")
+            if is_falling:
+                trigger_reasons.append("phát hiện ngã/chấn thương")
+            if emergency_pressed:
+                trigger_reasons.append("nút SOS khẩn cấp được nhấn")
+            
+            reasons_desc = " và ".join(trigger_reasons) if trigger_reasons else "chỉ số sinh hiệu vượt ngưỡng nguy hiểm"
+            
+            payload = {
+                "id": f"evt-{int(time.time())}",
+                "eventType": "AI_EMERGENCY_WAKEUP",
+                "agentType": "MEDICAL",
+                "alertLevel": "CRITICAL",
+                "inputContext": f"Vitals: HR={hr:.1f}bpm SpO2={spo2:.1f}% Temp={temp:.1f}°C Fall={is_falling} SOS={emergency_pressed}",
+                "outputDecision": f"[CẢNH BÁO NGUY HIỂM] Phát hiện {reasons_desc}. Tôi đang kích hoạt quy trình cứu hộ SOS khẩn cấp. Vui lòng giữ bình tĩnh, trợ giúp đang đến.",
+                "llmProvider": "LOCAL_RULE",
+                "latencyMs": 0,
+                "triggeredAt": triggered_at
+            }
+            try:
+                self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
+                log.info("[MEDICAL_PROACTIVE_WAKEUP] Instantly published AI_EMERGENCY_WAKEUP to MQTT due to: %s", reasons_desc)
+            except Exception as e:
+                log.error("[MEDICAL_PROACTIVE_WAKEUP_ERROR] Failed to publish wakeup event: %s", e)
+
         delta_hr = 0.0
         if self._last_analyzed_hr > 0.0:
             delta_hr = abs(hr - self._last_analyzed_hr) / self._last_analyzed_hr
@@ -261,7 +416,7 @@ class MedicalAgent:
                         "llmProvider": "GROQ_PROACTIVE" if is_emergency else "GROQ_ANALYSIS",
                         "latencyMs": latency,
                         "triggeredAt": triggered_at
-                    }
+                      }
 
                     self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
 
@@ -272,6 +427,18 @@ class MedicalAgent:
                         llm_provider=LLMProvider.GROQ_OR_FALLBACK.value if self._circuit_breaker.state != "OPEN" else LLMProvider.LOCAL_RULE.value,
                         latency_ms=latency
                     )
+                    
+                    # Also write the clinical entry to Blackboard for proactive sync
+                    bb = get_blackboard()
+                    entry = ClinicalEntry(
+                        agent_type="MEDICAL",
+                        alert_level=analysis.get("alert_level", "NORMAL"),
+                        vitals=vitals_data,
+                        diagnosis=analysis.get("summary", "Mô tả sức khỏe"),
+                        action_recommended=analysis.get("action", "Lời khuyên sơ cứu"),
+                        confidence_score=0.9
+                    )
+                    await bb.write_clinical(entry)
                 except Exception as ex:
                     log.error("[MEDICAL_BG_ANALYSIS_ERROR] Exception: %s", ex)
 
@@ -303,7 +470,33 @@ class MedicalAgent:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
 
         start_time = time.time()
-        prompt = self._build_chat_prompt(user_message, current_vitals, mode)
+        
+        # Fetch latest perception scan from Blackboard (Multimodal)
+        perception_scan = None
+        try:
+            from agents.perception_agent import PerceptionAgent
+            pa = PerceptionAgent(self.arbitrator)
+            perception_scan = await pa.read_latest_scan()
+        except Exception as e:
+            log.error("[MEDICAL_AGENT] Failed to read perception scan: %s", e)
+            
+        perception_info = "Không có thông tin hình ảnh."
+        if perception_scan:
+            perception_info = (
+                f"Kết quả quét cơ thể hình ảnh (Visual Scan):\n"
+                f"- Sắc tố da: {perception_scan.skin_tone_note}\n"
+                f"- Mức độ đau đớn/biểu cảm khuôn mặt: {perception_scan.facial_distress} (0.0-1.0)\n"
+                f"- Chấn thương bên ngoài: {', '.join(perception_scan.visible_injuries) if perception_scan.visible_injuries else 'Không có'}\n"
+                f"- Rủi ro tư thế: {perception_scan.posture_risk}\n"
+                f"- Khoảng cách vật cản gần nhất: {perception_scan.nearest_obstacle_m}m\n"
+                f"- Mức độ rủi ro LiDAR: {perception_scan.threat_level}\n"
+                f"- Mức độ rủi ro tổng hợp trực quan: {perception_scan.overall_risk}\n"
+            )
+            
+        # Compute HRV Stress Index
+        stress_index = self.compute_stress_index()
+        
+        prompt = self._build_chat_prompt(user_message, current_vitals, stress_index, perception_info, mode)
         system_prompt = MEDICAL_ADVICE_SYSTEM_PROMPT if mode == "MEDICAL_ADVICE" else MEDICAL_SYSTEM_PROMPT
 
         # Inject medical baseline profile (Super Context) if available
@@ -312,36 +505,57 @@ class MedicalAgent:
             system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
 
         # 1. Primary: Groq API
+        res_str = ""
+        provider_used = LLMProvider.LOCAL_RULE.value
+        
         if self._groq_api_key:
             res_str, success = await self._call_groq_text(prompt, system_prompt)
             if success:
-                latency = int((time.time() - start_time) * 1000)
-                await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.GROQ_PRIMARY.value, latency)
-                return res_str
-            log.warning("[MEDICAL_AGENT] Groq failed, switching to OpenRouter fallback")
+                provider_used = LLMProvider.GROQ_PRIMARY.value
+            else:
+                log.warning("[MEDICAL_AGENT] Groq failed, switching to OpenRouter fallback")
 
         # 2. Fallback: OpenRouter API
-        if self._openrouter_api_key:
+        if not res_str and self._openrouter_api_key:
             res_str, success = await self._call_openrouter_text(prompt, system_prompt)
             if success:
-                latency = int((time.time() - start_time) * 1000)
-                await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.OPENROUTER_FALLBACK.value, latency)
-                return res_str
-            log.error("[MEDICAL_AGENT] Both Groq and OpenRouter failed")
+                provider_used = LLMProvider.OPENROUTER_FALLBACK.value
+            else:
+                log.error("[MEDICAL_AGENT] Both Groq and OpenRouter failed")
 
         # 3. Local rules fallback (returns JSON string)
-        if mode == "MEDICAL_ADVICE":
-            local_diag = {
-                "diagnosis": f"Phát hiện triệu chứng tự báo cáo: {user_message}",
-                "action_plan": self._generate_local_first_aid_plan(user_message),
-                "alert_level": "WARNING"
-            }
-        else:
-            local_diag = self._generate_rule_based_diagnosis(current_vitals)
-            local_diag["summary"] = f"[Local Mode] {local_diag['summary']} {self._generate_local_text_fallback_reason(user_message)}"
-        res_str = json.dumps(local_diag, ensure_ascii=False)
+        if not res_str:
+            if mode == "MEDICAL_ADVICE":
+                local_diag = {
+                    "diagnosis": f"Phát hiện triệu chứng tự báo cáo: {user_message}",
+                    "action_plan": self._generate_local_first_aid_plan(user_message),
+                    "alert_level": "WARNING"
+                }
+            else:
+                local_diag = self._generate_rule_based_diagnosis(current_vitals)
+                local_diag["summary"] = f"[Local Mode] {local_diag['summary']} {self._generate_local_text_fallback_reason(user_message)}"
+            res_str = json.dumps(local_diag, ensure_ascii=False)
+            provider_used = LLMProvider.LOCAL_RULE.value
+
         latency = int((time.time() - start_time) * 1000)
-        await log_agent_decision("MEDICAL", user_message, res_str, LLMProvider.LOCAL_RULE.value, latency)
+        await log_agent_decision("MEDICAL", user_message, res_str, provider_used, latency)
+        
+        # Write ClinicalEntry back to Blackboard (EHR synchronization)
+        try:
+            extracted = safe_extract_json(res_str)
+            bb = get_blackboard()
+            entry = ClinicalEntry(
+                agent_type="MEDICAL",
+                alert_level=extracted.get("alert_level", "NORMAL"),
+                vitals=current_vitals,
+                diagnosis=extracted.get("summary") or extracted.get("diagnosis") or "Chẩn đoán y tế",
+                action_recommended=extracted.get("action") or extracted.get("action_plan") or "Nghỉ ngơi",
+                confidence_score=0.85 if provider_used != LLMProvider.LOCAL_RULE.value else 0.5
+            )
+            await bb.write_clinical(entry)
+        except Exception as e:
+            log.error("[MEDICAL_AGENT] Failed to write ClinicalEntry to Blackboard: %s", e)
+
         return res_str
 
     async def _call_groq_text(self, prompt: str, system_prompt: str) -> tuple[str, bool]:
@@ -489,24 +703,30 @@ class MedicalAgent:
             "Analyze and return JSON only."
         )
 
-    def _build_chat_prompt(self, message: str, vitals: dict, mode: str = "MEDICAL_ANALYSIS") -> str:
+    def _build_chat_prompt(self, message: str, vitals: dict, stress_index: dict, perception_info: str, mode: str = "MEDICAL_ANALYSIS") -> str:
         vitals_summary = (
             f"Nhịp tim: {vitals.get('heartRate', 72)} bpm, "
             f"SpO2: {vitals.get('spo2', 98)}%, "
             f"Nhiệt độ: {vitals.get('bodyTemperature', 36.6)} °C, "
             f"Huyết áp: {vitals.get('systolic', 120)}/{vitals.get('diastolic', 80)} mmHg."
         )
+        stress_summary = f"Chỉ số căng thẳng (HRV Stress): {stress_index.get('score')}/100 ({stress_index.get('label')})."
+        
         if mode == "MEDICAL_ADVICE":
             return (
                 f"Triệu chứng người dùng khai báo: '{message}'\n"
-                f"Chỉ số sinh tồn hiện tại của họ: {vitals_summary}\n"
-                "Hãy phân tích triệu chứng kết hợp sinh hiệu và đưa ra chẩn đoán cùng kế hoạch hành động/sơ cứu thực tế dưới cấu trúc JSON của MEDICAL_ADVICE."
+                f"Chỉ số sinh tồn hiện tại: {vitals_summary}\n"
+                f"{stress_summary}\n"
+                f"{perception_info}\n"
+                "Hãy phân tích triệu chứng kết hợp sinh hiệu và hình ảnh trực quan trên để đưa ra chẩn đoán cùng kế hoạch hành động/sơ cứu thực tế dưới cấu trúc JSON của MEDICAL_ADVICE."
             )
         else:
             return (
                 f"Câu hỏi/Yêu cầu phân tích: '{message}'\n"
-                f"Chỉ số sinh tồn hiện tại của họ: {vitals_summary}\n"
-                "Hãy phân tích chỉ số sinh tồn và đưa ra tóm tắt cùng lời khuyên y tế phù hợp dưới cấu trúc JSON của MEDICAL_ANALYSIS."
+                f"Chỉ số sinh tồn hiện tại: {vitals_summary}\n"
+                f"{stress_summary}\n"
+                f"{perception_info}\n"
+                "Hãy phân tích các chỉ số trên và đưa ra tóm tắt cùng lời khuyên y tế phù hợp dưới cấu trúc JSON của MEDICAL_ANALYSIS."
             )
 
     def _generate_rule_based_diagnosis(self, vitals: dict) -> dict:
@@ -569,3 +789,12 @@ class MedicalAgent:
         self._volatile_context.clear()
         self._last_analysis = None
         log.info("[VOLATILE_WIPE] MedicalAgent cleared")
+
+    async def close(self):
+        try:
+            self._mqtt.loop_stop()
+            self._mqtt.disconnect()
+        except Exception:
+            pass
+        if hasattr(self, '_client') and self._client:
+            await self._client.aclose()

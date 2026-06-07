@@ -1,5 +1,46 @@
 <template>
   <div class="companion-canvas">
+    <!-- Safety-Critical Action Confirmation Modal Overlay -->
+    <div v-if="pendingPlan" class="tactical-modal-overlay">
+      <div class="tactical-modal-card corner-reticle border-danger">
+        <div class="modal-hdr text-red">[ ACTION_REQUIRED // CONFIRMATION_DEMANDED ]</div>
+        <div class="modal-body font-mono text-[11px] text-white">
+          <div class="alert-banner">
+            <span class="blink-fast">⚠️</span> WARNING: SAFETY CRITICAL ACTION ATTEMPTED
+          </div>
+          <div class="plan-details mt-4">
+            <div class="detail-row">
+              <span class="label text-dim">PLAN_ID:</span>
+              <span class="val text-cyan">{{ pendingPlan.plan_id }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="label text-dim">CURRENT_STEP:</span>
+              <span class="val text-orange font-bold">
+                {{ pendingPlan.steps[pendingPlan.current_step_index]?.type }}
+              </span>
+            </div>
+            <div class="detail-row">
+              <span class="label text-dim">MQTT_TOPIC:</span>
+              <span class="val text-[#00E5FF]">
+                {{ pendingPlan.steps[pendingPlan.current_step_index]?.mqtt_topic }}
+              </span>
+            </div>
+          </div>
+          <p class="warning-text mt-4">
+            Hành động này có tính chất nhạy cảm hoặc ảnh hưởng trực tiếp đến trạng thái an toàn của robot/người dùng. Bạn có chắc chắn muốn cho phép thực thi?
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="cmd-btn cancel-btn" @click="confirmAction(false)">
+            [ ESC_CANCEL ]
+          </button>
+          <button class="cmd-btn confirm-btn btn-danger-glow" @click="confirmAction(true)">
+            [ EXECUTE_CONFIRM ]
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Main asymmetric split layout inside companion view -->
     <div class="companion-layout">
       
@@ -76,6 +117,15 @@
           >
             {{ isRecording ? '🎤 RECORDING...' : '🎤 SPEAK' }}
           </button>
+          <button 
+            type="button" 
+            class="cmd-btn mute-btn"
+            :class="{ active: isMuted }"
+            @click="toggleMute"
+            :title="isMuted ? 'Unmute voice response' : 'Mute voice response'"
+          >
+            {{ isMuted ? '🔇 MUTED' : '🔊 VOICE ON' }}
+          </button>
           <input v-model="userInput" 
                  class="tactical-input font-mono w-full" 
                  placeholder="ENTER TACTICAL COMMAND OR INQUIRY TO AGENT HUGO..."
@@ -96,14 +146,18 @@
         <div class="terminal-card scope-card">
           <div class="terminal-card-header">[ AGENT_COGNITIVE_SCOPE ]</div>
           <div class="scope-container">
-            <div :class="['scope-wave', chatLoading ? 'active' : 'idle']">
+            <div :class="['scope-wave', chatLoading || isSpeaking ? 'active' : (isRecording ? 'recording' : 'idle')]">
               <div class="circle outer"></div>
               <div class="circle middle"></div>
               <div class="circle inner"></div>
               <div class="pulse-line"></div>
             </div>
             <div class="scope-status font-mono text-[9px] text-center mt-3">
-              COGNITIVE STATE: <span :class="chatLoading ? 'text-orange animate-pulse' : 'text-green'">{{ chatLoading ? 'COMPUTING_RESPONSE' : 'STANDBY_LISTENING' }}</span>
+              COGNITIVE STATE: 
+              <span v-if="chatLoading" class="text-orange animate-pulse">COMPUTING_RESPONSE</span>
+              <span v-else-if="isSpeaking" class="text-green animate-pulse">SPEAKING_TO_USER</span>
+              <span v-else-if="isRecording" class="text-[#00E5FF] blink-fast">RECORDING_OPERATOR_VOICE</span>
+              <span v-else class="text-green">STANDBY_LISTENING</span>
             </div>
           </div>
         </div>
@@ -163,6 +217,27 @@
             </div>
           </div>
           <EcgWaveform :width="240" :height="50" />
+        </div>
+
+        <!-- OpenCV rPPG & Thermal Vision Panel -->
+        <div class="terminal-card">
+          <div class="terminal-card-header">[ VISION_SENSORS_FEED ]</div>
+          <div class="spec-grid font-mono text-[10px] mb-2">
+            <div class="spec-row">
+              <span class="label">rPPG HEART RATE:</span>
+              <span :class="['val font-bold', rppgHrClass]">{{ kinematicsStore.rppgHeartRate ? kinematicsStore.rppgHeartRate.toFixed(1) + ' BPM' : 'ANALYZING...' }}</span>
+            </div>
+            <div class="spec-row">
+              <span class="label">THERMAL TEMP:</span>
+              <span :class="['val font-bold', thermalTempClass]">{{ kinematicsStore.thermalTemperature ? kinematicsStore.thermalTemperature.toFixed(2) + ' °C' : 'MEASURING...' }}</span>
+            </div>
+            <div class="spec-row">
+              <span class="label">FEVER ALERT:</span>
+              <span :class="['val font-bold', kinematicsStore.feverAlert ? 'text-red animate-pulse' : 'text-green']">
+                {{ kinematicsStore.feverAlert ? '⚠ FEVER DETECTED' : '✓ NORMAL' }}
+              </span>
+            </div>
+          </div>
         </div>
 
         <!-- Phase 2: Perception Scan Panel -->
@@ -238,17 +313,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useVitalsStore } from '../stores/vitals'
 import { useAuthStore } from '../stores/auth'
+import { useKinematicsStore } from '../stores/kinematics'
+import { useAgentsStore } from '../stores/agents'
 import api from '../services/api'
 import EcgWaveform from '../components/EcgWaveform.vue'
 
 const isRecording = ref(false)
+const isMuted = ref(false)
+const isSpeaking = ref(false)
 let recognition: any = null
+
+function toggleMute() {
+  isMuted.value = !isMuted.value
+  if (isMuted.value) {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+    isSpeaking.value = false
+  }
+}
 
 const vitalsStore = useVitalsStore()
 const authStore = useAuthStore()
+const kinematicsStore = useKinematicsStore()
 
 interface ChatMessage {
   role: 'user' | 'hugo'
@@ -319,13 +409,8 @@ const userInput = ref('')
 const chatLoading = ref(false)
 const chatHistoryRef = ref<HTMLElement | null>(null)
 
-const chatLog = ref<ChatMessage[]>([
-  {
-    role: 'hugo',
-    content: 'Chào mừng Operator. Tôi là Hugo, Trợ lý Y tế Đồng hành của bạn. Tôi luôn trực tuyến để phân tích các chỉ số sức khỏe của bạn và đề xuất các hành động an toàn tối ưu.',
-    timestamp: getCurrentTimeString()
-  }
-])
+const agentsStore = useAgentsStore()
+const chatLog = computed(() => agentsStore.chatLog)
 
 const suggestionChips = [
   { label: 'ANALYZE_VITALS', prompt: 'Hãy phân tích chỉ số sinh tồn (vitals) hiện tại của tôi.' },
@@ -353,6 +438,22 @@ const spo2Class = computed(() => {
   if (!s) return 'text-dim'
   if (s < 90) return 'text-red'
   if (s < 94) return 'text-orange'
+  return 'text-green'
+})
+
+const rppgHrClass = computed(() => {
+  const hr = kinematicsStore.rppgHeartRate
+  if (!hr) return 'text-dim'
+  if (hr < 50 || hr > 120) return 'text-red'
+  if (hr < 60 || hr > 100) return 'text-orange'
+  return 'text-green'
+})
+
+const thermalTempClass = computed(() => {
+  const t = kinematicsStore.thermalTemperature
+  if (!t) return 'text-dim'
+  if (t >= 38.0) return 'text-red'
+  if (t > 37.3) return 'text-orange'
   return 'text-green'
 })
 
@@ -400,6 +501,7 @@ async function sendChat() {
 // ── Web Speech API Integration ──
 
 function speakResponse(text: string) {
+  if (isMuted.value) return
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel()
     const cleanText = text.replace(/\[.*?\]/g, '').trim() // Strip brackets for cleaner readout
@@ -413,6 +515,17 @@ function speakResponse(text: string) {
     }
     utterance.rate = 0.95
     utterance.pitch = 0.95
+    
+    utterance.onstart = () => {
+      isSpeaking.value = true
+    }
+    utterance.onend = () => {
+      isSpeaking.value = false
+    }
+    utterance.onerror = () => {
+      isSpeaking.value = false
+    }
+    
     window.speechSynthesis.speak(utterance)
   }
 }
@@ -489,8 +602,55 @@ function scrollChatToBottom() {
   }
 }
 
+// ── Action Plan Confirmation System (Phase 5) ──
+const pendingPlan = ref<any>(null)
+let checkInterval: any = null
+
+async function checkPendingActions() {
+  try {
+    const response = await api.get('/agents/action/plan/latest')
+    const plan = response.data?.plan
+    if (plan && plan.status === 'AWAITING_CONFIRM') {
+      pendingPlan.value = plan
+    } else {
+      pendingPlan.value = null
+    }
+  } catch (err) {
+    console.error('[ACTION_CHECK_ERR]', err)
+  }
+}
+
+async function confirmAction(confirm: boolean) {
+  if (!pendingPlan.value) return
+  const planId = pendingPlan.value.plan_id
+  pendingPlan.value = null
+  try {
+    const resp = await api.post('/agents/action/confirm', { plan_id: planId, confirm })
+    chatLog.value.push({
+      role: 'hugo',
+      content: `[ACTION_PLAN_CONFIRMATION] ${confirm ? 'Đã xác nhận thực thi hành động.' : 'Đã hủy thực thi hành động.'} Kết quả: ${resp.data?.result || ''}`,
+      timestamp: getCurrentTimeString()
+    })
+    await nextTick()
+    scrollChatToBottom()
+  } catch (err) {
+    console.error('[ACTION_CONFIRM_ERR]', err)
+    chatLog.value.push({
+      role: 'hugo',
+      content: `[ACTION_CONFIRM_ERR] Lỗi xác nhận hành động.`,
+      timestamp: getCurrentTimeString()
+    })
+  }
+}
+
 onMounted(() => {
+  agentsStore.initSession(authStore.user?.id)
   scrollChatToBottom()
+  checkInterval = setInterval(checkPendingActions, 2000)
+})
+
+onUnmounted(() => {
+  if (checkInterval) clearInterval(checkInterval)
 })
 </script>
 
@@ -529,7 +689,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 10px 16px;
-  background: rgba(0, 82, 255, 0.05);
+  background: rgba(0, 229, 255, 0.05);
   border-bottom: 1px solid var(--color-border-dim);
   font-family: var(--font-hud);
   font-size: 10px;
@@ -560,6 +720,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 16px;
   background: radial-gradient(circle at center, rgba(0, 6, 36, 0.6) 0%, #000000 100%);
+  /*background: radial-gradient(circle at center, rgba(10, 10, 10, 0.96) 0%, #000000 100%);*/
 }
 
 .chat-bubble-row {
@@ -638,8 +799,8 @@ onMounted(() => {
 }
 
 .msg-body {
-  background: rgba(0, 82, 255, 0.03);
-  border: 1px solid rgba(0, 82, 255, 0.15);
+  background: rgba(0, 229, 255, 0.03);
+  border: 1px solid rgba(0, 229, 255, 0.15);
   padding: 10px 14px;
   border-radius: 4px;
   font-family: var(--font-data);
@@ -693,13 +854,13 @@ onMounted(() => {
   gap: 6px;
   padding: 8px 16px;
   background: rgba(0, 0, 0, 0.6);
-  border-top: 1px solid rgba(0, 82, 255, 0.1);
+  border-top: 1px solid rgba(0, 229, 255, 0.1);
   overflow-x: auto;
 }
 
 .suggestion-chip {
-  background: rgba(0, 82, 255, 0.04);
-  border: 1px solid rgba(0, 82, 255, 0.2);
+  background: rgba(0, 229, 255, 0.04);
+  border: 1px solid rgba(0, 229, 255, 0.2);
   color: var(--color-accent-cyan);
   font-family: var(--font-hud);
   font-size: 8px;
@@ -712,7 +873,7 @@ onMounted(() => {
 }
 
 .suggestion-chip:hover {
-  background: rgba(0, 82, 255, 0.15);
+  background: rgba(0, 229, 255, 0.15);
   border-color: var(--color-accent-cyan);
   box-shadow: 0 0 6px rgba(0, 210, 255, 0.3);
 }
@@ -738,7 +899,7 @@ onMounted(() => {
   font-family: var(--font-hud);
   font-size: 10px;
   padding: 0 12px;
-  background: rgba(0, 82, 255, 0.05);
+  background: rgba(0, 229, 255, 0.05);
   border-color: var(--color-border-dim);
   transition: all 0.2s;
   user-select: none;
@@ -747,11 +908,37 @@ onMounted(() => {
   background: rgba(255, 51, 51, 0.2);
   border-color: var(--color-accent-red);
   color: var(--color-accent-red);
+  box-shadow: 0 0 10px rgba(255, 51, 51, 0.4);
   animation: pulse-mic 1s infinite alternate;
+}
+.mute-btn {
+  flex-shrink: 0;
+  font-family: var(--font-hud);
+  font-size: 10px;
+  padding: 0 12px;
+  background: rgba(0, 229, 255, 0.05);
+  border-color: var(--color-border-dim);
+  transition: all 0.2s;
+  user-select: none;
+}
+.mute-btn.active {
+  background: rgba(255, 176, 0, 0.15);
+  border-color: var(--color-accent-orange);
+  color: var(--color-accent-orange);
+  box-shadow: 0 0 10px rgba(255, 176, 0, 0.2);
 }
 @keyframes pulse-mic {
   0% { box-shadow: 0 0 2px rgba(255, 51, 51, 0.2); }
   100% { box-shadow: 0 0 8px rgba(255, 51, 51, 0.6); }
+}
+
+.scope-wave.recording .circle.inner {
+  animation: pulse-ring 0.8s ease-in-out infinite;
+  border-color: var(--color-accent-cyan);
+}
+.scope-wave.recording .pulse-line {
+  background: linear-gradient(90deg, transparent, var(--color-accent-cyan), transparent);
+  animation: scan-line 0.8s ease-in-out infinite;
 }
 
 /* Right side panel */
@@ -775,7 +962,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px 12px;
-  background: radial-gradient(circle, rgba(0, 82, 255, 0.05) 0%, rgba(0,0,0,0) 70%);
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.05) 0%, rgba(0,0,0,0) 70%);
 }
 
 .scope-wave {
@@ -803,7 +990,7 @@ onMounted(() => {
   width: 66px;
   height: 66px;
   border-style: solid;
-  border-color: rgba(0, 82, 255, 0.15);
+  border-color: rgba(0, 229, 255, 0.15);
   animation: spin-counter 10s linear infinite;
 }
 
@@ -902,7 +1089,7 @@ onMounted(() => {
 .scan-btn {
   width: 100%;
   padding: 8px 0;
-  background: rgba(0, 229, 255, 0.04);
+  background: rgba(0, 82, 255, 0.04);
   border: 1px solid rgba(0, 229, 255, 0.3);
   color: var(--color-accent-cyan);
   font-family: var(--font-hud);
@@ -918,7 +1105,7 @@ onMounted(() => {
 }
 
 .scan-btn:hover:not(:disabled) {
-  background: rgba(0, 229, 255, 0.12);
+  background: rgba(0, 82, 255, 0.12);
   border-color: var(--color-accent-cyan);
   box-shadow: 0 0 10px rgba(0, 229, 255, 0.25), inset 0 0 10px rgba(0, 229, 255, 0.05);
 }
@@ -994,5 +1181,113 @@ onMounted(() => {
   font-style: italic;
   border-top: 1px dashed rgba(255,255,255,0.06);
   padding-top: 4px;
+}
+
+/* Tactical Confirmation Modal Styles */
+.tactical-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.tactical-modal-card {
+  width: 420px;
+  background: #0A0A0A;
+  border: 1px solid rgba(255, 51, 51, 0.4);
+  border-radius: 4px;
+  padding: 24px;
+  box-shadow: 0 0 30px rgba(255, 51, 51, 0.15);
+  font-family: var(--font-hud);
+}
+
+.tactical-modal-card.border-danger {
+  border-color: var(--color-accent-red);
+}
+
+.modal-hdr {
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 51, 51, 0.2);
+  padding-bottom: 8px;
+}
+
+.alert-banner {
+  background: rgba(255, 51, 51, 0.1);
+  border: 1px solid rgba(255, 51, 51, 0.3);
+  padding: 10px;
+  text-align: center;
+  color: var(--color-accent-red);
+  font-weight: bold;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+.plan-details {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--color-border-dim);
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.warning-text {
+  color: var(--color-text-dim);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+  border-top: 1px solid var(--color-border-dim);
+  padding-top: 16px;
+}
+
+.confirm-btn {
+  background: rgba(255, 51, 51, 0.1);
+  border: 1px solid var(--color-accent-red);
+  color: var(--color-accent-red);
+}
+.confirm-btn:hover {
+  background: rgba(255, 51, 51, 0.25);
+  box-shadow: 0 0 10px rgba(255, 51, 51, 0.5);
+}
+
+.cancel-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-border-dim);
+  color: #ffffff;
+}
+.cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.blink-fast {
+  animation: fast-blink 0.6s infinite alternate;
+}
+@keyframes fast-blink {
+  0% { opacity: 0.2; }
+  100% { opacity: 1; }
 }
 </style>

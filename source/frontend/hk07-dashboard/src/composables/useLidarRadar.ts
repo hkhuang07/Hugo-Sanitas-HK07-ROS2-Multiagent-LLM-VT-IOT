@@ -1,5 +1,6 @@
 import { ref, type Ref, onMounted, onUnmounted, watch } from 'vue'
 import { OBSTACLE_STOP_M, pointColor } from '../utils/lidarScan'
+import { useKinematicsStore } from '../stores/kinematics'
 
 const RADAR_SIZE = 400
 const MAX_RANGE_M = 3.5
@@ -10,6 +11,7 @@ export function useLidarRadar(
   closestAngleDeg: Ref<number>,
   subsumptionActive: Ref<boolean>
 ) {
+  const kinematicsStore = useKinematicsStore()
   let animFrame = 0
   let isUnmounted = false
 
@@ -78,17 +80,26 @@ export function useLidarRadar(
     )
     ctx.stroke()
 
-    ranges.forEach((dist, angleDeg) => {
+    const points = kinematicsStore.lidarPoints
+    const avoidance = kinematicsStore.avoidanceVector
+    const repMagnitude = Math.sqrt(avoidance.x * avoidance.x + avoidance.y * avoidance.y)
+
+    const blinkFreq = repMagnitude > 0.1 ? Math.min(20, 2 * repMagnitude) : 2.0 // cycles per second
+    const blinkVal = Math.sin(Date.now() / 1000 * Math.PI * 2 * blinkFreq)
+    const dotOpacity = 0.35 + 0.65 * (blinkVal * 0.5 + 0.5)
+
+    points.forEach((pt) => {
+      const dist = Math.sqrt(pt.x * pt.x + pt.y * pt.y)
       if (dist <= 0.01 || dist > MAX_RANGE_M) return
-      const rad = (angleDeg * Math.PI) / 180
-      const pixelDist = (dist / MAX_RANGE_M) * (RADAR_SIZE / 2)
-      const px = cx + Math.cos(rad) * pixelDist
-      const py = cy + Math.sin(rad) * pixelDist
-      ctx.fillStyle = pointColor(dist)
-      ctx.shadowColor = pointColor(dist)
-      ctx.shadowBlur = dist < OBSTACLE_STOP_M ? 10 : 4
+
+      const px = cx - (pt.y / MAX_RANGE_M) * cx
+      const py = cy - (pt.x / MAX_RANGE_M) * cy
+
+      ctx.fillStyle = `rgba(255, 176, 0, ${dotOpacity})` // Glowing Amber #FFB000
+      ctx.shadowColor = '#FFB000'
+      ctx.shadowBlur = dist < OBSTACLE_STOP_M ? 12 : 5
       ctx.beginPath()
-      ctx.arc(px, py, dist < OBSTACLE_STOP_M ? 5 : dist < 1 ? 3 : 2, 0, Math.PI * 2)
+      ctx.arc(px, py, dist < OBSTACLE_STOP_M ? 4.5 : 2.5, 0, Math.PI * 2)
       ctx.fill()
     })
     ctx.shadowBlur = 0

@@ -16,3 +16,5 @@ anyio==4.4.0
 opencv-python-headless==4.10.0.82
 # MediaPipe for face landmark detection (CPU-only, optimized for i5-6300U)
 mediapipe==0.10.14
+# llama-cpp-python for local quantized GGUF SLM inference (optional fallback)
+llama-cpp-python>=0.2.75

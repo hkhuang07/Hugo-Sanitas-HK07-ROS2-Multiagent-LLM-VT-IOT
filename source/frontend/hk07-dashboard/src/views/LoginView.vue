@@ -298,7 +298,7 @@
               CHÚNG LÀ CƠ HỘI DUY NHẤT ĐỂ RESET MẬT KHẨU KHI BỊ MẤT.
             </div>
 
-            <div class="codes-container font-mono text-cyan p-3 bg-black border border-[#0052ff]/30 text-lg mb-3">
+            <div class="codes-container font-mono text-cyan p-3 bg-black border border-[#00E5FF]/30 text-lg mb-3">
               <div v-for="(code, idx) in generatedRecoveryCodes" :key="idx" class="code-line">
                 [{{ idx + 1 }}] {{ code }}
               </div>
@@ -657,7 +657,7 @@ async function handlePinLogin() {
   padding: 32px;
   background: #000000;
   border: 1px solid var(--color-border);
-  box-shadow: 0 0 20px rgba(0, 82, 255, 0.2);
+  box-shadow: 0 0 20px rgba(0, 229, 255, 0.2);
   z-index: 10;
   transition: width 0.3s ease;
 }
@@ -744,11 +744,11 @@ async function handlePinLogin() {
 }
 .tactical-input-wrapper:focus-within {
   border-color: var(--color-border);
-  box-shadow: 0 0 8px rgba(0, 82, 255, 0.4);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
 }
 .tactical-input-wrapper.input-active {
   border-color: var(--color-border-blue);
-  box-shadow: 0 0 6px rgba(0, 82, 255, 0.3);
+  box-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
 }
 
 .prefix {
@@ -756,7 +756,7 @@ async function handlePinLogin() {
   font-family: var(--font-data);
   font-size: 11px;
   color: var(--color-border-blue);
-  background: rgba(0, 82, 255, 0.1);
+  background: rgba(0, 229, 255, 0.1);
   border-right: 1px solid var(--color-border-dim);
 }
 
@@ -801,13 +801,13 @@ async function handlePinLogin() {
   width: 100%;
   padding: 12px;
   font-size: 12px;
-  background: rgba(0, 82, 255, 0.1);
+  background: rgba(0, 229, 255, 0.1);
   border-color: var(--color-border);
 }
 .auth-btn:hover:not(:disabled) {
   background: var(--color-border);
   color: #000;
-  box-shadow: 0 0 15px rgba(0, 82, 255, 0.6);
+  box-shadow: 0 0 15px rgba(0, 229, 255, 0.6);
 }
 .auth-btn:disabled {
   opacity: 0.5;
@@ -821,7 +821,7 @@ async function handlePinLogin() {
 .pairing-scanner {
   height: 120px;
   border: 1px dashed var(--color-border-dim);
-  background: rgba(0, 82, 255, 0.02);
+  background: rgba(0, 229, 255, 0.02);
   display: flex;
   align-items: center;
   justify-content: center;

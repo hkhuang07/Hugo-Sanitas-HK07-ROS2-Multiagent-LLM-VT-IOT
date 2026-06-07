@@ -59,6 +59,26 @@ public class MqttInboundProcessor {
                 handleLidarScan(payload);
             } else if (topic.equals("hk07/sensors/imu/state")) {
                 handleImuState(payload);
+            } else if (topic.equals("hk07/telemetry/imu")) {
+                handleTelemetryImu(payload);
+            } else if (topic.equals("hk07/telemetry/pneumatic")) {
+                handleTelemetryPneumatic(payload);
+            } else if (topic.equals("hk07/telemetry/sensors/tactile")) {
+                handleTelemetryTactile(payload);
+            } else if (topic.equals("hk07/telemetry/actuators/joints")) {
+                handleTelemetryJoints(payload);
+            } else if (topic.equals("hk07/telemetry/pmu")) {
+                handleTelemetryPmu(payload);
+            } else if (topic.equals("hk07/telemetry/lidar/points")) {
+                handleTelemetryLidarPoints(payload);
+            } else if (topic.equals("hk07/telemetry/avoidance")) {
+                handleTelemetryAvoidance(payload);
+            } else if (topic.equals("hk07/telemetry/joint_states")) {
+                handleTelemetryJointStates(payload);
+            } else if (topic.equals("hk07/perception/clinical")) {
+                handlePerceptionClinical(payload);
+            } else if (topic.equals("hk07/sensors/camera/thermal_rppg")) {
+                handleThermalRppg(payload);
             } else if (topic.equals("hk07/control/subsumption/inhibit")) {
                 handleSubsumptionInhibit(payload);
             } else if (topic.startsWith("hk07/agents/")) {
@@ -139,5 +159,45 @@ public class MqttInboundProcessor {
                 payload.length() > 100 ? payload.substring(0, 100) + "..." : payload);
         // Broadcast agent decision to dashboard
         wsTemplate.convertAndSend("/topic/agent-events", payload);
+    }
+
+    private void handleTelemetryImu(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/imu", payload);
+    }
+
+    private void handleTelemetryPneumatic(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/pneumatic", payload);
+    }
+
+    private void handleTelemetryTactile(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/tactile", payload);
+    }
+
+    private void handleTelemetryJoints(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/joints", payload);
+    }
+
+    private void handleTelemetryPmu(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/pmu", payload);
+    }
+
+    private void handlePerceptionClinical(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/perception/clinical", payload);
+    }
+
+    private void handleTelemetryLidarPoints(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/lidar/points", payload);
+    }
+
+    private void handleTelemetryAvoidance(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/avoidance", payload);
+    }
+
+    private void handleTelemetryJointStates(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/telemetry/joint_states", payload);
+    }
+
+    private void handleThermalRppg(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/sensors/camera/thermal-rppg", payload);
     }
 }

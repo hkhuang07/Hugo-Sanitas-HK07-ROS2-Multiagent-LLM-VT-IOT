@@ -242,11 +242,11 @@ function handleLogout() {
 }
 .hamburger-btn:hover {
   border-color: var(--color-border-dim);
-  background: rgba(0, 82, 255, 0.08);
-  box-shadow: 0 0 6px rgba(0, 82, 255, 0.3);
+  background: rgba(0, 229, 255, 0.08);
+  box-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
 }
 .hamburger-btn:hover .ham-bar {
-  background: var(--color-border-blue);
+  background: var(--color-accent-cyan);
 }
 .ham-bar {
   display: block;

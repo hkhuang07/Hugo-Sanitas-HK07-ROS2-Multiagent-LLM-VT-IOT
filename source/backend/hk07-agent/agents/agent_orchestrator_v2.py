@@ -19,9 +19,10 @@ from agents.safety_agent import SafetyAgent
 from agents.medical_agent import MedicalAgent
 from agents.empathetic_agent import EmpatheticAgent
 from agents.perception_agent import PerceptionAgent
+from agents.action_agent import ActionAgent
 from arbitrator.arbitrator import Arbitrator
 
-from services.blackboard_service import get_blackboard, ClinicalEntry
+from services.blackboard_service import get_blackboard, ClinicalEntry, ActionPlanEntry
 
 log = logging.getLogger("hk07.agent_orchestrator_v2")
 
@@ -46,6 +47,7 @@ class AgentOrchestratorV2:
         self.medical_agent = MedicalAgent(memory, arbitrator)
         self.empathetic_agent = EmpatheticAgent(memory, arbitrator)
         self.perception_agent = PerceptionAgent(arbitrator)
+        self.action_agent = ActionAgent(arbitrator)
         self.memory = memory
         self.arbitrator = arbitrator or Arbitrator()
 
@@ -214,6 +216,10 @@ class AgentOrchestratorV2:
             sys_res = state["outputs"].get("execute_system_query")
             if sys_res and not sys_res.startswith("[ERROR]"):
                 parts.append(sys_res)
+            
+            action_res = state["outputs"].get("execute_action_plan")
+            if action_res and not action_res.startswith("[ERROR]"):
+                parts.append(action_res)
                 
             sos_res = state["outputs"].get("trigger_sos_protocol")
             if sos_res and not sos_res.startswith("[ERROR]"):
@@ -225,6 +231,8 @@ class AgentOrchestratorV2:
         state["current_agent"] = state["current_agents"][0] if state["current_agents"] else "EMPATHETIC_CHAT"
         if "trigger_sos_protocol" in state["current_agents"]:
             state["action"] = "EMERGENCY_RESPONSE"
+        elif "execute_action_plan" in state["current_agents"]:
+            state["action"] = "ACTUATOR_COMMAND_EXECUTION"
         elif "analyze_clinical_symptoms" in state["current_agents"]:
             state["action"] = "MEDICAL_FIRST_AID" if state["alert_level"] != "NORMAL" else "CLINICAL_ADVICE"
         elif "execute_system_query" in state["current_agents"]:
@@ -235,6 +243,9 @@ class AgentOrchestratorV2:
         # Save audit trail
         log.info("[AUDIT_TRAIL_V2] Processed event. Agents: %s, Alert: %s, Actions: %s", 
                  state["current_agents"], state["alert_level"], state["actions"])
+        
+        if self.memory and state.get("output"):
+            await self.memory.ingest_chat_cycle(user_message, state["output"])
         
         return state
 
@@ -321,11 +332,36 @@ class AgentOrchestratorV2:
                 # Search medical knowledge base
                 query = parameters.get("query", "")
                 
+                # Helper to format citation source name
+                def format_source_citation(source_url: str) -> str:
+                    if not source_url:
+                        return "Tài liệu Y tế"
+                    if "moh.gov.vn" in source_url:
+                        return "Bộ Y Tế VN (moh.gov.vn)"
+                    if "cdc.gov" in source_url:
+                        return "CDC Hoa Kỳ (cdc.gov)"
+                    if "who.int" in source_url:
+                        return "Tổ chức Y tế Thế giới WHO (who.int)"
+                    try:
+                        from urllib.parse import urlparse
+                        return urlparse(source_url).netloc or source_url
+                    except Exception:
+                        return source_url
+                
                 if self.memory:
-                    results = await self.memory.search_similar_patterns(query, limit=3)
+                    results = await self.memory.search_medical_guidelines(query, limit=3)
                     if results:
-                        guidelines_text = "\n".join([r.get("content", "") for r in results])
-                        return f"Dữ liệu cẩm nang y khoa:\n{guidelines_text}"
+                        formatted_parts = []
+                        for r in results:
+                            source = r.get("source", "")
+                            title = r.get("title", "Hướng dẫn y tế")
+                            content = r.get("content", "")
+                            citation = format_source_citation(source)
+                            formatted_parts.append(
+                                f"**{title}**\n{content}\n*(Nguồn: {citation})*"
+                            )
+                        guidelines_text = "\n\n".join(formatted_parts)
+                        return f"Tôi tìm thấy thông tin hướng dẫn y khoa sau đây:\n\n{guidelines_text}"
                 
                 # Fallback: if no DB guidelines found, call Medical LLM to generate response from parametric knowledge
                 # but only if query seems medical to avoid hallucinated tool calls polluting general chat
@@ -391,6 +427,33 @@ class AgentOrchestratorV2:
                 else:
                     return "[ENVIRONMENT_SCAN] No LiDAR data in buffer."
 
+            elif tool_name == "execute_action_plan":
+                plan_id = parameters.get("plan_id", f"plan-{int(__import__('time').time())}")
+                steps = parameters.get("steps", [])
+                
+                # Check arbitrator safety gates
+                if self.arbitrator.is_inhibited("ACTION"):
+                    return "[ACTION_PLAN_BLOCKED] Kế hoạch hành động bị chặn do trạng thái an toàn."
+                
+                # Check critical vitals
+                clinical = await get_blackboard().read_latest_clinical()
+                if clinical and clinical.alert_level == "CRITICAL":
+                    has_sos = any(s.get('type') == 'SOS_DISPATCH' for s in steps)
+                    if not has_sos:
+                        return "[ACTION_PLAN_BLOCKED] Kế hoạch hành động bị chặn do đang trong trạng thái cấp cứu."
+
+                # Construct ActionPlanEntry
+                plan_entry = ActionPlanEntry(
+                    plan_id=plan_id,
+                    steps=steps,
+                    status="PENDING",
+                    current_step_index=0
+                )
+                
+                # Execute
+                result = await self.action_agent.execute_plan(plan_entry)
+                return result
+
             else:
                 return f"[Unknown tool: {tool_name}]"
 
@@ -409,8 +472,9 @@ class AgentOrchestratorV2:
 
     async def close(self):
         await self.router_agent.close()
+        await self.action_agent.close()
         # Clean up client pools
-        if self.medical_agent._client:
+        if hasattr(self.medical_agent, '_client') and self.medical_agent._client:
             await self.medical_agent._client.aclose()
-        if self.empathetic_agent._client:
+        if hasattr(self.empathetic_agent, '_client') and self.empathetic_agent._client:
             await self.empathetic_agent._client.aclose()

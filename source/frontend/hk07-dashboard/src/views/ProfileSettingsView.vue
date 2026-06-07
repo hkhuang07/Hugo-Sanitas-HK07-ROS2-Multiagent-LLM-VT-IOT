@@ -358,7 +358,7 @@ onMounted(() => {
 
 .tactical-input-wrapper:focus-within {
   border-color: var(--color-border);
-  box-shadow: 0 0 8px rgba(0, 82, 255, 0.3);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
 }
 
 .prefix {
@@ -366,7 +366,7 @@ onMounted(() => {
   font-family: var(--font-data);
   font-size: 10px;
   color: var(--color-border-blue);
-  background: rgba(0, 82, 255, 0.08);
+  background: rgba(0, 229, 255, 0.08);
   border-right: 1px solid var(--color-border-dim);
   white-space: nowrap;
 }
@@ -405,7 +405,7 @@ onMounted(() => {
 
 .tactical-textarea:focus {
   border-color: var(--color-border);
-  box-shadow: 0 0 8px rgba(0, 82, 255, 0.3);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
 }
 
 .message-log {

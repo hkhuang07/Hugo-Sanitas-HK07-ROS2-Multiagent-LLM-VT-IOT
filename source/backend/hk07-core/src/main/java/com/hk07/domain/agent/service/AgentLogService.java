@@ -56,7 +56,7 @@ public class AgentLogService {
         AgentLogEntity savedLog = agentLogRepository.save(log);
 
         // Broadcast to frontend immediately (no WebSocket ID needed — log is global)
-        wsTemplate.convertAndSend("/topic/agent-events", Map.of(
+        Map<String, Object> logPayload = Map.of(
             "id", savedLog.getId().toString(),
             "agentType", savedLog.getAgentType().name(),
             "inputContext", context != null ? context : "",
@@ -64,7 +64,9 @@ public class AgentLogService {
             "llmProvider", savedLog.getLlmProvider() != null ? savedLog.getLlmProvider() : "UNKNOWN",
             "latencyMs", savedLog.getLatencyMs(),
             "triggeredAt", triggeredAt.toString()
-        ));
+        );
+        wsTemplate.convertAndSend("/topic/agent-events", logPayload);
+        wsTemplate.convertAndSend("/topic/agent-logs", logPayload);
 
         this.log.info("[AGENT_LOG] {} | {}ms | {}", req.getAgentType(), req.getLatencyMs(),
                 decision.length() > 60 ? decision.substring(0, 60) + "..." : decision);

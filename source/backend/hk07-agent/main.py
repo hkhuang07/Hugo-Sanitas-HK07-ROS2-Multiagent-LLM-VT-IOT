@@ -62,6 +62,8 @@ if USE_ORCHESTRATOR_V2:
 
 # ─── Global Orchestrator & Memory Setup ─────────────────────────────────────
 memory = LanceMemory()
+from services.knowledge_ingestion import KnowledgeIngestionService
+ingestion_service = KnowledgeIngestionService(memory)
 arbitrator = Arbitrator()
 orchestrator = AgentOrchestrator(memory=memory, arbitrator=arbitrator)
 
@@ -88,13 +90,14 @@ async def lifespan(app: FastAPI):
     await start_log_client()
 
     # Launch background loops for all agents + memory compaction
+    active_orch = orchestrator_v2 if (USE_ORCHESTRATOR_V2 and orchestrator_v2) else orchestrator
     agent_tasks = [
-        asyncio.create_task(orchestrator.empathetic_agent.run_loop(), name="empathy-agent"),
-        asyncio.create_task(orchestrator.medical_agent.run_loop(), name="medical-agent"),
-        asyncio.create_task(orchestrator.safety_agent.run_loop(), name="safety-agent"),
+        asyncio.create_task(active_orch.empathetic_agent.run_loop(), name="empathy-agent"),
+        asyncio.create_task(active_orch.medical_agent.run_loop(), name="medical-agent"),
+        asyncio.create_task(active_orch.safety_agent.run_loop(), name="safety-agent"),
         asyncio.create_task(memory.run_compaction_loop(), name="memory-compaction"),
     ]
-    log.info("[ENGINE] All 3 agent tasks + memory compaction launched on event loop")
+    log.info("[ENGINE] All 3 agent tasks + memory compaction launched on event loop using active orchestrator")
 
     yield  # App is running — serve API requests
 
@@ -106,12 +109,18 @@ async def lifespan(app: FastAPI):
 
     # Volatile data wipe (security protocol — RAM data cleared on shutdown)
     log.info("[VOLATILE_WIPE] Clearing in-RAM conversation context...")
-    orchestrator.empathetic_agent.clear_volatile_context()
-    orchestrator.medical_agent.clear_volatile_context()
-    orchestrator.safety_agent.clear_volatile_context()
+    active_orch.empathetic_agent.clear_volatile_context()
+    active_orch.medical_agent.clear_volatile_context()
+    active_orch.safety_agent.clear_volatile_context()
+    if active_orch is orchestrator_v2:
+        orchestrator.empathetic_agent.clear_volatile_context()
+        orchestrator.medical_agent.clear_volatile_context()
+        orchestrator.safety_agent.clear_volatile_context()
     
     # Close client sessions
-    await orchestrator.close()
+    await active_orch.close()
+    if active_orch is orchestrator_v2:
+        await orchestrator.close()
     
     # Flush logs
     await stop_log_client()
@@ -158,6 +167,20 @@ async def sync_profile(body: dict):
     """Sync medical profile baseline into LanceDB vector memory"""
     await memory.sync_medical_baseline(body)
     return {"status": "success", "message": "Medical baseline memory synced"}
+
+
+@app.post("/api/v1/admin/ingest")
+async def admin_ingest(body: dict):
+    """
+    Scrape and ingest guidelines from allowlisted URL.
+    Body: { "url": str }
+    """
+    url = body.get("url", "")
+    if not url:
+        return {"status": "error", "message": "url field is required"}
+    
+    result = await ingestion_service.ingest_url(url)
+    return result
 
 
 @app.post("/agents/empathetic/interact")
@@ -242,6 +265,86 @@ async def blackboard_inspect():
         "latest_emotional": _entry_to_dict(emotional),
         "latest_context":   _entry_to_dict(context),
     }
+
+
+# ─── Action Plan Endpoints (Phase 5) ──────────────────────────────────────────
+@app.get("/api/v1/agents/action/plan/latest")
+async def get_latest_action_plan():
+    """
+    Get the latest ActionPlanEntry from Blackboard.
+    """
+    bb = get_blackboard()
+    plan = await bb.read_latest_action_plan()
+    if plan is None:
+        return {"status": "no_data", "plan": None}
+    
+    from dataclasses import asdict
+    return {"status": "ok", "plan": asdict(plan)}
+
+@app.post("/api/v1/agents/action/confirm")
+async def confirm_action_plan(body: dict):
+    """
+    Confirm or cancel a pending action plan.
+    Body: { "plan_id": str, "confirm": bool }
+    """
+    plan_id = body.get("plan_id")
+    confirm = body.get("confirm", False)
+    if not plan_id:
+        return {"status": "error", "message": "plan_id field is required"}
+    
+    if USE_ORCHESTRATOR_V2 and orchestrator_v2:
+        agent = orchestrator_v2.action_agent
+    else:
+        agent = getattr(orchestrator, "action_agent", None)
+        
+    if not agent:
+        return {"status": "error", "message": "Action agent is not loaded."}
+        
+    result = await agent.confirm_plan(plan_id, confirm)
+    return {"status": "ok", "result": result}
+
+
+# ─── FHIR Gateway Endpoints (Phase 20) ─────────────────────────────────────────
+from services.fhir_gateway_service import FhirGatewayService
+
+@app.get("/api/v1/fhir/observation/latest")
+async def fhir_observation_latest():
+    """
+    Get the latest Blackboard ClinicalEntry formatted as a list of FHIR Observations.
+    """
+    bb = get_blackboard()
+    clinical = await bb.read_latest_clinical()
+    if clinical is None:
+        return {"status": "no_data", "observations": []}
+    
+    observations = FhirGatewayService.to_fhir_observations(clinical)
+    return {"status": "ok", "observations": observations}
+
+@app.get("/api/v1/fhir/condition/latest")
+async def fhir_condition_latest():
+    """
+    Get the latest Blackboard ClinicalEntry formatted as an HL7 FHIR Condition resource.
+    """
+    bb = get_blackboard()
+    clinical = await bb.read_latest_clinical()
+    if clinical is None:
+        return {"status": "no_data", "condition": None}
+    
+    condition = FhirGatewayService.to_fhir_condition(clinical)
+    return {"status": "ok", "condition": condition}
+
+@app.get("/api/v1/fhir/clinical-bundle/latest")
+async def fhir_clinical_bundle_latest():
+    """
+    Get the latest clinical status as a combined FHIR searchset transaction bundle.
+    """
+    bb = get_blackboard()
+    clinical = await bb.read_latest_clinical()
+    if clinical is None:
+        return {"status": "no_data", "bundle": None}
+    
+    bundle = FhirGatewayService.to_fhir_bundle(clinical)
+    return {"status": "ok", "bundle": bundle}
 
 
 # ─── Test Orchestrator Endpoint ───────────────────────────────────────────────

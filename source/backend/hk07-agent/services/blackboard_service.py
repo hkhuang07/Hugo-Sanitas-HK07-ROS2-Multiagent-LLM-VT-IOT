@@ -60,6 +60,12 @@ class EmotionalEntry:
         if not self.timestamp:
             self.timestamp = datetime.utcnow().isoformat() + "Z"
 
+    def is_expired(self) -> bool:
+        """Check if this entry has expired"""
+        entry_time = datetime.fromisoformat(self.timestamp.replace('Z', '+00:00'))
+        expiry_time = entry_time + timedelta(seconds=self.ttl_seconds)
+        return datetime.utcnow().timestamp() > expiry_time.timestamp()
+
 
 @dataclass
 class ContextEntry:
@@ -76,6 +82,35 @@ class ContextEntry:
             self.timestamp = datetime.utcnow().isoformat() + "Z"
         if self.required_tools is None:
             self.required_tools = []
+
+    def is_expired(self) -> bool:
+        """Check if this entry has expired"""
+        entry_time = datetime.fromisoformat(self.timestamp.replace('Z', '+00:00'))
+        expiry_time = entry_time + timedelta(seconds=self.ttl_seconds)
+        return datetime.utcnow().timestamp() > expiry_time.timestamp()
+
+
+@dataclass
+class ActionPlanEntry:
+    """Structured action plan containing steps for robot actuators"""
+    agent_type: str = "ACTION"
+    timestamp: str = ""
+    plan_id: str = ""
+    steps: list = None  # list of dicts: [{ type, mqtt_topic, payload, requires_confirm }]
+    status: str = "PENDING"  # PENDING, AWAITING_CONFIRM, EXECUTING, COMPLETED, FAILED, CANCELLED
+    current_step_index: int = 0
+    ttl_seconds: int = 300
+
+    def __post_init__(self):
+        if not self.timestamp:
+            self.timestamp = datetime.utcnow().isoformat() + "Z"
+        if self.steps is None:
+            self.steps = []
+
+    def is_expired(self) -> bool:
+        entry_time = datetime.fromisoformat(self.timestamp.replace('Z', '+00:00'))
+        expiry_time = entry_time + timedelta(seconds=self.ttl_seconds)
+        return datetime.utcnow().timestamp() > expiry_time.timestamp()
 
 
 # ─── Blackboard Service (In-Memory Singleton) ─────────────────────────────────
@@ -298,6 +333,83 @@ class BlackboardService:
                 return None
             return entry
 
+    async def write_action_plan(self, entry: ActionPlanEntry) -> None:
+        """Action Agent / Orchestrator writes action plans"""
+        async with self._lock:
+            key = f"blackboard:action_plan:{entry.plan_id or entry.timestamp}"
+            data = asdict(entry)
+            
+            if self._use_redis and self._redis_client:
+                try:
+                    await self._redis_client.setex(
+                        key,
+                        entry.ttl_seconds,
+                        json.dumps(data)
+                    )
+                    log.debug("[BLACKBOARD] Action plan written to Redis: %s", key)
+                except Exception as e:
+                    log.error("[BLACKBOARD_REDIS_ERROR] Failed to write action plan: %s", e)
+                    self._in_memory_store[key] = data
+            else:
+                self._in_memory_store[key] = data
+                log.debug("[BLACKBOARD] Action plan written to memory: %s", key)
+
+    async def read_latest_action_plan(self) -> Optional[ActionPlanEntry]:
+        """Read latest action plan from Blackboard"""
+        async with self._lock:
+            if self._use_redis and self._redis_client:
+                try:
+                    pattern = "blackboard:action_plan:*"
+                    keys = await self._redis_client.keys(pattern)
+                    if not keys:
+                        return None
+                    
+                    latest_key = sorted(keys)[-1]
+                    data_str = await self._redis_client.get(latest_key)
+                    if data_str:
+                        data = json.loads(data_str)
+                        return ActionPlanEntry(**data)
+                except Exception as e:
+                    log.error("[BLACKBOARD_REDIS_ERROR] Failed to read action plan: %s", e)
+            
+            # In-memory fallback
+            action_entries = [
+                (k, v) for k, v in self._in_memory_store.items()
+                if k.startswith("blackboard:action_plan:")
+            ]
+            if not action_entries:
+                return None
+            
+            latest_key, latest_data = sorted(action_entries)[-1]
+            entry = ActionPlanEntry(**latest_data)
+            if entry.is_expired():
+                del self._in_memory_store[latest_key]
+                return None
+            return entry
+
+    async def read_action_plan(self, plan_id: str) -> Optional[ActionPlanEntry]:
+        """Read specific action plan by id"""
+        async with self._lock:
+            key = f"blackboard:action_plan:{plan_id}"
+            if self._use_redis and self._redis_client:
+                try:
+                    data_str = await self._redis_client.get(key)
+                    if data_str:
+                        data = json.loads(data_str)
+                        return ActionPlanEntry(**data)
+                except Exception as e:
+                    log.error("[BLACKBOARD_REDIS_ERROR] Failed to read specific plan %s: %s", plan_id, e)
+            
+            # In-memory
+            data = self._in_memory_store.get(key)
+            if data:
+                entry = ActionPlanEntry(**data)
+                if entry.is_expired():
+                    del self._in_memory_store[key]
+                    return None
+                return entry
+            return None
+
     async def clear_expired(self) -> None:
         """Periodic cleanup of expired entries (call every 5 minutes)"""
         async with self._lock:
@@ -321,6 +433,8 @@ class BlackboardService:
                             entry = EmotionalEntry(**data)
                         elif entry_type == "context":
                             entry = ContextEntry(**data)
+                        elif entry_type == "action_plan":
+                            entry = ActionPlanEntry(**data)
                         else:
                             continue
                         
@@ -339,10 +453,12 @@ class BlackboardService:
                     clinical_count = len(await self._redis_client.keys("blackboard:clinical:*"))
                     emotional_count = len(await self._redis_client.keys("blackboard:emotional:*"))
                     context_count = len(await self._redis_client.keys("blackboard:context:*"))
+                    action_count = len(await self._redis_client.keys("blackboard:action_plan:*"))
                     return {
                         "clinical": clinical_count,
                         "emotional": emotional_count,
-                        "context": context_count
+                        "context": context_count,
+                        "action_plan": action_count
                     }
                 except Exception:
                     pass
@@ -352,7 +468,45 @@ class BlackboardService:
                 "clinical": len([k for k in self._in_memory_store if k.startswith("blackboard:clinical:")]),
                 "emotional": len([k for k in self._in_memory_store if k.startswith("blackboard:emotional:")]),
                 "context": len([k for k in self._in_memory_store if k.startswith("blackboard:context:")]),
+                "action_plan": len([k for k in self._in_memory_store if k.startswith("blackboard:action_plan:")]),
             }
+
+    async def write_value(self, key: str, value: Any, ttl_seconds: int = 300) -> None:
+        """Write generic/custom value to Blackboard"""
+        async with self._lock:
+            if self._use_redis and self._redis_client:
+                try:
+                    await self._redis_client.setex(
+                        key,
+                        ttl_seconds,
+                        json.dumps(value)
+                    )
+                except Exception as e:
+                    log.error("[BLACKBOARD_REDIS_ERROR] Failed to write custom key %s: %s", key, e)
+                    self._in_memory_store[key] = {"value": value, "expiry": time.time() + ttl_seconds}
+            else:
+                self._in_memory_store[key] = {"value": value, "expiry": time.time() + ttl_seconds}
+
+    async def read_value(self, key: str) -> Optional[Any]:
+        """Read generic/custom value from Blackboard"""
+        async with self._lock:
+            if self._use_redis and self._redis_client:
+                try:
+                    data_str = await self._redis_client.get(key)
+                    if data_str:
+                        return json.loads(data_str)
+                except Exception as e:
+                    log.error("[BLACKBOARD_REDIS_ERROR] Failed to read custom key %s: %s", key, e)
+            
+            # In-memory fallback
+            data = self._in_memory_store.get(key)
+            if data:
+                if time.time() > data.get("expiry", 0.0):
+                    del self._in_memory_store[key]
+                    return None
+                return data.get("value")
+            return None
+
 
 
 # Singleton accessor

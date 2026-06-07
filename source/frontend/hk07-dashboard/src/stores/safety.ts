@@ -17,6 +17,7 @@ export const useSafetyStore = defineStore('safety', () => {
   const sectorCount = ref(0)
   const activeTriggers = ref<ActiveSafetyTrigger[]>([])
   const imuFallRisk = ref(false)
+  const clinicalAnalysis = ref<any>(null)
 
   const dataLive = computed(() => {
     if (lastScanMs.value <= 0) return false
@@ -101,6 +102,46 @@ export const useSafetyStore = defineStore('safety', () => {
     }
   }
 
+  function applyClinical(payload: any) {
+    clinicalAnalysis.value = payload
+    if (payload?.visible_injuries?.detected) {
+      activeTriggers.value = [
+        {
+          type: 'VISIBLE_INJURIES',
+          distanceM: 0,
+          message: `Vết thương: ${payload.visible_injuries.details}`,
+          severity: 'warning' as const,
+          detectedAt: Date.now()
+        },
+        ...activeTriggers.value.filter(t => t.type !== 'VISIBLE_INJURIES')
+      ].slice(0, MAX_TRIGGERS)
+    }
+    if (payload?.facial_distress?.detected) {
+      activeTriggers.value = [
+        {
+          type: 'FACIAL_DISTRESS',
+          distanceM: 0,
+          message: `Biểu hiện mặt: ${payload.facial_distress.details}`,
+          severity: 'critical' as const,
+          detectedAt: Date.now()
+        },
+        ...activeTriggers.value.filter(t => t.type !== 'FACIAL_DISTRESS')
+      ].slice(0, MAX_TRIGGERS)
+    }
+    if (payload?.environmental_hazards?.detected) {
+      activeTriggers.value = [
+        {
+          type: 'ENVIRONMENT_HAZARDS',
+          distanceM: 0,
+          message: `Rủi ro MT: ${payload.environmental_hazards.details}`,
+          severity: 'warning' as const,
+          detectedAt: Date.now()
+        },
+        ...activeTriggers.value.filter(t => t.type !== 'ENVIRONMENT_HAZARDS')
+      ].slice(0, MAX_TRIGGERS)
+    }
+  }
+
   function pruneStaleTriggers() {
     const now = Date.now()
     activeTriggers.value = activeTriggers.value.filter(
@@ -125,11 +166,13 @@ export const useSafetyStore = defineStore('safety', () => {
     sectorCount,
     activeTriggers,
     imuFallRisk,
+    clinicalAnalysis,
     dataLive,
     dataLinkLabel,
     applyScan,
     applyInhibit,
     applyImu,
+    applyClinical,
     pruneStaleTriggers,
     loadSnapshot,
   }

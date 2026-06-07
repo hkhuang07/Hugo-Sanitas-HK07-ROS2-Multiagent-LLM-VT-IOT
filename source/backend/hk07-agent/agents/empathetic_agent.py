@@ -6,13 +6,16 @@ Giọng điệu linh hoạt theo ngữ cảnh (ấm áp khi trò chuyện, chuy�
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
+import paho.mqtt.client as mqtt
 from collections import deque
 from services.agent_log_client import log_agent_decision
 from utils.enums import LLMProvider
 from services.llm_client import LLMClient, EMPATHY_TIERS, SYSTEM_QUERY_TIERS, VISION_TIERS
+from services.blackboard_service import get_blackboard, EmotionalEntry
 
 log = logging.getLogger("hk07.empathy_agent")
 
@@ -45,15 +48,95 @@ class EmpatheticAgent:
         self.arbitrator = arbitrator
         self._status = "INITIALIZING"
         self._history = deque(maxlen=self.MAX_TURNS * 2)
+        
+        # Setup MQTT client for publishing proactive events
+        broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
+        broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
+        self._mqtt = mqtt.Client(client_id="empathy-agent", protocol=mqtt.MQTTv311)
+        mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
+        mqtt_pass = os.getenv("MQTT_PASSWORD", "")
+        if mqtt_user:
+            self._mqtt.username_pw_set(mqtt_user, mqtt_pass)
+        self._mqtt.connect_async(broker_host, broker_port, keepalive=30)
 
     async def run_loop(self):
         self._status = "ACTIVE"
         log.info("[EMPATHY_AGENT] Active — Tầng 2")
+        
+        try:
+            self._mqtt.loop_start()
+        except Exception as e:
+            log.error("[EMPATHY_AGENT] Failed to start MQTT loop: %s", e)
+
         try:
             while True:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(2.0)  # Check stress history trend every 2.0s
+                
+                # Check stress history from Blackboard
+                bb = get_blackboard()
+                try:
+                    history = await bb.read_value("blackboard:clinical:stress_history")
+                    if history and len(history) >= 3:
+                        # history is [t1, t2, t3], t3 is the latest
+                        t1, t2, t3 = history[-3], history[-2], history[-1]
+                        
+                        # Consecutively rising and latest >= 30 (not calm)
+                        if t3 > t2 > t1 and t3 >= 30:
+                            # Verify if this trend was already processed
+                            last_processed = await bb.read_value("blackboard:empathy:stress_processed_trend")
+                            if last_processed != history:
+                                # Mark as processed
+                                await bb.write_value("blackboard:empathy:stress_processed_trend", history, ttl_seconds=300)
+                                
+                                # Generate and publish comforting proactive response
+                                decision_text = (
+                                    "[HÀNH VI CHỦ ĐỘNG] Tôi nhận thấy chỉ số căng thẳng của bạn đang tăng liên tục. "
+                                    "Hãy cùng tôi thực hiện bài tập thở sâu và thư giãn cơ thể nhé. "
+                                    "Tôi luôn ở đây bên bạn."
+                                )
+                                
+                                triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                                payload = {
+                                    "id": f"evt-{int(time.time())}",
+                                    "eventType": "AGENT_DECISION",
+                                    "agentType": "EMPATHETIC",
+                                    "alertLevel": "NORMAL",
+                                    "inputContext": f"Proactive Stress Spike: trend={history}",
+                                    "outputDecision": decision_text,
+                                    "llmProvider": "LOCAL_PROACTIVE",
+                                    "latencyMs": 0,
+                                    "triggeredAt": triggered_at
+                                }
+                                
+                                # Publish proactive alert to dashboard
+                                self._mqtt.publish("hk07/agents/empathetic/output", json.dumps(payload), qos=1)
+                                log.info("[EMPATHY_PROACTIVE_TRIGGER] Consecutively rising stress detected %s. Published comforting payload.", history)
+                                
+                                # Write EmotionalEntry to Blackboard
+                                entry = EmotionalEntry(
+                                    detected_emotion="anxious",
+                                    emotional_intensity=float(t3 / 100.0),
+                                    tone_analysis=f"Stress score is rising: {history}"
+                                )
+                                await bb.write_emotional(entry)
+                except Exception as ex:
+                    log.error("[EMPATHY_AGENT_LOOP_ERROR] Error running proactive empathy loop: %s", ex)
         except asyncio.CancelledError:
+            log.info("[EMPATHY_AGENT] Loop cancelled")
+        finally:
+            try:
+                self._mqtt.loop_stop()
+            except Exception:
+                pass
+
+    async def close(self):
+        try:
+            self._mqtt.loop_stop()
+            self._mqtt.disconnect()
+        except Exception:
             pass
+        if hasattr(self, '_client') and self._client:
+            await self._client.aclose()
 
     async def process_text_interaction(self, user_message: str) -> str:
         start_time = time.time()

@@ -11,6 +11,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -78,6 +79,14 @@ public class GlobalExceptionHandler {
         log.warn("[BUSINESS_ERROR] {}", ex.getMessage());
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(ex.getMessage()));
+    }
+
+    /** Static resource or route not found (404) */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(NoResourceFoundException ex) {
+        log.warn("[ROUTE_NOT_FOUND] {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("Resource not found: " + ex.getMessage()));
     }
 
     /**

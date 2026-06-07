@@ -26,8 +26,8 @@
   /* Neon emerald — success / primary text highlight */
   --color-accent-cyan: #00E5FF;
   /* Electric cyan — secondary accent */
-  --color-accent-orange: #FF6600;
-  /* Cyber orange — warning */
+  --color-accent-orange: #FFB000;
+  /* Cyber orange (Amber) — warning */
   --color-accent-red: #FF3333;
   /* Crimson — danger / critical */
   --color-text-primary: #E0FFE8;
@@ -471,11 +471,11 @@ body {
 }
 
 .glow-green {
-  filter: drop-shadow(0 0 4px rgba(0, 82, 255, 0.6));
+  filter: drop-shadow(0 0 4px rgba(0, 255, 102, 0.6));
 }
 
 .glow-cyan {
-  filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.5));
+  filter: drop-shadow(0 0 4px rgba(0, 229, 255, 0.5));
 }
 
 .text-success {

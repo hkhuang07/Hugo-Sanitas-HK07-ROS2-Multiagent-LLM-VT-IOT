@@ -86,4 +86,39 @@ public class AgentLogController {
             return ResponseEntity.ok(ApiResponse.ok(Map.of("response", fallbackResponse)));
         }
     }
+
+    /** Proxy latest action plan retrieval to Python agent engine */
+    @GetMapping("/action/plan/latest")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getLatestActionPlan() {
+        try {
+            Map<String, Object> response = pythonAgentClient.get()
+                    .uri("/api/v1/agents/action/plan/latest")
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(java.time.Duration.ofSeconds(5));
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (Exception e) {
+            log.error("[AGENT_CONTROLLER] Failed to retrieve latest action plan from Python agent: ", e);
+            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline")));
+        }
+    }
+
+    /** Proxy action plan confirmation to Python agent engine */
+    @PostMapping("/action/confirm")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> confirmActionPlan(@RequestBody Map<String, Object> body) {
+        try {
+            Map<String, Object> response = pythonAgentClient.post()
+                    .uri("/api/v1/agents/action/confirm")
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(java.time.Duration.ofSeconds(10));
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (Exception e) {
+            log.error("[AGENT_CONTROLLER] Action plan confirmation failed: ", e);
+            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline")));
+        }
+    }
 }

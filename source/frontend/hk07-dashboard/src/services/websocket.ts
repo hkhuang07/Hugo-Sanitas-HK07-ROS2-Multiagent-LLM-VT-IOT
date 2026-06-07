@@ -4,6 +4,8 @@ import { useVitalsStore } from '../stores/vitals'
 import { useAgentsStore } from '../stores/agents'
 import { useSafetyStore } from '../stores/safety'
 import { useAuthStore } from '../stores/auth'
+import { useKinematicsStore } from '../stores/kinematics'
+import { useTelemetryStore } from '../stores/telemetry'
 import type { SafetyInhibitAlert } from '../types/safety'
 
 let _client: Client | null = null
@@ -56,6 +58,11 @@ export function initWebSocket(onReady?: () => void): void {
       const vitalsStore = useVitalsStore()
       const agentsStore = useAgentsStore()
       const safetyStore = useSafetyStore()
+      const telemetryStore = useTelemetryStore()
+
+      // Set telemetry mode to live/streaming
+      telemetryStore.setLive(true)
+      telemetryStore.isMock = false
 
       // [P1-2] Reconnected: flush offline queue into ring buffer
       await vitalsStore.flushOfflineQueue()
@@ -63,16 +70,49 @@ export function initWebSocket(onReady?: () => void): void {
       // ── Subscribe: Vital signs stream
       _client!.subscribe('/topic/vitals', (msg: IMessage) => {
         const data = JSON.parse(msg.body)
-        vitalsStore.updateVitals(data)
+        
+        // Unpack nested VitalSignDto from the VitalSignWithAlertDto wrapper
+        const vitalsData = {
+          deviceId: data.vitals?.deviceId || data.deviceId || '',
+          heartRate: data.vitals?.heartRate ?? data.heartRate ?? 0,
+          spo2: data.vitals?.spo2 ?? data.spo2 ?? 99,
+          systolic: data.vitals?.systolic ?? data.systolic ?? 120,
+          diastolic: data.vitals?.diastolic ?? data.diastolic ?? 80,
+          bodyTemperature: data.vitals?.bodyTemperature ?? data.bodyTemperature ?? 36.6,
+          alertLevel: data.alertLevel || 'NORMAL',
+          userId: data.userId || '',
+          epochTimestampMs: data.vitals?.epochTimestampMs || Date.now()
+        }
+        
+        vitalsStore.updateVitals(vitalsData)
+        
+        // Sync to telemetryStore so Dashboard text values update live
+        const telemetryStore = useTelemetryStore()
+        telemetryStore.update({
+          deviceId: vitalsData.deviceId,
+          heartRate: vitalsData.heartRate,
+          spo2: vitalsData.spo2,
+          systolic: vitalsData.systolic,
+          diastolic: vitalsData.diastolic,
+          bodyTemperature: vitalsData.bodyTemperature,
+          alertLevel: vitalsData.alertLevel,
+          epochTimestampMs: vitalsData.epochTimestampMs,
+          ecgPoints: []
+        })
       })
 
       // ── Subscribe: Agent event log
       _client!.subscribe('/topic/agent-events', (msg: IMessage) => {
         const ev = JSON.parse(msg.body)
-        agentsStore.addEvent(ev)
-        if (ev.eventType === 'AI_EMERGENCY_WAKEUP') {
+        if (ev.eventType === 'AI_EMERGENCY_WAKEUP' || ev.id === 'AI_EMERGENCY_WAKEUP') {
           document.dispatchEvent(new CustomEvent('hk07:ai-emergency-wakeup', { detail: ev }))
         }
+      })
+
+      // ── Subscribe: Agent system logs
+      _client!.subscribe('/topic/agent-logs', (msg: IMessage) => {
+        const ev = JSON.parse(msg.body)
+        agentsStore.addEvent(ev)
       })
 
       // ── Subscribe: LiDAR scan (MQTT → Core → enriched snapshot)
@@ -85,6 +125,75 @@ export function initWebSocket(onReady?: () => void): void {
       _client!.subscribe('/topic/safety-imu', (msg: IMessage) => {
         const data = JSON.parse(msg.body)
         safetyStore.applyImu(data)
+      })
+
+      // ── Subscribe: Kinematics 3D data (Holographic Twin)
+      _client!.subscribe('/topic/hk07/telemetry/imu', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateKinematics(data)
+      })
+
+      // ── Subscribe: Pneumatic telemetry
+      _client!.subscribe('/topic/hk07/telemetry/pneumatic', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updatePneumatic(data)
+      })
+
+      // ── Subscribe: Tactile telemetry
+      _client!.subscribe('/topic/hk07/telemetry/tactile', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateTactile(data)
+      })
+
+      // ── Subscribe: PMU telemetry
+      _client!.subscribe('/topic/hk07/telemetry/pmu', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updatePmu(data)
+      })
+
+      // ── Subscribe: Joint telemetry
+      _client!.subscribe('/topic/hk07/telemetry/joints', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateJoints(data)
+      })
+
+      // ── Subscribe: LiDAR Point Cloud (Spatial Perception)
+      _client!.subscribe('/topic/hk07/telemetry/lidar/points', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateLidarPoints(data)
+      })
+
+       // ── Subscribe: Obstacle Avoidance Vector
+      _client!.subscribe('/topic/hk07/telemetry/avoidance', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateAvoidanceVector(data)
+      })
+
+      // ── Subscribe: Joint States Telemetry
+      _client!.subscribe('/topic/hk07/telemetry/joint_states', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateJointStates(data)
+      })
+
+      // ── Subscribe: Clinical / Multimodal Vision analysis
+      _client!.subscribe('/topic/hk07/perception/clinical', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        safetyStore.applyClinical(data)
+      })
+
+      // ── Subscribe: Thermal and rPPG telemetry
+      _client!.subscribe('/topic/hk07/sensors/camera/thermal-rppg', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateThermalRppg(data)
       })
 
       // ── Subscribe: Safety alerts / Subsumption (SafetyAgent inhibit bridge)
@@ -110,6 +219,19 @@ export function initWebSocket(onReady?: () => void): void {
       console.warn(`[WS] Disconnected. Reconnect #${_reconnectAttempts} in ${delay}ms (Exponential Backoff)`)
       const vitalsStore = useVitalsStore()
       vitalsStore.isConnected = false
+      const telemetryStore = useTelemetryStore()
+      telemetryStore.setLive(false)
+      const kinematicsStore = useKinematicsStore()
+      kinematicsStore.setLive(false)
+
+      document.dispatchEvent(new CustomEvent('hk07:toast', {
+        detail: {
+          severity: 'warning',
+          agent: 'SYSTEM',
+          message: 'CORE TELEMETRY CONNECTION LOST. OFFLINE_MODE TRIGGERED.',
+          duration: 5000
+        }
+      }))
     },
 
     onStompError: (frame) => {
@@ -136,5 +258,9 @@ export function disconnectWebSocket(): void {
   try {
     const vitalsStore = useVitalsStore()
     vitalsStore.isConnected = false
+    const telemetryStore = useTelemetryStore()
+    telemetryStore.setLive(false)
+    const kinematicsStore = useKinematicsStore()
+    kinematicsStore.setLive(false)
   } catch {}
 }

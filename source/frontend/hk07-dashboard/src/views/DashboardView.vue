@@ -208,7 +208,6 @@ import { useAuthStore } from '../stores/auth'
 import { useVitalsStore } from '../stores/vitals'
 import { useAgentsStore } from '../stores/agents'
 import { useTelemetryStore } from '../stores/telemetry'
-import { MockSensorService } from '../services/MockSensorService'
 import EcgWaveform from '../components/EcgWaveform.vue'
 import api from '../services/api'
 
@@ -216,13 +215,6 @@ const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
 const agentsStore = useAgentsStore()
 const telemetryStore = useTelemetryStore()
-
-// Start mock sensor if not already running (idempotent)
-onMounted(() => {
-  if (!MockSensorService.isRunning) {
-    MockSensorService.start()
-  }
-})
 
 // Robot State
 const robotState = ref('ACTIVE')
