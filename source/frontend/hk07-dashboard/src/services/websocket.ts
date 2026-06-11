@@ -6,6 +6,7 @@ import { useSafetyStore } from '../stores/safety'
 import { useAuthStore } from '../stores/auth'
 import { useKinematicsStore } from '../stores/kinematics'
 import { useTelemetryStore } from '../stores/telemetry'
+import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
 import type { SafetyInhibitAlert } from '../types/safety'
 
 let _client: Client | null = null
@@ -194,6 +195,38 @@ export function initWebSocket(onReady?: () => void): void {
         const data = JSON.parse(msg.body)
         const kinematicsStore = useKinematicsStore()
         kinematicsStore.updateThermalRppg(data)
+      })
+
+      // ── Subscribe: Mobile Phone Sensor Bridge — IMU 9-DOF (accel/gyro/mag/compass/quaternion)
+      _client!.subscribe('/topic/hk07/sensors/imu', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const sensorStore = useSensorTelemetryStore()
+        sensorStore.updateImu(data)
+        
+        // Drive the 3D twin and toggle active link state
+        const kinematicsStore = useKinematicsStore()
+        kinematicsStore.updateKinematics(data)
+      })
+
+      // ── Subscribe: Mobile Phone Sensor Bridge — Environment (light + barometer)
+      _client!.subscribe('/topic/hk07/sensors/environment', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const sensorStore = useSensorTelemetryStore()
+        sensorStore.updateEnvironment(data)
+      })
+
+      // ── Subscribe: Mobile Phone Sensor Bridge — GPS Location
+      _client!.subscribe('/topic/hk07/sensors/location', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const sensorStore = useSensorTelemetryStore()
+        sensorStore.updateLocation(data)
+      })
+
+      // ── Subscribe: Mobile Phone Sensor Bridge — Activity (pedometer + wrist motion)
+      _client!.subscribe('/topic/hk07/sensors/activity', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const sensorStore = useSensorTelemetryStore()
+        sensorStore.updateActivity(data)
       })
 
       // ── Subscribe: Safety alerts / Subsumption (SafetyAgent inhibit bridge)

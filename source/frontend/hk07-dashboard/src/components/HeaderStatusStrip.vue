@@ -3,6 +3,7 @@
     <div class="header-left">
       <!-- Hamburger Toggle — emits 'toggle-sidebar' to App.vue -->
       <button
+        v-if="authStore.isAuthenticated"
         class="hamburger-btn"
         @click="emit('toggle-sidebar')"
         :title="'Toggle Sidebar'"
@@ -21,16 +22,9 @@
     </div>
     
     <nav class="header-nav">
-      <template v-if="authStore.isAuthenticated">
-        <router-link to="/" class="nav-item" active-class="nav-active">VITALS</router-link>
-        <router-link to="/companion" class="nav-item" active-class="nav-active">COMPANION</router-link>
-        <router-link to="/agents" class="nav-item" active-class="nav-active">AGENTS</router-link>
-        <router-link to="/safety" class="nav-item" active-class="nav-active">SAFETY</router-link>
-        <router-link to="/history" class="nav-item" active-class="nav-active">HISTORY</router-link>
-      </template>
-      <template v-else>
-        <span class="nav-item static-nav">PUBLIC_PORTAL</span>
-      </template>
+      <span class="nav-item static-nav">[ LANG: VI ]</span>
+      <span class="nav-item static-nav">[ MODE: DARK ]</span>
+      <router-link v-if="!authStore.isAuthenticated" to="/emergency" class="nav-item" active-class="nav-active">EMERGENCY</router-link>
     </nav>
     
     <div class="header-right">
@@ -64,11 +58,15 @@ const agentsStore = useAgentsStore()
 const currentPath = computed(() => {
   const path = route.path
   if (path === '/') return 'PATH: /v1/hk07/core/vitals'
+  if (path === '/telemetry') return 'PATH: /v1/hk07/telemetry/stream'
   if (path === '/companion') return 'PATH: /v1/hk07/agents/empathetic/chat'
   if (path === '/agents') return 'PATH: /v1/hk07/agents/stream'
   if (path === '/safety') return 'PATH: /v1/hk07/safety/sensors'
   if (path === '/history') return 'PATH: /v1/hk07/health/history'
+  if (path === '/digital-twin') return 'PATH: /v1/hk07/render/holographic'
+  if (path === '/profile') return 'PATH: /v1/hk07/user/profile/settings'
   if (path === '/login') return 'PATH: /v1/hk07/auth/login'
+  if (path === '/emergency') return 'PATH: /v1/hk07/emergency/access'
   return `PATH: ${path}`
 })
 

@@ -19,7 +19,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Health Service — Phase 04 (Timeline)
@@ -56,8 +57,9 @@ public class HealthService {
     private final ConcurrentHashMap<String, Long> lastProcessedTime = new ConcurrentHashMap<>();
 
     // ── [HẠNCHẾ-#8] Batch Insert Queue: accumulates NORMAL records ──────────
-    // CopyOnWriteArrayList: thread-safe for concurrent @Async adds + scheduled drain
-    private final CopyOnWriteArrayList<HealthRecordEntity> normalBatchQueue = new CopyOnWriteArrayList<>();
+    // ConcurrentLinkedQueue: thread-safe for high-frequency concurrent adds + atomic drain
+    private final ConcurrentLinkedQueue<HealthRecordEntity> normalBatchQueue = new ConcurrentLinkedQueue<>();
+    private final AtomicBoolean isFlushing = new AtomicBoolean(false);
     private static final int BATCH_MAX_SIZE = 500; // Safety cap: flush if too large regardless of timer
 
     /**
@@ -126,14 +128,19 @@ public class HealthService {
     @Transactional
     public void flushNormalBatch() {
         if (normalBatchQueue.isEmpty()) return;
-
-        // Atomic drain: snapshot + clear atomically
-        List<HealthRecordEntity> batch = new ArrayList<>(normalBatchQueue);
-        normalBatchQueue.removeAll(batch);
-
-        if (!batch.isEmpty()) {
-            healthRepository.saveAll(batch);
-            log.info("[HEALTH_BATCH] Flushed {} NORMAL vitals records to DB (batch mode)", batch.size());
+        if (!isFlushing.compareAndSet(false, true)) return;
+        try {
+            List<HealthRecordEntity> batch = new ArrayList<>();
+            HealthRecordEntity record;
+            while ((record = normalBatchQueue.poll()) != null) {
+                batch.add(record);
+            }
+            if (!batch.isEmpty()) {
+                healthRepository.saveAll(batch);
+                log.info("[HEALTH_BATCH] Flushed {} NORMAL vitals records to DB (batch mode)", batch.size());
+            }
+        } finally {
+            isFlushing.set(false);
         }
     }
 

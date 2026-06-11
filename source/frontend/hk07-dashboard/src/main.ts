@@ -13,6 +13,19 @@ app.use(router)
 
 const authStore = useAuthStore(pinia)
 
-authStore.tryAutoLogin().finally(() => {
+/**
+ * authReadyPromise — exported so router/index.ts can await it in beforeEach.
+ *
+ * Problem: router.beforeEach() fires synchronously during initial navigation
+ * (before app.mount), at which point tryAutoLogin() has NOT yet resolved.
+ * isAuthenticated is therefore false, causing /history or any protected route
+ * to redirect to /login on every page refresh (F5).
+ *
+ * Solution: export this Promise and await it in the guard before checking
+ * isAuthenticated. The cost is a single extra tick on first navigation only.
+ */
+export const authReadyPromise: Promise<boolean> = authStore.tryAutoLogin()
+
+authReadyPromise.finally(() => {
   app.mount('#app')
 })

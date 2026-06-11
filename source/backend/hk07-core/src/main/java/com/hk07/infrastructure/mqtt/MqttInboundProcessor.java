@@ -59,6 +59,16 @@ public class MqttInboundProcessor {
                 handleLidarScan(payload);
             } else if (topic.equals("hk07/sensors/imu/state")) {
                 handleImuState(payload);
+            // ── Mobile Phone Sensor Bridge Topics (vivo_http_mqtt_bridge.py) ──
+            } else if (topic.equals("hk07/sensors/imu/target")) {
+                handleMobileImuTarget(payload);
+            } else if (topic.equals("hk07/sensors/environment/state")) {
+                handleMobileEnvironment(payload);
+            } else if (topic.equals("hk07/sensors/location/gps")) {
+                handleMobileLocation(payload);
+            } else if (topic.equals("hk07/sensors/activity/metrics")) {
+                handleMobileActivity(payload);
+            // ── Robot Telemetry Topics ──
             } else if (topic.equals("hk07/telemetry/imu")) {
                 handleTelemetryImu(payload);
             } else if (topic.equals("hk07/telemetry/pneumatic")) {
@@ -199,5 +209,43 @@ public class MqttInboundProcessor {
 
     private void handleThermalRppg(String payload) {
         wsTemplate.convertAndSend("/topic/hk07/sensors/camera/thermal-rppg", payload);
+    }
+
+    // ── Mobile Phone Sensor Bridge Handlers ──────────────────────────────────
+
+    /**
+     * 9-DOF IMU from phone: accel/gyro/mag/quaternion/compass/position.
+     * Bridged from MQTT hk07/sensors/imu/target → WebSocket /topic/hk07/sensors/imu.
+     */
+    private void handleMobileImuTarget(String payload) {
+        log.debug("[MOBILE_IMU] {}", payload.length() > 80 ? payload.substring(0, 80) + "..." : payload);
+        wsTemplate.convertAndSend("/topic/hk07/sensors/imu", payload);
+    }
+
+    /**
+     * Environment sensors from phone: ambient light (lux) + barometric pressure (hPa) + delta.
+     * Bridged from MQTT hk07/sensors/environment/state → WebSocket /topic/hk07/sensors/environment.
+     */
+    private void handleMobileEnvironment(String payload) {
+        log.debug("[MOBILE_ENV] {}", payload);
+        wsTemplate.convertAndSend("/topic/hk07/sensors/environment", payload);
+    }
+
+    /**
+     * GPS location from phone: latitude/longitude/altitude.
+     * Bridged from MQTT hk07/sensors/location/gps → WebSocket /topic/hk07/sensors/location.
+     */
+    private void handleMobileLocation(String payload) {
+        log.debug("[MOBILE_GPS] {}", payload);
+        wsTemplate.convertAndSend("/topic/hk07/sensors/location", payload);
+    }
+
+    /**
+     * Activity metrics from phone: pedometer steps, activity type, wrist motion array.
+     * Bridged from MQTT hk07/sensors/activity/metrics → WebSocket /topic/hk07/sensors/activity.
+     */
+    private void handleMobileActivity(String payload) {
+        log.debug("[MOBILE_ACTIVITY] {}", payload);
+        wsTemplate.convertAndSend("/topic/hk07/sensors/activity", payload);
     }
 }

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import api from '../services/api'
 
 export type AgentType = 'EMPATHETIC' | 'MEDICAL' | 'SAFETY'
 
@@ -26,6 +27,12 @@ export const useAgentsStore = defineStore('agents', () => {
   // Load persisted state from localStorage
   const savedEvents = localStorage.getItem('hk07_agent_events')
   const events = ref<AgentEvent[]>(savedEvents ? JSON.parse(savedEvents) : [])
+
+  const stats = ref<Record<AgentType, number>>({
+    EMPATHETIC: 0,
+    MEDICAL: 0,
+    SAFETY: 0,
+  })
 
   const savedChat = localStorage.getItem('hk07_agent_chat_log')
   const chatLog = ref<ChatMessage[]>(savedChat ? JSON.parse(savedChat) : [
@@ -61,6 +68,49 @@ export const useAgentsStore = defineStore('agents', () => {
       events.value.length = MAX_EVENTS
     }
     agentStatus.value[ev.agentType] = 'ACTIVE'
+    if (stats.value[ev.agentType] !== undefined) {
+      stats.value[ev.agentType]++
+    } else {
+      stats.value[ev.agentType] = 1
+    }
+  }
+
+  async function fetchLogs() {
+    try {
+      const resp = await api.get('/agents/logs', {
+        params: { page: 0, size: MAX_EVENTS }
+      })
+      if (resp.data && resp.data.success && resp.data.data) {
+        const list = resp.data.data.content || []
+        events.value = list.map((item: any) => ({
+          id: item.id,
+          agentType: item.agentType,
+          inputContext: item.inputContext || '',
+          outputDecision: item.outputDecision,
+          llmProvider: item.llmProvider || 'UNKNOWN',
+          latencyMs: item.latencyMs,
+          triggeredAt: item.triggeredAt
+        }))
+      }
+    } catch (err) {
+      console.error('Failed to fetch agent logs:', err)
+    }
+  }
+
+  async function fetchStats() {
+    try {
+      const resp = await api.get('/agents/stats')
+      if (resp.data && resp.data.success && resp.data.data) {
+        const counts = resp.data.data
+        stats.value = {
+          EMPATHETIC: Number(counts.EMPATHETIC || 0),
+          MEDICAL: Number(counts.MEDICAL || 0),
+          SAFETY: Number(counts.SAFETY || 0)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch agent stats:', err)
+    }
   }
 
   function setSubsumptionActive(active: boolean, trigger?: string) {
@@ -90,6 +140,7 @@ export const useAgentsStore = defineStore('agents', () => {
 
   return { 
     events, 
+    stats,
     chatLog,
     sessionId,
     agentStatus, 
@@ -98,7 +149,9 @@ export const useAgentsStore = defineStore('agents', () => {
     initSession,
     addEvent, 
     setSubsumptionActive, 
-    clearEvents 
+    clearEvents,
+    fetchLogs,
+    fetchStats
   }
 })
 

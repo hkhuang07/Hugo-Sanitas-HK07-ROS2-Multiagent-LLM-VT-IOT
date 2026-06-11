@@ -141,6 +141,10 @@ mysql-data/
 redis-data/
 influx-data/
 
+# Local Agent Temp Files & Memory Databases
+source/backend/hk07-agent/latest_frame.jpg
+source/backend/hk07-agent/data/
+source/backend/hk07-core/logs/
 
 .claude/
 data/

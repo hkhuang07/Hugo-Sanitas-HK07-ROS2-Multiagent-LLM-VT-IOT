@@ -117,9 +117,81 @@ parser.add_argument("--mqtt-port", dest="mqtt_port", type=int, default=int(os.ge
 parser.add_argument("--mqtt-user", dest="mqtt_user", type=str, default=os.getenv("MQTT_USERNAME", "hk07sim"), help="MQTT username")
 parser.add_argument("--mqtt-pass", dest="mqtt_pass", type=str, default=os.getenv("MQTT_PASSWORD", ""), help="MQTT password")
 
+def _is_wsl2_virtual_ip(ip: str) -> bool:
+    """Return True if IP is in WSL2 / Hyper-V virtual adapter range (172.16.0.0/12)."""
+    import struct
+    try:
+        packed = struct.unpack("!I", socket.inet_aton(ip))[0]
+        return 0xAC100000 <= packed <= 0xAC1FFFFF
+    except Exception:
+        return False
+
+def _is_valid_gateway(ip: str) -> bool:
+    try:
+        socket.inet_aton(ip)
+        return ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255") and not _is_wsl2_virtual_ip(ip)
+    except Exception:
+        return False
+
+def detect_phone_gateway_ip():
+    import subprocess
+    import socket
+
+    # Strategy 1: PowerShell targeting Wi-Fi adapter only (no inner single quotes — WSL2 fix)
+    try:
+        cmd = ["powershell.exe", "-NoProfile", "-Command",
+               "Get-NetRoute -DestinationPrefix 0.0.0.0/0 -InterfaceAlias Wi-Fi | Select-Object -ExpandProperty NextHop"]
+        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode("utf-8").strip()
+        for ip in out.split():
+            if _is_valid_gateway(ip):
+                return ip
+    except Exception:
+        pass
+
+    # Strategy 2: All routes via PowerShell, skip WSL2 172.16.0.0/12 range
+    try:
+        cmd = ["powershell.exe", "-NoProfile", "-Command",
+               "Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Select-Object -ExpandProperty NextHop"]
+        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode("utf-8").strip()
+        for ip in out.split():
+            if _is_valid_gateway(ip):
+                return ip
+    except Exception:
+        pass
+
+    # Strategy 3: Linux ip route (pure Linux without WSL2)
+    try:
+        import sys
+        if sys.platform != "win32":
+            out = subprocess.check_output("ip route show default", shell=True, timeout=3).decode("utf-8").strip()
+            for line in out.splitlines():
+                if "default via" in line:
+                    parts = line.split()
+                    idx = parts.index("via")
+                    if idx + 1 < len(parts):
+                        gw = parts[idx + 1]
+                        if _is_valid_gateway(gw):
+                            return gw
+    except Exception:
+        pass
+    return None
+
 args, unknown = parser.parse_known_args()
 
-IP_DIEN_THOAI = args.phone_ip
+# Check if user explicitly passed --phone-ip on command line
+user_override = any(arg.startswith("--phone-ip") for arg in sys.argv)
+detected_ip = detect_phone_gateway_ip()
+
+if not user_override and detected_ip:
+    log.info(f"┌────────────────────────────────────────────────────────┐")
+    log.info(f"│ [CONNECTED_PHONE_GATEWAY] Hotspot Phone Gateway detected │")
+    log.info(f"│ IP: {detected_ip:<50} │")
+    log.info(f"│ Auto-configuring IP_DIEN_THOAI to match gateway.      │")
+    log.info(f"└────────────────────────────────────────────────────────┘")
+    IP_DIEN_THOAI = detected_ip
+else:
+    IP_DIEN_THOAI = args.phone_ip
+
 FUSION_PORT = args.port
 MQTT_BROKER = args.mqtt_host
 MQTT_PORT = args.mqtt_port

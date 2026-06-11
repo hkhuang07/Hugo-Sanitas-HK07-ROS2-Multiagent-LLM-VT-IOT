@@ -8,38 +8,8 @@
           <span class="role-badge">{{ authStore.user?.role }}</span>
         </div>
 
-        <!-- Vital Signs Monitor Panel -->
-        <div class="terminal-card">
-          <div class="terminal-card-header">
-            [ VITAL_SIGNS_MONITOR ]
-            <span class="text-dim text-[8px] ml-auto">
-              {{ telemetryStore.current.deviceId || 'NO_DEVICE' }}
-            </span>
-            <span :class="['source-badge ml-2', telemetryStore.isMock ? 'text-dim' : 'text-green']">
-              {{ telemetryStore.sourceLabel }}
-            </span>
-          </div>
-          <div class="vitals-grid">
-            <div class="vital-item">
-              <div :class="['vital-value text-sm', hrClass]">{{ telemetryStore.current.heartRate || '--' }}</div>
-              <div class="vital-unit">HR (BPM)</div>
-            </div>
-            <div class="vital-item">
-              <div :class="['vital-value text-sm', spo2Class]">{{ telemetryStore.current.spo2?.toFixed(1) || '--' }}</div>
-              <div class="vital-unit">SpO₂ (%)</div>
-            </div>
-            <div class="vital-item">
-              <div :class="['vital-value text-sm', bpClass]">
-                {{ telemetryStore.current.systolic || '--' }}/{{ telemetryStore.current.diastolic || '--' }}
-              </div>
-              <div class="vital-unit">BP (mmHg)</div>
-            </div>
-            <div class="vital-item">
-              <div :class="['vital-value text-sm', tempClass]">{{ telemetryStore.current.bodyTemperature?.toFixed(1) || '--' }}</div>
-              <div class="vital-unit">TEMP (°C)</div>
-            </div>
-          </div>
-        </div>
+        <!-- Bio-Telemetry Widget -->
+        <BioTelemetryWidget :telemetry="currentTelemetry" />
 
         <!-- Operational Alerts Status -->
         <div class="terminal-card">
@@ -145,16 +115,24 @@
 
       <!-- ── Right side: Data Visualization Canvas (70%) ─────────────────── -->
       <section class="data-canvas">
-        <!-- ECG Canvas — 60FPS, data from Pinia ring buffer -->
-        <div class="terminal-card corner-reticle">
-          <div class="terminal-card-header">
-            [ VITAL_STREAM_ECG ]
-            <span :class="['mono ml-2 text-[9px]', vitalsStore.isConnected ? 'text-green' : 'text-dim']">
-              {{ vitalsStore.isConnected ? 'STREAMING' : 'OFFLINE_SIM' }}
-            </span>
+        <!-- Real-Time Metrics & Visualization Row -->
+        <div class="dashboard-visual-row">
+          <!-- ECG Waveform Canvas -->
+          <div class="terminal-card corner-reticle flex-1">
+            <div class="terminal-card-header">
+              [ VITAL_STREAM_ECG ]
+              <span :class="['mono ml-2 text-[9px]', vitalsStore.isConnected ? 'text-green' : 'text-dim']">
+                {{ vitalsStore.isConnected ? 'STREAMING' : 'OFFLINE_SIM' }}
+              </span>
+            </div>
+            <div class="ecg-widget-wrapper">
+              <EcgWaveform :width="380" :height="90" />
+            </div>
           </div>
-          <div class="ecg-widget-wrapper">
-            <EcgWaveform :width="760" :height="100" />
+          
+          <!-- Kinematics & Environment Widget -->
+          <div class="flex-1">
+            <KinematicsWidget :telemetry="currentTelemetry" />
           </div>
         </div>
 
@@ -208,13 +186,57 @@ import { useAuthStore } from '../stores/auth'
 import { useVitalsStore } from '../stores/vitals'
 import { useAgentsStore } from '../stores/agents'
 import { useTelemetryStore } from '../stores/telemetry'
+import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
 import EcgWaveform from '../components/EcgWaveform.vue'
+import BioTelemetryWidget from '../components/telemetry/BioTelemetryWidget.vue'
+import KinematicsWidget from '../components/telemetry/KinematicsWidget.vue'
+import type { RobotTelemetry } from '../components/telemetry/types'
 import api from '../services/api'
 
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
 const agentsStore = useAgentsStore()
 const telemetryStore = useTelemetryStore()
+const sensorStore = useSensorTelemetryStore()
+
+const currentTelemetry = computed<RobotTelemetry>(() => {
+  return {
+    messageId: 'msg-dashboard',
+    sessionId: 'session-dashboard',
+    deviceId: vitalsStore.current.deviceId || 'NO_DEVICE',
+    hr: vitalsStore.current.heartRate,
+    spO2: vitalsStore.current.spo2,
+    light: sensorStore.environment.ambient_light,
+    pressure: sensorStore.environment.barometric_pressure,
+    pressureDelta: sensorStore.environment.pressure_delta_hpa,
+    yaw: sensorStore.eulerAngles.yaw,
+    pitch: sensorStore.eulerAngles.pitch,
+    roll: sensorStore.eulerAngles.roll,
+    latitude: sensorStore.location.latitude,
+    longitude: sensorStore.location.longitude,
+    altitude: sensorStore.location.altitude,
+    steps: sensorStore.activity.pedometer_steps,
+    activityType: sensorStore.activity.activity_type,
+    fallState: vitalsStore.isEmergency,
+    fallConfidence: vitalsStore.isEmergency ? 1.0 : 0.0,
+    gForceMagnitude: sensorStore.wristMagnitude,
+    rawAccel: {
+      x: sensorStore.imu.linear_acceleration.x,
+      y: sensorStore.imu.linear_acceleration.y,
+      z: sensorStore.imu.linear_acceleration.z,
+      magnitude: sensorStore.wristMagnitude
+    },
+    sensorStatus: {
+      hrValid: vitalsStore.isConnected,
+      spo2Valid: vitalsStore.isConnected,
+      lightValid: sensorStore.envStatus === 'LIVE',
+      pressureValid: sensorStore.envStatus === 'LIVE',
+      yawValid: sensorStore.imuStatus === 'LIVE',
+      accelValid: sensorStore.imuStatus === 'LIVE'
+    },
+    timestamp: vitalsStore.current.epochTimestampMs || Date.now()
+  }
+})
 
 // Robot State
 const robotState = ref('ACTIVE')
@@ -600,6 +622,201 @@ onUnmounted(() => {
 }
 
 .event-msg {
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-weight: bold;
+  font-size: 8px;
+}
+
+.data-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  overflow-y: auto;
+}
+
+.vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.vital-item {
+  border: 1px solid var(--color-border-dim);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px;
+  text-align: center;
+  border-radius: 2px;
+}
+
+.vital-value {
+  font-family: var(--font-mono);
+  line-height: 1.2;
+}
+
+.vital-unit {
+  font-size: 7px;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.robot-status-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-hud);
+  margin-bottom: 4px;
+}
+
+.control-btns, .calibration-btns {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  margin-top: 6px;
+}
+
+.control-btns button, .calibration-btns button {
+  flex: 1;
+  white-space: nowrap;
+  font-size: 8px !important;
+  padding: 4px 2px !important;
+}
+
+.sub-status-display {
+  font-family: var(--font-hud);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+
+.sub-priority-chain {
+  text-align: center;
+}
+
+.alerts-list {
+  padding: 4px 0;
+}
+
+.alert-item {
+  font-family: var(--font-hud);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px;
+  border-radius: 2px;
+  text-align: center;
+}
+
+.alert-item.critical {
+  background: rgba(255, 51, 51, 0.12);
+  border: 1px solid var(--color-accent-red);
+  color: var(--color-accent-red);
+  animation: blink-crit 1.5s step-end infinite;
+}
+
+.alert-item.normal {
+  border: 1px solid var(--color-border-dim);
+  color: var(--color-accent-green);
+}
+
+@keyframes blink-crit {
+  50% { opacity: 0.5; }
+}
+
+.diagnostics-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.diag-item, .control-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.diag-label, .label {
+  color: var(--color-text-dim);
+  font-family: var(--font-hud);
+  letter-spacing: 0.05em;
+}
+
+.ecg-widget-wrapper {
+  background: #000000;
+}
+
+.subsumption-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.sub-layer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-family: var(--font-hud);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-dim);
+  color: var(--color-text-dim);
+}
+
+.sub-layer.active {
+  border-color: var(--color-accent-green);
+  color: var(--color-accent-green);
+}
+
+.sub-layer.inhibited {
+  border-color: var(--color-accent-red);
+  color: var(--color-accent-red);
+}
+
+.sub-priority {
+  min-width: 45px;
+}
+
+.sub-name {
+  flex: 1;
+}
+
+.sub-status {
+  font-weight: 700;
+}
+
+.event-log {
+  flex: 1;
+  min-height: 150px;
+  overflow-y: auto;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.event-line {
+  display: grid;
+  grid-template-columns: minmax(58px, 62px) minmax(80px, 100px) minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.ev-critical .event-msg {
+  color: var(--color-accent-red);
+}
+
+.event-time {
+  white-space: nowrap;
+}
+
+.event-agent {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-msg {
   word-break: break-word;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -609,5 +826,17 @@ onUnmounted(() => {
   font-family: var(--font-hud);
   font-size: 7px;
   letter-spacing: 0.1em;
+}
+
+.dashboard-visual-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+@media (max-width: 1024px) {
+  .dashboard-visual-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -191,11 +191,11 @@ function resetScene() {
   position: absolute;
   background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(0, 229, 255, 0.18);
+  border: 1px solid rgba(0, 255, 102, 0.18);
   padding: 10px 14px;
   font-family: 'Roboto Mono', 'VT323', monospace;
   font-size: 10px;
-  color: #00e5ff;
+  color: #00ff66;
   letter-spacing: 0.07em;
   pointer-events: auto;
 }
@@ -207,7 +207,7 @@ function resetScene() {
   position: absolute;
   width: 6px;
   height: 6px;
-  border-color: rgba(0, 229, 255, 0.5);
+  border-color: rgba(0, 255, 102, 0.5);
   border-style: solid;
 }
 .corner-reticle::before {
@@ -237,7 +237,7 @@ function resetScene() {
 
 .matrix-desc {
   font-size: 8px;
-  color: rgba(0, 229, 255, 0.7);
+  color: rgba(0, 255, 102, 0.7);
   margin-top: -2px;
   margin-bottom: 6px;
   padding-left: 10px;
@@ -251,8 +251,8 @@ function resetScene() {
   font-size: 9px;
   font-weight: bold;
   letter-spacing: 0.12em;
-  color: #00e5ff;
-  text-shadow: 0 0 8px rgba(0, 229, 255, 0.8);
+  color: #00ff66;
+  text-shadow: 0 0 8px rgba(0, 255, 102, 0.8);
   margin-bottom: 6px;
 }
 
@@ -261,16 +261,16 @@ function resetScene() {
   align-items: center;
   gap: 8px;
   font-size: 8px;
-  color: rgba(0, 229, 255, 0.6);
+  color: rgba(0, 255, 102, 0.6);
 }
 
 .status-dot { font-size: 8px; animation: dot-blink 1.5s step-end infinite; }
 @keyframes dot-blink { 50% { opacity: 0.3; } }
 
 .mode-tag { color: #00ff66; font-weight: bold; }
-.sep { color: rgba(0, 229, 255, 0.3); }
+.sep { color: rgba(0, 255, 102, 0.3); }
 .fps-val { color: #ffb000; }
-.ts-val  { color: rgba(0, 229, 255, 0.5); }
+.ts-val  { color: rgba(0, 255, 102, 0.5); }
 
 /* ── Alert chip ──────────────────────────────────────────────────────── */
 .alert-chip {
@@ -293,10 +293,10 @@ function resetScene() {
 /* ── Coordinate matrix ───────────────────────────────────────────────── */
 .matrix-header {
   font-size: 8px;
-  color: rgba(0, 229, 255, 0.5);
+  color: rgba(0, 255, 102, 0.5);
   letter-spacing: 0.1em;
   margin-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 229, 255, 0.1);
+  border-bottom: 1px solid rgba(0, 255, 102, 0.1);
   padding-bottom: 4px;
 }
 
@@ -307,17 +307,17 @@ function resetScene() {
   margin-bottom: 4px;
 }
 
-.axis-x    { color: #00e5ff; font-weight: bold; min-width: 14px; text-shadow: 0 0 6px rgba(0, 229, 255, 0.9); }
+.axis-x    { color: #00ff66; font-weight: bold; min-width: 14px; text-shadow: 0 0 6px rgba(0, 255, 102, 0.9); }
 .axis-y    { color: #00ff66; font-weight: bold; min-width: 14px; text-shadow: 0 0 6px rgba(0, 255, 102, 0.9); }
 .axis-z    { color: #ffb000; font-weight: bold; min-width: 14px; text-shadow: 0 0 6px rgba(255, 176, 0, 0.9); }
-.axis-label { color: rgba(0, 229, 255, 0.55); font-size: 8px; min-width: 55px; }
-.axis-bar  { color: rgba(0, 229, 255, 0.2); font-size: 8px; }
+.axis-label { color: rgba(0, 255, 102, 0.55); font-size: 8px; min-width: 55px; }
+.axis-bar  { color: rgba(0, 255, 102, 0.2); font-size: 8px; }
 
 .coord-val {
   font-family: 'VT323', 'Roboto Mono', monospace;
   font-size: 13px;
-  color: #00e5ff;
-  text-shadow: 0 0 10px rgba(0, 229, 255, 0.8);
+  color: #00ff66;
+  text-shadow: 0 0 10px rgba(0, 255, 102, 0.8);
   min-width: 70px;
   text-align: right;
 }
@@ -327,12 +327,12 @@ function resetScene() {
 .text-red    { color: #ff3333 !important; text-shadow: 0 0 8px rgba(255, 51, 51, 0.8) !important; }
 
 .unit {
-  color: rgba(0, 229, 255, 0.4);
+  color: rgba(0, 255, 102, 0.4);
   font-size: 8px;
 }
 
 .matrix-divider {
-  border-top: 1px dashed rgba(0, 229, 255, 0.1);
+  border-top: 1px dashed rgba(0, 255, 102, 0.1);
   margin: 6px 0;
 }
 
@@ -346,9 +346,9 @@ function resetScene() {
 .ctrl-btn {
   flex: 1;
   padding: 5px 0;
-  background: rgba(0, 229, 255, 0.04);
-  border: 1px solid rgba(0, 229, 255, 0.25);
-  color: #00e5ff;
+  background: rgba(0, 255, 102, 0.04);
+  border: 1px solid rgba(0, 255, 102, 0.25);
+  color: #00ff66;
   font-family: 'Roboto Mono', monospace;
   font-size: 8px;
   letter-spacing: 0.08em;
@@ -356,10 +356,10 @@ function resetScene() {
   border-radius: 2px;
   transition: all 0.15s ease;
 }
-.ctrl-btn:hover { background: rgba(0, 229, 255, 0.12); box-shadow: 0 0 6px rgba(0, 229, 255, 0.3); }
+.ctrl-btn:hover { background: rgba(0, 255, 102, 0.12); box-shadow: 0 0 6px rgba(0, 255, 102, 0.3); }
 
-.reset-btn { color: rgba(0, 229, 255, 0.5); }
-.reset-btn:hover { color: #00e5ff; }
+.reset-btn { color: rgba(0, 255, 102, 0.5); }
+.reset-btn:hover { color: #00ff66; }
 
 /* ── Crosshair ───────────────────────────────────────────────────────── */
 .hud-crosshair {
@@ -375,19 +375,19 @@ function resetScene() {
   position: absolute;
   top: 50%; left: 0; right: 0;
   height: 1px;
-  background: rgba(0, 229, 255, 0.2);
+  background: rgba(0, 255, 102, 0.2);
 }
 .ch-v {
   position: absolute;
   left: 50%; top: 0; bottom: 0;
   width: 1px;
-  background: rgba(0, 229, 255, 0.2);
+  background: rgba(0, 255, 102, 0.2);
 }
 .ch-dot {
   position: absolute;
   top: 50%; left: 50%;
   width: 3px; height: 3px;
-  background: rgba(0, 229, 255, 0.5);
+  background: rgba(0, 255, 102, 0.5);
   transform: translate(-50%, -50%);
   border-radius: 50%;
 }

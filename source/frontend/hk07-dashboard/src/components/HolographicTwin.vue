@@ -138,7 +138,7 @@ function buildScene() {
 
   // ── Grid ─────────────────────────────────────────────────────────────────
   // Electric Cyan Glowing Grid
-  const gridHelper = new THREE.GridHelper(30, 60, 0x00e5ff, 0x0a2233)
+  const gridHelper = new THREE.GridHelper(30, 60, 0x00ff66, 0x0a2233)
   gridHelper.position.y = 0
   scene.add(gridHelper)
 
@@ -146,7 +146,7 @@ function buildScene() {
   buildXYZOriginAxes()
 
   // ── Holographic Materials ───────────────────────────────────────────────
-  neonCyanMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, wireframe: true })
+  neonCyanMat = new THREE.MeshBasicMaterial({ color: 0x00ff66, wireframe: true })
   dynamicTorsoMat = new THREE.MeshBasicMaterial({ color: 0x00ff66, wireframe: true })
   dynamicLimbsMat = new THREE.MeshBasicMaterial({ color: 0x00ff66, wireframe: true })
 
@@ -235,7 +235,7 @@ function buildXYZOriginAxes() {
   }
 
   // X Axis (Cyan)
-  createLine([new THREE.Vector3(0, 0, 0), new THREE.Vector3(size, 0, 0)], 0x00e5ff)
+  createLine([new THREE.Vector3(0, 0, 0), new THREE.Vector3(size, 0, 0)], 0x00ff66)
   // Y Axis (Green)
   createLine([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, size, 0)], 0x00ff66)
   // Z Axis (Amber)
@@ -269,7 +269,7 @@ function buildHumanoidBody() {
 
   // Eye line (visor)
   const visorGeo = new THREE.BoxGeometry(0.3, 0.05, 0.04)
-  const visorMesh = new THREE.Mesh(visorGeo, new THREE.MeshBasicMaterial({ color: 0x00e5ff }))
+  const visorMesh = new THREE.Mesh(visorGeo, new THREE.MeshBasicMaterial({ color: 0x00ff66 }))
   visorMesh.position.set(0, 1.86, 0.18)
   humanoidGroup.add(visorMesh)
 
@@ -465,7 +465,7 @@ function updateCostmap() {
         ctx.strokeRect(x, y, cellSize, cellSize)
       } else {
         // Safe grid trace lines
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.05)'
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.05)'
         ctx.lineWidth = 0.5
         ctx.strokeRect(x, y, cellSize, cellSize)
       }
@@ -565,7 +565,7 @@ onUnmounted(() => {
   height: 100%;
   overflow: hidden;
   background: #000000;
-  border: 1px solid rgba(0, 229, 255, 0.15);
+  border: 1px solid rgba(0, 255, 102, 0.15);
 }
 
 .twin-canvas {
@@ -589,7 +589,7 @@ onUnmounted(() => {
 .glow-vignette {
   position: absolute;
   inset: 0;
-  box-shadow: inset 0 0 40px rgba(0, 229, 255, 0.15);
+  box-shadow: inset 0 0 40px rgba(0, 255, 102, 0.15);
   pointer-events: none;
   z-index: 6;
 }
@@ -599,10 +599,10 @@ onUnmounted(() => {
   top: 10px;
   left: 10px;
   background: rgba(0, 0, 0, 0.8);
-  border: 1px solid rgba(0, 229, 255, 0.25);
+  border: 1px solid rgba(0, 255, 102, 0.25);
   padding: 8px 12px;
   border-radius: 2px;
-  color: #00e5ff;
+  color: #00ff66;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -617,12 +617,12 @@ onUnmounted(() => {
 }
 
 .label {
-  color: rgba(0, 229, 255, 0.55);
+  color: rgba(0, 255, 102, 0.55);
 }
 
 .text-cyan {
-  color: #00e5ff;
-  text-shadow: 0 0 5px rgba(0, 229, 255, 0.8);
+  color: #00ff66;
+  text-shadow: 0 0 5px rgba(0, 255, 102, 0.8);
 }
 .text-green {
   color: #00ff66;

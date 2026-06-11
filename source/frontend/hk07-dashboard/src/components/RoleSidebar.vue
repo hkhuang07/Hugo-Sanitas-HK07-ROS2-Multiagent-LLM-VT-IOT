@@ -36,25 +36,28 @@
         <div class="terminal-card-header">[ MENU_NAVIGATION ]</div>
         <div class="nav-links">
           <router-link to="/" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[00]</span> DYNAMIC_TELEMETRY
+            <span class="index text-dim">[01]</span> DYNAMIC_TELEMETRY
           </router-link>
-          <router-link to="/companion" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[01]</span> COMPANION_UPLINK
-          </router-link>
-          <router-link to="/agents" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[02]</span> AGENT_SYSTEM_LOG
-          </router-link>
-          <router-link to="/safety" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[03]</span> SAFETY_COORDINATES
-          </router-link>
-          <router-link to="/history" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[04]</span> HISTORICAL_METRICS
-          </router-link>
-          <router-link to="/profile" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[05]</span> PROFILE_SETTINGS
+          <router-link to="/sensor-telemetry" class="sidebar-nav-item sensor-nav-item" active-class="active">
+            <span class="index text-dim">[02]</span> SENSOR_TELEMETRY
           </router-link>
           <router-link to="/digital-twin" class="sidebar-nav-item dt-nav-item" active-class="active">
-            <span class="index text-cyan">[06]</span> HOLOGRAPHIC_TWIN
+            <span class="index text-dim">[03]</span> HOLOGRAPHIC_TWIN
+          </router-link>
+          <router-link to="/companion" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[04]</span> COMPANION_UPLINK
+          </router-link>
+          <router-link to="/agents" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[05]</span> AGENT_SYSTEM_LOG
+          </router-link>
+          <router-link to="/safety" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[06]</span> SAFETY_COORDINATES
+          </router-link>
+          <router-link to="/history" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[07]</span> HISTORICAL_METRICS
+          </router-link>
+          <router-link to="/profile" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[08]</span> PROFILE_SETTINGS
           </router-link>
         </div>
       </div>
@@ -189,13 +192,13 @@ const vitalsStore = useVitalsStore()
   transition: all 0.2s ease;
 }
 .sidebar-nav-item:hover {
-  color: var(--color-accent-cyan);
-  background: rgba(0, 210, 255, 0.03);
+  color: var(--color-accent-green);
+  background: rgba(0, 255, 102, 0.03);
 }
 .sidebar-nav-item.active {
-  color: var(--color-accent-cyan) !important;
+  color: var(--color-accent-green) !important;
   border: 1px solid var(--color-border-dim) !important;
-  background: rgba(0, 210, 255, 0.05);
+  background: rgba(0, 255, 102, 0.05);
 }
 .status-grid {
   display: flex;
@@ -233,15 +236,27 @@ const vitalsStore = useVitalsStore()
   50% { opacity: 0.2; }
 }
 
-/* Digital Twin nav item — holographic glow */
+/* Digital Twin nav item — bio-emerald glow */
 .dt-nav-item {
-  border-color: rgba(0, 229, 255, 0.12) !important;
-  background: rgba(0, 229, 255, 0.02);
+  border-color: rgba(0, 255, 102, 0.12) !important;
+  background: rgba(0, 255, 102, 0.02);
 }
 .dt-nav-item:hover,
 .dt-nav-item.active {
-  background: rgba(0, 229, 255, 0.08) !important;
-  box-shadow: 0 0 8px rgba(0, 229, 255, 0.15) inset;
-  color: #00e5ff !important;
+  background: rgba(0, 255, 102, 0.08) !important;
+  box-shadow: 0 0 8px rgba(0, 255, 102, 0.15) inset;
+  color: #00FF66 !important;
+}
+
+/* Sensor Telemetry nav item — bio-emerald glow */
+.sensor-nav-item {
+  border-color: rgba(0, 255, 102, 0.12) !important;
+  background: rgba(0, 255, 102, 0.02);
+}
+.sensor-nav-item:hover,
+.sensor-nav-item.active {
+  background: rgba(0, 255, 102, 0.08) !important;
+  box-shadow: 0 0 8px rgba(0, 255, 102, 0.15) inset;
+  color: #00FF66 !important;
 }
 </style>

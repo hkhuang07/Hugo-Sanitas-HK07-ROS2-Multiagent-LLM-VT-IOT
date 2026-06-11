@@ -57,6 +57,13 @@ export const router = createRouter({
       component: () => import('../views/DigitalTwinView.vue'),
       meta: { requiresAuth: true }
     },
+
+    {
+      path: '/sensor-telemetry',
+      name: 'SensorTelemetry',
+      component: () => import('../views/SensorTelemetryView.vue'),
+      meta: { requiresAuth: true }
+    },
     {
       path: '/:pathMatch(.*)*',
       redirect: '/'
@@ -65,11 +72,23 @@ export const router = createRouter({
 })
 
 import { useAuthStore } from '../stores/auth'
+import { authReadyPromise } from '../main'
 
 // Navigation guard
-router.beforeEach((to) => {
+// NOTE: We await authReadyPromise on the first navigation so that the guard
+// never reads isAuthenticated before tryAutoLogin() has settled.
+// On subsequent navigations authReadyPromise is already resolved (no-op await).
+let _authResolved = false
+
+router.beforeEach(async (to) => {
+  // Block ONLY on first navigation — wait for refresh-token auto-login to finish
+  if (!_authResolved) {
+    await authReadyPromise
+    _authResolved = true
+  }
+
   const authStore = useAuthStore()
-  
+
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'Login' }
   }
@@ -77,3 +96,4 @@ router.beforeEach((to) => {
     return { name: 'Dashboard' }
   }
 })
+

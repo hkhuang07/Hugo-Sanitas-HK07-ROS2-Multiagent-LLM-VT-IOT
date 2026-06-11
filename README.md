@@ -6,13 +6,13 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  IDENTIFIER: HK.Huang07                │  VERSION: 1.0.0-ALPHA          │
+│  IDENTIFIER: HK.Huang07                │  VERSION: 1.0.0-BETA           │
 │  INITIATED:  2026-05-31                │  STATUS:  OPERATIONAL          │
 │  PLATFORM:   Linux / WSL2 / ROS2       │  THEME:   CYBER-CINEMATIC      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **HK-07 // HUGO SANITAS** is a next-generation healthcare robot companion designed to assist elderly patients and individuals with cardiovascular conditions. The system combines multi-agent artificial intelligence, real-time vital signs telemetry, computer vision fall-detection, and a <5ms emergency safety reflex system, operating efficiently under strict hardware constraints (<615MB RAM total).
+> **HK-07 // HUGO SANITAS** is a next-generation healthcare companion robot designed to assist elderly patients and individuals with cardiovascular conditions. The system integrates a high-performance **ROS 2 Humble** robotics core, multi-agent AI cognitive loops, real-time vital signs telemetry, computer vision fall-detection, and a <5ms emergency safety reflex system, operating efficiently under strict hardware constraints (<615MB RAM total).
 
 ---
 
@@ -24,23 +24,35 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ### 1. AI Cognitive & Agent Systems
 
-#### A. Empathetic AI Companion Dialogue (Uplink)
+#### A. Empathetic AI Companion Dialogue & Voice UI
 ![Companion Uplink](./asset/companion-uplink.jpg)
-* **Description:** Empathetic dialogue interface powered by a Groq/Gemini Multi-Agent loop. Provides psychological comfort, primary diagnostics feedback, and sentiment classification.
+* **Description:** Empathetic dialogue interface powered by a Groq/Gemini/Local-SLM Multi-Agent loop. Includes a Push-to-Talk Vietnamese speech recognition (STT) input and synthetic voice output (TTS) with an interactive **AGENT_COGNITIVE_SCOPE** status display.
 
-#### B. Multi-Agent System Logs Event Stream
+#### B. Multi-Agent System Logs Event Stream & Blackboard
 ![Agent System Log](./asset/agent_system_log.jpg)
-* **Description:** Terminal log telemetry showing real-time thought loops, decision-making, and diagnostic logs from the `Vitals Monitor Agent`, `Emergency Agent`, and `Empathetic Agent`.
+* **Description:** Real-time thought loops, decision-making logs, and shared Blackboard parameters from the `Vitals Monitor Agent`, `Emergency Agent`, `Empathetic Agent`, `Perception Agent`, and `Action Agent`.
 
 ---
 
----
-### 2. Robotics & Spatial Safety Systems
+### 2. HK-07 Simulated Sensor HUD & Telemetry Gateway
 
-#### A. Holographic Twin & Subsumption Radar
+#### A. Simulated Sensor HUD Dashboard (13 Channels)
+![Sensor Telemetry Dashboard](./asset/sensor-telemetry-dashboard.jpg)
+* **Description:** A dedicated sensor operations HUD. Displays real-time 9-DOF IMU data (3D cube rotation, compass dial, accelerometer/gyroscope/magnetometer line charts), environmental variables (light lux, barometric pressure), and user activity metrics (pedometer step count, movement states, wrist magnitude).
+
+#### B. Live Sensor Channels & CSV Exporting
+![Sensor Telemetry Sensor List](./asset/sensor-telemetry-sensor-list.jpg)
+* **Description:** Real-time 13-channel system telemetry monitor. Displays current sensor states, dynamic session min/max tracking, status indicators (OK / WARNING / DANGER), and a high-performance CSV exporter for medical data audit.
+
+---
+
+### 3. Robotics & Spatial Safety Systems
+
+#### A. Three.js Holographic Twin & Occupancy Costmap
 ![Holographic Twin](./asset/holographic_twin.jpg)
 ![Holographic Twin](./asset/holographic_twin_01.jpg)
-* **Description:** A virtual 3D wireframe radar showing the physical status, sensor fields, and orientation of the robot chassis in real-time.
+![Holographic Twin](./asset/holographic_twin_02.jpg)
+* **Description:** A virtual 3D wireframe radar showing the physical joint orientations, real-time kinematics, 3D LiDAR point cloud mapping, and custom APF-based collision avoidance vector arrows. Projecting LiDAR data onto a dynamic 2D costmap at floor level. Integrates synchronized fall state warnings.
 
 #### B. Safety Coordinates & Motion Inhibition Control
 ![Safety Coordinates](./asset/safety_cooroinates.jpg)
@@ -48,7 +60,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 3. Clinical Telemetry & Patient Monitoring
+### 4. Clinical Telemetry & Patient Monitoring
 
 #### A. Dynamic Vitals Telemetry Monitor (60FPS)
 ![Dynamic Telemetry](./asset/dynamic-telemetry.jpg)
@@ -60,7 +72,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 4. Security & Authentication Access
+### 5. Security & Authentication Access
 
 #### A. Cinematic Terminal Login
 ![Terminal Login](./asset/auth_login.jpg)
@@ -72,23 +84,23 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 5. Edge Vision & Environment Simulation
+### 6. Edge Vision & Environment Simulation
 
 #### A. Robot Camera Vision (Online)
 ![Robot Camera Online](./asset/robot-cam-simulate.jpg)
 * **Description:** Live feed simulator from the robot's onboard camera tracking its environment and path inside the Webots simulator workspace.
 
-#### B. Robot Camera Vision (Offline / Stream Lost)
-![Robot Camera Lost](./asset/robot-cam-simulate-vision-lost.jpg)
-* **Description:** Safety visual state triggered when visual feed telemetry is disconnected, alerting remote operators of sensor failure.
+#### B. Robot Camera Vision (Offline / Connection Lost)
+![Robot Camera Offline](./asset/robot-cam-simulate-vision-lost.jpg)
+* **Description:** Simulated vision fallback screen displaying static scanlines and warning telemetry when the robot camera stream is disconnected or lost.
 
-#### C. OpenCV & MediaPipe Computer Vision Processing
+#### C. OpenCV rPPG & Forehead Thermal Tracking
 ![Computer Vision Processing](./asset/robot-computer-visualize.jpg)
-* **Description:** Edge vision telemetry showing real-time facial feature tracking, posture coordinates, and skeletal keypoints processing for automated fall detection.
+* **Description:** Edge vision telemetry capturing real-time facial features. Cuts forehead/cheek ROIs to compute Blood Volume Pulse (rPPG Heart Rate) and forehead temperature with active fever warnings.
 
 ---
 
-### 6. User Profile & Security Settings
+### 7. User Profile & Security Settings
 
 #### A. Profile Configuration & MFA Controls
 ![Profile Settings](./asset/profile-settings.jpg)
@@ -96,29 +108,37 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
+
+
 ## ⚙️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│          HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE           │
-├─────────────────┬───────────────────┬───────────────────────┤
-│  [FRONTEND]     │   [BACKEND CORE]  │   [AGENT ENGINE]      │
-│  Vue 3 + Vite   │  Spring Boot 3.2  │   Python FastAPI      │
-│  Port: 5173     │   Java 21 VT      │   Port: 8889          │
-│  Cyber-Dark UI  │   Port: 8888      │   3 Agent Loops       │
-│                 │   JWT + RBAC      │   Groq/Gemini API     │
-└────────┬────────┴────────┬──────────┴──────────┬────────────┘
-         │  WebSocket/REST │   MQTT/WebSocket     │ MQTT
-         ▼                 ▼                      ▼
-┌────────────────┐  ┌─────────────┐  ┌───────────────────────┐
-│    MySQL       │  │    Redis    │  │  Eclipse Mosquitto    │
-│   (Persist)    │  │  (Buffer)   │  │  MQTT Broker :1883    │
-└────────────────┘  └─────────────┘  └───────────────────────┘
-                                              ▲
-                              ┌───────────────┴───────────────┐
-                              │     SENSOR LAYER (Simulated)  │
-                              │            ROS 2 Nodes        │
-                              └───────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE                        │
+├───────────────────────┬─────────────────────────┬──────────────────────────────────────┤
+│    [FRONTEND]         │     [BACKEND CORE]      │            [AGENT ENGINE]            │
+│    Vue 3 + Vite       │    Spring Boot 3.2      │            Python FastAPI            │
+│    Port: 5173         │     Java 21 VT          │            Port: 8889                │
+│    Three.js 3D Twin   │     Port: 8888          │            Multi-Agent Loops         │
+│    Voice UI (TTS/STT) │     JWT Auth & RBAC     │            Redis Blackboard          │
+└──────────┬────────────┴──────────┬──────────────┴──────────────────┬───────────────────┘
+           │ WebSocket/REST        │ MQTT/WebSocket                  │ MQTT/REST
+           ▼                       ▼                                 ▼
+┌───────────────────────┐  ┌─────────────┐  ┌────────────────────────────────────────────┐
+│      MariaDB          │  │    Redis    │  │             Eclipse Mosquitto              │
+│    (Persist :3307)    │  │  (Buffer)   │  │             MQTT Broker :1883              │
+└───────────────────────┘  └─────────────┘  └─────────────────────┬──────────────────────┘
+                                                                  ▲
+                                                  MQTT Bridge     │ (ros2_mqtt_bridge_node)
+                                                                  ▼
+                                            ┌────────────────────────────────────────────┐
+                                            │         ROS 2 HUMBLE ROBOTICS CORE         │
+                                            │  - balance_controller (Stance PID)         │
+                                            │  - navigation_agent (APF Path Planner)      │
+                                            │  - physics_node (APF & IK Solver)          │
+                                            │  - rppg_thermal_node (MediaPipe ROI Vision)│
+                                            │  - rtos_watchdog_simulator (Fail-Safe)     │
+                                            └────────────────────────────────────────────┘
 ```
 
 ---
@@ -127,8 +147,14 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 1. **Emergency Reflex Latency (<5ms):** Bypasses standard database persistence blocks to execute critical safety scripts (e.g. stopping motors upon collision threat or triggering medical alarms) utilizing optimized MQTT pipelines.
 2. **Resource Constraints Optimization:** Runs a full suite of services (Spring Boot, Python Agents, databases, and message brokers) comfortably on host systems with limited resources, budgeting total memory usage to **<615MB RAM**.
-3. **Hybrid Diagnostic System:** Implements a two-layer control system. A *Hard Reflex Layer* executes static medical threshold rules to trigger immediate alerts, while a *Soft Cognitive Layer* leverages AI Agents and LLMs for contextual medical evaluation and comforting communication.
+3. **Hybrid Diagnostic System (Blackboard):** Implements a two-layer control system. A *Hard Reflex Layer* executes static medical threshold rules to trigger immediate alerts, while a *Soft Cognitive Layer* leverages AI Agents, LLMs, and a shared Redis Blackboard for contextual medical evaluation and comforting communication.
 4. **Secured Real-Time Telemetry:** Secures live health streams over WebSockets via a JWT Inbound Channel Interceptor on STOMP, ensuring that only authenticated users can access real-time medical data.
+5. **DDS to MQTT Bridging:** Standardizes robotics messages to ROS 2 types (`sensor_msgs/Imu`, `sensor_msgs/PointCloud2`, `sensor_msgs/JointState`, `geometry_msgs/Twist`) and seamlessly bridges them to the lightweight MQTT broker for lightweight streaming to NUI dashboard components.
+6. **Local Edge Fallback Autonomy:** Features a Vietnamese-optimized rule-based backup and local GGUF SLM execution (`llama-cpp-python` supporting Phi-3/Llama-3 templates) to maintain agent capabilities and query routing without an internet connection.
+7. **Clinical EHR Standardization:** Implements a FHIR Gateway translating Blackboard clinical diagnoses and vital signals into HL7 FHIR Observation and Condition bundles.
+8. **Watchdog Heartbeat Fail-Safe:** An ESP32 watchdog simulator monitors system heartbeats and triggers safety motor-inhibition and suit deflation if communication is lost for more than 3 seconds.
+9. **Dual-Factor Fall Detection:** Fuses physical accelerometer impact/weightlessness thresholds with barometric altimeter pressure drops to significantly reduce false positive fall alerts from standard wrist movement.
+10. **Dynamic Mobile Sensor Integration:** Translates raw mobile device telemetry (GPS, IMU, Pedometer, Light, Air Pressure) through an auto-configuring hotspot gateway bridge, routing high-frequency packets to the dashboard via a non-blocking virtual thread processor.
 
 ---
 
@@ -138,30 +164,24 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 hk-07/
 ├── asset/                  ← System screenshots and UI graphics
 ├── docs/                   ← Document specifications and walkthroughs
-│   ├── 00-project-init/    ← Project scope, requirements, techstack setup
-│   ├── 01-system-design/   ← Architecture, database design, API specs
-│   ├── 02-backend/         ← Core backend manuals & changelogs
-│   ├── 03-frontend/        ← UI/UX manuals & frontend specifications
-│   ├── 04-testing/         ← QA check-lists & testing guides
-│   ├── 05-deployment/      ← Docker configuration and production guides
-│   ├── 06-evolution/       ← System upgrade specs, post-mortems, and specs
-│   └── MASTER_CHANGELOG.md ← Entire project version history changelog
+│   ├── 00_init/            ← Project scope, requirements, techstack setup
+│   ├── 01_system_design/   ← Architecture, database design, API specs
+│   ├── 02_subsystems/      ← Backend, deployment, frontend, and testing docs
+│   ├── 03_evolution_specs/ ← System upgrade specs and post-mortems (Phases 1-22)
+│   ├── 04_walkthroughs/    ← Walkthrough guides of key implemented phases
+│   └── MASTER_CHANGELOG.md ← Entire project version history audit report
 └── source/                 ← Target codebases
     ├── backend/
-    │   ├── hk07-core/      ← Java Spring Boot core service
-    │   ├── hk07-agent/     ← Python AI Multi-Agent service
+    │   ├── hk07-core/      ← Java Spring Boot core service (MariaDB 3307 support)
+    │   ├── hk07-agent/     ← Python AI Multi-Agent service (Tiers 0-2, Router V2, Blackboard)
     │   └── docker/         ← Infrastructure config files
     ├── frontend/
-    │   └── hk07-dashboard/ ← Vue 3 Single Page Application
-    ├── robotics/
-    |   ├─── build/  
-    |   ├─── install/  
-    |   ├─── logs/  
-    │   └── sensor/             ← Sensor Node run in ROS2 
-    │       ├───mobile_gateway  ← Gravity sensor
-    │       ├───simulation      ← Nodes in ROS2 + Bridge
-    │       └───vision_sensor   ← IP WebCam  
-    └── docker-compose.yml  ← Integration orchestrator
+    │   └── hk07-dashboard/ ← Vue 3 Single Page Application (Three.js 3D Holographic Twin, Voice UI)
+    └── robotics/           ← ROS 2 Workspace
+        ├── build/          ← ROS 2 build files
+        ├── install/        ← ROS 2 installation scripts
+        ├── log/            ← ROS 2 running logs
+        └── sensors/        ← ROS 2 Sensors Package (rclpy Nodes: physics, telemetry, lidar, bridge, watchdog)
 ```
 
 ---
@@ -176,7 +196,7 @@ The system supports two operating modes: **Docker Orchestration** (fully integra
 # 1. Enter target backend configuration folder
 cd source/backend
 cp .env.example .env
-# Fill in either your GROQ_API_KEY or GEMINI_API_KEY inside the .env file
+# Fill in your GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY inside the .env file
 
 # 2. Spin up the integrated container stack
 docker compose up -d --build
@@ -194,11 +214,8 @@ export MQTT_BROKER_PORT=1883
 export MQTT_USERNAME=hk07sim
 export MQTT_PASSWORD=your_configured_mqtt_password
 
-# Launch OpenCV & MediaPipe webcam capture
-python source/sensors/vision_sensor/hk07_sensor_fusion.py
-
-# Launch Webots robotics edge driver
-python source/robotics/controllers/hk07_edge_controller.py
+# Launch OpenCV & MediaPipe facial capture node
+python source/robotics/sensors/vision_sensor/hk07_sensor_fusion.py
 ```
 
 ---
@@ -206,11 +223,11 @@ python source/robotics/controllers/hk07_edge_controller.py
 ### 2. Local Developer Mode
 
 #### Step 0: Boot Infrastructure Databases & Broker
-```bash
-cd source/backend
-docker compose up -d redis hk07-mysql mosquitto
+Before running services locally, start the local databases (MariaDB 3307, Redis 6379, Mosquitto 1883):
+```powershell
+# Using the preconfigured Powershell runner (starts services and configures DB credentials)
+./source/backend/run_backend.ps1
 ```
-*(Alternatively, you can run native local instances of Mosquitto broker (1883), Redis (6379), and MySQL (3306) on your machine).*
 
 #### Step 1: Run Spring Boot Backend
 ```bash
@@ -236,8 +253,8 @@ npm run dev
 # Vite server active on: http://localhost:5173
 ```
 
-#### Step 4: Deploying the Unified ROS 2 Robotics Core
-To run the high-performance unified robotics node execution loop without memory leaks, open a dedicated **WSL2 Ubuntu Terminal**:
+#### Step 4: Run ROS 2 Robotics Core
+To run the high-performance robotics node execution loop, open a dedicated **WSL2 Ubuntu Terminal**:
 
 ```bash
 # 1. Enter the target robotics workspace
@@ -247,7 +264,7 @@ cd source/robotics
 source /opt/ros/humble/setup.bash
 
 # 3. Compile the sensors package using a clean build configuration
-rm -rf build log
+rm -rf build log install
 colcon build --packages-select sensors
 
 # 4. Source the localized workspace installation variables
@@ -256,7 +273,25 @@ source install/setup.bash
 # 5. Launch all 8 robotics nodes consolidated under a single OS thread process
 ros2 run sensors hk07_runtime_orchestrator
 
+
+# Or Launch consolidated ROS 2 nodes & the MQTT Dual Bridge
+ros2 run sensors ros2_mqtt_bridge_node
+ros2 run sensors hk07_physics_node
+ros2 run sensors balance_controller
+ros2 run sensors navigation_agent
+ros2 run sensors rtos_watchdog_simulator
+
+
 ```
+
+#### Step 5: Run Mobile Phone HTTP-to-MQTT Bridge
+Point your phone's logging application to publish data directly into this host adapter bridge:
+```bash
+cd source/robotics/sensors/mobile_gateway
+pip install Flask paho-mqtt
+python vivo_http_mqtt_bridge.py --port 5005
+```
+*(The bridge will automatically resolve your Wi-Fi interface IP and output the hot spot configuration URL, e.g. `http://<WIFI_IP>:<PORT>/data`).*
 
 ---
 
@@ -265,10 +300,10 @@ ros2 run sensors hk07_runtime_orchestrator
 | Service Name | Limit (RAM) | Sub-System Responsibilities |
 | :--- | :--- | :--- |
 | **Mosquitto** | 32 MB | Real-time broker for sensor telemetry |
-| **Redis** | 64 MB | In-memory token cache & rate limiter |
-| **MySQL** | 256 MB | Relational medical logs & user info |
+| **Redis** | 64 MB | Blackboard shared memory, token cache & rate limiter |
+| **MariaDB** | 256 MB | Relational medical logs & user info |
 | **hk07-core** | 512 MB | Spring Boot core backend JVM |
-| **hk07-agent** | 256 MB | Python multi-agent event loop |
+| **hk07-agent** | 256 MB | Python multi-agent event loop & GGUF Local SLM |
 | **TOTAL** | **~615 MB** | **Highly optimized for low-spec WSL2/Docker** |
 
 ---

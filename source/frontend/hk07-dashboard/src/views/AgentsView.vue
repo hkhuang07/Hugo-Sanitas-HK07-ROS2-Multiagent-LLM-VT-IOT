@@ -26,6 +26,10 @@
                 {{ agentsStore.agentStatus[agent.type] }}
               </span>
             </div>
+            <div class="metric">
+              <span class="metric-label">TOTAL DECISIONS</span>
+              <span class="metric-val text-green mono">{{ agentsStore.stats[agent.type] || 0 }}</span>
+            </div>
             <div class="metric" v-if="latestEvent(agent.type)">
               <span class="metric-label">LATENCY</span>
               <span class="metric-val text-green">{{ latestEvent(agent.type)?.latencyMs }}ms</span>
@@ -88,11 +92,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useAgentsStore, type AgentType } from '../stores/agents'
 
 const agentsStore = useAgentsStore()
 const eventListRef = ref<HTMLElement | null>(null)
+
+onMounted(() => {
+  agentsStore.fetchLogs()
+  agentsStore.fetchStats()
+})
 
 const agentPanels = [
   {
