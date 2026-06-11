@@ -105,10 +105,10 @@ class LanceMemory:
         except Exception as e:
             log.error("[LANCE_MEMORY_ERROR] %s", e)
 
-    async def store_emotional_event(self, user_message: str, response: str):
+    async def store_emotional_event(self, user_message: str, response: str, user_id: str = "default_user"):
         """Batch write emotional events — avoids continuous disk I/O"""
         self._write_buffer.append({
-            "id": f"em_{int(time.time()*1000)}",
+            "id": f"em_{user_id}_{int(time.time()*1000)}",
             "type": "emotional_event",
             "content": f"User: {user_message[:200]} | Hugo: {response[:200]}",
             "timestamp_ms": int(time.time() * 1000),
@@ -192,12 +192,13 @@ class LanceMemory:
         except Exception as e:
             log.error("[LANCE_COMPACT_DELETE_ERROR] %s", e)
 
-    async def recall_owner_preferences(self) -> str:
+    async def recall_owner_preferences(self, user_id: str = "default_user") -> str:
         """Retrieve a text summary of owner preferences for agent context injection"""
         if not self._initialized or not self._table:
             return ""
         try:
-            count = await asyncio.to_thread(self._table.count_rows)
+            records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+            count = sum(1 for r in records if r.get("id", "").startswith(f"em_{user_id}_"))
             if count == 0:
                 return ""
             return f"Đã có {count} sự kiện được ghi nhớ về chủ nhân."
@@ -247,7 +248,7 @@ class LanceMemory:
         except Exception as e:
             log.error("[LANCE_MEMORY_SYNC_ERROR] Failed to sync medical baseline: %s", e)
 
-    async def recall_medical_baseline(self) -> str:
+    async def recall_medical_baseline(self, user_id: str = "default_user") -> str:
         """Retrieve the medical baseline string from LanceDB memory"""
         if not self._initialized or not self._table:
             return "Hồ sơ y tế: Chưa được thiết lập."
@@ -257,8 +258,8 @@ class LanceMemory:
             if not records:
                 return "Hồ sơ y tế: Chưa có thông tin cấu hình."
             
-            # Filter rows with type = 'medical_baseline'
-            baselines = [r for r in records if r.get("type") == "medical_baseline"]
+            # Filter rows with type = 'medical_baseline' and matches the user_id's id 'mb_{user_id}'
+            baselines = [r for r in records if r.get("type") == "medical_baseline" and r.get("id") == f"mb_{user_id}"]
             if not baselines:
                 return "Hồ sơ y tế: Chưa có thông tin cấu hình."
             
@@ -270,7 +271,7 @@ class LanceMemory:
             log.error("[LANCE_MEMORY_RECALL_ERROR] %s", e)
             return "Hồ sơ y tế: Lỗi truy xuất cơ sở dữ liệu."
 
-    async def retrieve_recent_events(self, limit: int = 5) -> list:
+    async def retrieve_recent_events(self, limit: int = 5, user_id: str = "default_user") -> list:
         """Retrieve the most recent emotional events or preferences for RAG context"""
         if not self._initialized or not self._table:
             return []
@@ -278,14 +279,16 @@ class LanceMemory:
             records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
             if not records:
                 return []
+            # Filter by prefix of ID matching the user_id
+            user_records = [r for r in records if r.get("id", "").startswith(f"em_{user_id}_")]
             # Sort by timestamp_ms descending
-            records.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
-            return records[:limit]
+            user_records.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
+            return user_records[:limit]
         except Exception as e:
             log.error("[LANCE_MEMORY_RETRIEVE_ERROR] %s", e)
             return []
 
-    async def search_similar_patterns(self, query: str, limit: int = 3) -> list[dict]:
+    async def search_similar_patterns(self, query: str, limit: int = 3, user_id: str = "default_user") -> list[dict]:
         """
         Search for similar patterns in owner memory using text-based matching.
         Avoids heavy embedding models to preserve memory and CPU resource limits.
@@ -305,6 +308,8 @@ class LanceMemory:
             # Score each row based on keyword frequency
             scored_records = []
             for r in records:
+                if not r.get("id", "").startswith(f"em_{user_id}_"):
+                    continue
                 content = r.get("content") or ""
                 content_lower = content.lower()
                 score = sum(1 for kw in keywords if kw in content_lower)
@@ -366,14 +371,14 @@ class LanceMemory:
             log.error("[LANCE_MEMORY_GUIDELINE_SEARCH_ERROR] %s", e)
             return []
 
-    async def ingest_chat_cycle(self, user_prompt: str, agent_response: str):
+    async def ingest_chat_cycle(self, user_prompt: str, agent_response: str, user_id: str = "default_user"):
         """Ingest a single user prompt & agent response into agent_chat_memory table"""
         if not self._initialized or not hasattr(self, "_chat_table") or self._chat_table is None:
             log.warning("[LANCE_MEMORY] Skipped ingest_chat_cycle — table not initialized")
             return
         try:
             record = {
-                "id": f"chat_{int(time.time()*1000)}",
+                "id": f"chat_{user_id}_{int(time.time()*1000)}",
                 "user_prompt": user_prompt,
                 "agent_response": agent_response,
                 "timestamp_ms": int(time.time() * 1000),

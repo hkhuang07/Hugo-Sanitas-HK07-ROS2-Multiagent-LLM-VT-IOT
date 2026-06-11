@@ -114,6 +114,9 @@ function draw() {
   if (isUnmounted) return
   const canvas = canvasRef.value
   if (!canvas) return
+  if (canvas.width !== canvas.offsetWidth && canvas.offsetWidth > 0) {
+    canvas.width = canvas.offsetWidth
+  }
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 

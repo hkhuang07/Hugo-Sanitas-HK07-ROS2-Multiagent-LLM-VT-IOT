@@ -127,9 +127,9 @@ EMPATHY_TIERS: List[Dict[str, Any]] = [
 # Centralized Vision & Multimodal Tiers (Groq is primary, Gemini/OpenAI are fallbacks)
 VISION_TIERS: List[Dict[str, Any]] = [
     {
-        "model": "groq/llama-3.2-90b-vision-preview",
+        "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
         "api_key": _GROQ_KEY,
-        "label": "GROQ_LLAMA_90B_VISION",
+        "label": "GROQ_LLAMA_4_SCOUT",
         "enabled": bool(_GROQ_KEY),
     },
     {
@@ -149,6 +149,12 @@ VISION_TIERS: List[Dict[str, Any]] = [
         "model": "gemini/gemini-1.5-flash",
         "api_key": _GEMINI_KEY,
         "label": "GEMINI_FLASH_VISION",
+        "enabled": bool(_GEMINI_KEY),
+    },
+    {
+        "model": "gemini/gemini-2.0-flash",
+        "api_key": _GEMINI_KEY,
+        "label": "GEMINI_2_0_FLASH_VISION",
         "enabled": bool(_GEMINI_KEY),
     },
 ]
@@ -506,8 +512,28 @@ class LLMClient:
 
     @staticmethod
     def _is_rate_limit(exc: Exception) -> bool:
-        err_str = str(exc)
-        return any(kw in err_str for kw in ("ResourceExhausted", "429", "quota", "RateLimitError", "rate_limit"))
+        err_str = str(exc).lower()
+        # Gemini free tier rate limits often mention "quota" and return 429, but are transient
+        if "gemini" in err_str and ("429" in err_str or "quota" in err_str or "limit" in err_str):
+            return True
+        # OpenAI permanent billing quota error
+        if "exceeded your current quota" in err_str or "insufficient_quota" in err_str:
+            return False
+        return any(kw in err_str for kw in ("resourceexhausted", "429", "ratelimiterror", "rate_limit", "rate limit"))
+
+    @staticmethod
+    def _is_permanent_error(exc: Exception) -> bool:
+        err_msg = str(exc).lower()
+        # Treat Gemini 429 / quota as rate limits (transient), not permanent errors
+        if "gemini" in err_msg and ("429" in err_msg or "quota" in err_msg or "limit" in err_msg):
+            return False
+        perm_keywords = (
+            "invalid_api_key", "authentication", "unauthorized", "not found", "401", "403", 
+            "forbidden", "not_found", "model_not_found", "decommissioned", "deprecated",
+            "insufficient credits", "insufficient_quota", "out of credits", "no credits",
+            "credit balance", "billing", "exceeded your current quota", "account has been suspended"
+        )
+        return any(kw in err_msg for kw in perm_keywords)
 
     @classmethod
     async def generate_completion(
@@ -568,18 +594,10 @@ class LLMClient:
                         cls._set_cached_value(cache_key, result, ttl=5.0)
                         return result
 
-            except LiteLLMRateLimitError:
-                log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating tier", tier["label"])
-                continue
             except Exception as e:
-                if cls._is_rate_limit(e):
-                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit (detected via string) on %s — rotating tier", tier["label"])
-                    continue
-                
-                # Check for permanent errors (Auth / Model Not Found / Invalid Key)
-                err_msg = str(e).lower()
-                is_perm_err = any(kw in err_msg for kw in ("invalid_api_key", "authentication", "unauthorized", "not found", "401", "403", "forbidden", "not_found", "model_not_found"))
-                if is_perm_err:
+                if isinstance(e, LiteLLMRateLimitError) or cls._is_rate_limit(e):
+                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating tier", tier["label"])
+                elif cls._is_permanent_error(e):
                     log.error("[LLM_CLIENT] ❌ Permanent error on %s: %s. Disabling tier.", tier["label"], str(e)[:120])
                     tier["enabled"] = False
                 else:
@@ -686,18 +704,10 @@ class LLMClient:
                     cls._set_cached_value(cache_key, result, ttl=5.0)
                     return result
 
-            except LiteLLMRateLimitError:
-                log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating tier", tier["label"])
-                continue
             except Exception as e:
-                if cls._is_rate_limit(e):
-                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit (detected via string) on %s — rotating tier", tier["label"])
-                    continue
-                
-                # Check for permanent errors (Auth / Model Not Found / Invalid Key)
-                err_msg = str(e).lower()
-                is_perm_err = any(kw in err_msg for kw in ("invalid_api_key", "authentication", "unauthorized", "not found", "401", "403", "forbidden", "not_found", "model_not_found"))
-                if is_perm_err:
+                if isinstance(e, LiteLLMRateLimitError) or cls._is_rate_limit(e):
+                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating tier", tier["label"])
+                elif cls._is_permanent_error(e):
                     log.error("[LLM_CLIENT] ❌ Permanent error on %s: %s. Disabling tier.", tier["label"], str(e)[:120])
                     tier["enabled"] = False
                 else:
@@ -766,18 +776,10 @@ class LLMClient:
                         log.info("[LLM_CLIENT] ✅ Vision completion succeeded via %s", tier["label"])
                         return content.strip(), tier["label"]
 
-            except LiteLLMRateLimitError:
-                log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating vision tier", tier["label"])
-                continue
             except Exception as e:
-                if cls._is_rate_limit(e):
-                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit (detected via string) on %s — rotating vision tier", tier["label"])
-                    continue
-                
-                # Check for permanent errors (Auth / Model Not Found / Invalid Key)
-                err_msg = str(e).lower()
-                is_perm_err = any(kw in err_msg for kw in ("invalid_api_key", "authentication", "unauthorized", "not found", "401", "403", "forbidden", "not_found", "model_not_found"))
-                if is_perm_err:
+                if isinstance(e, LiteLLMRateLimitError) or cls._is_rate_limit(e):
+                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating vision tier", tier["label"])
+                elif cls._is_permanent_error(e):
                     log.error("[LLM_CLIENT] ❌ Permanent error on %s: %s. Disabling tier.", tier["label"], str(e)[:120])
                     tier["enabled"] = False
                 else:

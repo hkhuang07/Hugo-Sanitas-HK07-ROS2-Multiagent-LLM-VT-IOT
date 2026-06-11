@@ -38,4 +38,7 @@ public class VitalSignDto {
 
     /** Unix epoch timestamp in milliseconds when wristband recorded this reading */
     private long epochTimestampMs;
+
+    /** Hormone concentrations calculated by sensor fusion */
+    private java.util.Map<String, Object> hormones;
 }

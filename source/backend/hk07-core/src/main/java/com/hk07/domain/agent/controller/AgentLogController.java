@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
@@ -68,57 +69,108 @@ public class AgentLogController {
     /** Forward empathetic text interaction to Python agent engine */
     @PostMapping("/empathetic/interact")
     @SuppressWarnings("unchecked")
-    public ResponseEntity<ApiResponse<Map<String, String>>> interact(@RequestBody Map<String, String> body) {
-        try {
-            Map<String, String> response = pythonAgentClient.post()
-                    .uri("/agents/empathetic/interact")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .map(map -> Map.of("response", (String) map.get("response")))
-                    .block(java.time.Duration.ofSeconds(30));
-            return ResponseEntity.ok(ApiResponse.ok(response));
-        } catch (Exception e) {
-            log.error("[AGENT_CONTROLLER] Empathetic interaction failed: ", e);
-            String message = body.getOrDefault("message", "");
-            String fallbackResponse = "[FALLBACK_BRIDGE] Empathetic Agent offline. Echo: '" +
-                    (message.length() > 30 ? message.substring(0, 30) + "..." : message) + "'";
-            return ResponseEntity.ok(ApiResponse.ok(Map.of("response", fallbackResponse)));
-        }
+    public Mono<ResponseEntity<ApiResponse<Map<String, String>>>> interact(@RequestBody Map<String, String> body) {
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String userId = (auth != null) ? auth.getName() : "owner@hk07.local";
+
+        java.util.Map<String, Object> mutableBody = new java.util.HashMap<>(body);
+        mutableBody.put("userId", userId);
+
+        return pythonAgentClient.post()
+                .uri("/agents/empathetic/interact")
+                .bodyValue(mutableBody)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(map -> {
+                    Map<String, String> response = Map.of("response", (String) map.get("response"));
+                    return ResponseEntity.ok(ApiResponse.ok(response));
+                })
+                .timeout(java.time.Duration.ofSeconds(30))
+                .onErrorResume(e -> {
+                    log.warn("[AGENT_CONTROLLER] Empathetic interaction failed or timed out: {}", e.getMessage());
+                    String message = body.getOrDefault("message", "");
+                    String fallbackResponse = "[FALLBACK_BRIDGE] Empathetic Agent offline. Echo: '" +
+                            (message.length() > 30 ? message.substring(0, 30) + "..." : message) + "'";
+                    return Mono.just(ResponseEntity.ok(ApiResponse.ok(Map.of("response", fallbackResponse))));
+                });
     }
 
     /** Proxy latest action plan retrieval to Python agent engine */
     @GetMapping("/action/plan/latest")
     @SuppressWarnings("unchecked")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getLatestActionPlan() {
-        try {
-            Map<String, Object> response = pythonAgentClient.get()
-                    .uri("/api/v1/agents/action/plan/latest")
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .block(java.time.Duration.ofSeconds(5));
-            return ResponseEntity.ok(ApiResponse.ok(response));
-        } catch (Exception e) {
-            log.error("[AGENT_CONTROLLER] Failed to retrieve latest action plan from Python agent: ", e);
-            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline")));
-        }
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> getLatestActionPlan() {
+        return pythonAgentClient.get()
+                .uri("/api/v1/agents/action/plan/latest")
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(map -> (Map<String, Object>) map)
+                .map(response -> ResponseEntity.ok(ApiResponse.ok(response)))
+                .timeout(java.time.Duration.ofSeconds(5))
+                .onErrorResume(e -> {
+                    log.warn("[AGENT_CONTROLLER] Failed to retrieve latest action plan from Python agent: {}", e.getMessage());
+                    return Mono.just(ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline"))));
+                });
     }
 
     /** Proxy action plan confirmation to Python agent engine */
     @PostMapping("/action/confirm")
     @SuppressWarnings("unchecked")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> confirmActionPlan(@RequestBody Map<String, Object> body) {
-        try {
-            Map<String, Object> response = pythonAgentClient.post()
-                    .uri("/api/v1/agents/action/confirm")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .block(java.time.Duration.ofSeconds(10));
-            return ResponseEntity.ok(ApiResponse.ok(response));
-        } catch (Exception e) {
-            log.error("[AGENT_CONTROLLER] Action plan confirmation failed: ", e);
-            return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline")));
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> confirmActionPlan(@RequestBody Map<String, Object> body) {
+        return pythonAgentClient.post()
+                .uri("/api/v1/agents/action/confirm")
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(map -> (Map<String, Object>) map)
+                .map(response -> ResponseEntity.ok(ApiResponse.ok(response)))
+                .timeout(java.time.Duration.ofSeconds(10))
+                .onErrorResume(e -> {
+                    log.warn("[AGENT_CONTROLLER] Action plan confirmation failed: {}", e.getMessage());
+                    return Mono.just(ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline"))));
+                });
+    }
+
+    /** Proxy full-body perception scan to Python agent engine */
+    @PostMapping("/perception/scan")
+    @SuppressWarnings("unchecked")
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> perceptionScan(@RequestBody(required = false) Map<String, Object> body) {
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String userId = (auth != null) ? auth.getName() : "owner@hk07.local";
+
+        java.util.Map<String, Object> mutableBody = new java.util.HashMap<>();
+        if (body != null) {
+            mutableBody.putAll(body);
         }
+        mutableBody.put("userId", userId);
+
+        return pythonAgentClient.post()
+                .uri("/api/v1/agents/perception/scan")
+                .bodyValue(mutableBody)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(map -> (Map<String, Object>) map)
+                .map(response -> ResponseEntity.ok(ApiResponse.ok(response)))
+                .timeout(java.time.Duration.ofSeconds(30))
+                .onErrorResume(e -> {
+                    log.warn("[AGENT_CONTROLLER] Perception scan failed: {}", e.getMessage());
+                    return Mono.just(ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline"))));
+                });
+    }
+
+    /** Proxy latest perception scan retrieval to Python agent engine */
+    @GetMapping("/perception/latest")
+    @SuppressWarnings("unchecked")
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> getLatestPerceptionScan() {
+        return pythonAgentClient.get()
+                .uri("/api/v1/agents/perception/latest")
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(map -> (Map<String, Object>) map)
+                .map(response -> ResponseEntity.ok(ApiResponse.ok(response)))
+                .timeout(java.time.Duration.ofSeconds(5))
+                .onErrorResume(e -> {
+                    log.warn("[AGENT_CONTROLLER] Timeout or error retrieving latest perception scan: {}", e.getMessage());
+                    return Mono.just(ResponseEntity.ok(ApiResponse.ok(Map.of("status", "error", "message", "Python agent offline"))));
+                });
     }
 }

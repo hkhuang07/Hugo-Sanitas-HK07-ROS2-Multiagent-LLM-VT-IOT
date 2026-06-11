@@ -138,14 +138,14 @@ class EmpatheticAgent:
         if hasattr(self, '_client') and self._client:
             await self._client.aclose()
 
-    async def process_text_interaction(self, user_message: str) -> str:
+    async def process_text_interaction(self, user_message: str, user_id: str = "owner@hk07.local") -> str:
         start_time = time.time()
         
         # 1. Retrieve memory context from LanceDB
         mem_context = []
         if self.memory:
             try:
-                mem_context = await self.memory.retrieve_recent_events(limit=5)
+                mem_context = await self.memory.retrieve_recent_events(limit=5, user_id=user_id)
             except Exception as e:
                 log.warning("[EMPATHY_AGENT] Error recalling memory: %s", e)
 
@@ -162,7 +162,7 @@ class EmpatheticAgent:
         baseline = ""
         if self.memory:
             try:
-                baseline = await self.memory.recall_medical_baseline()
+                baseline = await self.memory.recall_medical_baseline(user_id=user_id)
             except Exception as e:
                 log.warning("[EMPATHY_AGENT] Error recalling medical baseline: %s", e)
 
@@ -215,13 +215,13 @@ class EmpatheticAgent:
             import re
             content = re.sub(r'^(chẩn đoán|kế hoạch hành động|kế hoạch|chẩn đoán y tế|chỉ số|lời khuyên|sơ cứu|diagnosis|action_plan|action|plan|advice|warning|critical|normal|hướng dẫn|chăm sóc|chăm sóc y tế|chú ý)[:\-\s]*', '', content.strip(), flags=re.IGNORECASE)
             latency = int((time.time() - start_time) * 1000)
-            await self._log_interaction(user_message, content, provider, latency)
+            await self._log_interaction(user_message, content, provider, latency, user_id=user_id)
             return content
 
         # 4. Local Rule-Based fallback
         content = self._generate_local_fallback(user_message)
         latency = int((time.time() - start_time) * 1000)
-        await self._log_interaction(user_message, content, "LOCAL_RULES", latency)
+        await self._log_interaction(user_message, content, "LOCAL_RULES", latency, user_id=user_id)
         return content
 
     async def process_system_query(self, user_message: str) -> str:
@@ -347,14 +347,14 @@ class EmpatheticAgent:
         res = execute_sensor_ping("wristband")
         return f"Tôi đã tự động kiểm tra kết nối thiết bị Wristband. Trạng thái: {res['status']}, Độ trễ: {res['latency']}."
 
-    async def _log_interaction(self, user_message: str, content: str, provider: str, latency: int):
+    async def _log_interaction(self, user_message: str, content: str, provider: str, latency: int, user_id: str = "owner@hk07.local"):
         self._history.append({"role": "user", "content": user_message})
         self._history.append({"role": "assistant", "content": content})
         
         # Save memory event to LanceDB
         if self.memory:
             try:
-                await self.memory.store_emotional_event(user_message, content)
+                await self.memory.store_emotional_event(user_message, content, user_id=user_id)
             except Exception as e:
                 log.warning("[EMPATHY_AGENT] Memory save failed: %s", e)
 
@@ -392,7 +392,7 @@ class EmpatheticAgent:
             return "Mọi chuyện rồi sẽ ổn thôi. Nhắm mắt lại, thư giãn cơ thể và tập trung vào hơi thở của mình nhé."
         return "Tôi luôn sẵn sàng lắng nghe bạn chia sẻ. Hãy cho tôi biết nếu bạn cần trợ giúp hoặc trò chuyện."
 
-    async def execute_visual_scan(self, current_vitals: dict) -> str:
+    async def execute_visual_scan(self, current_vitals: dict, user_id: str = "owner@hk07.local") -> str:
         """
         Reads the latest_frame.jpg from buffer, encodes to Base64, and queries the Vision API
         using the centralized LLM client.
@@ -456,7 +456,8 @@ class EmpatheticAgent:
                 user_message="[REQUEST_VISUAL_SCAN] Tiến hành quét hình ảnh cơ thể.",
                 content=response_text,
                 provider=provider,
-                latency=latency
+                latency=latency,
+                user_id=user_id
             )
             return response_text
         
@@ -467,7 +468,8 @@ class EmpatheticAgent:
             user_message="[REQUEST_VISUAL_SCAN] Tiến hành quét hình ảnh cơ thể.",
             content=err_msg,
             provider="LOCAL_RULES",
-            latency=latency
+            latency=latency,
+            user_id=user_id
         )
         return err_msg
 

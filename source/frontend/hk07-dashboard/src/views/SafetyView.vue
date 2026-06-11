@@ -18,7 +18,7 @@
           <div class="radar-center-label hud text-dim">HK-07</div>
         </div>
         <div class="baymax-hint mono">
-          <span class="baymax-tag hud text-cyan">BAYMAX_SCAN</span>
+          <span class="baymax-tag hud text-cyan">HK07_SCAN</span>
           {{ safetyStore.baymaxHint }}
         </div>
         <div class="radar-legend mono text-dim">

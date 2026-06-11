@@ -4,7 +4,7 @@
   "description": "Hugo Sanitas HK-07 Cyber-Cinematic Dashboard — Vue 3 + Vite",
   "private": true,
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5173",
+    "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit"

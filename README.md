@@ -34,7 +34,22 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 2. HK-07 Simulated Sensor HUD & Telemetry Gateway
+### 2. Edge Vision & Environment Vitals Simulation
+
+#### A. MediaPipe Face Tracking & Forehead ROI Extraction
+![Forehead ROI](./asset/hk07-vision01.jpg)
+* **Description:** Real-time facial landmarker tracking utilizing MediaPipe. Crops the forehead region dynamically to extract average green channel micro-fluctuations for Blood Volume Pulse (BVP) analysis.
+
+#### B. Real-time Green-Channel FFT rPPG Heart Rate
+![FFT Heart Rate](./asset/hk07-vision02.jpg)
+* **Description:** Estimates heart rate remotely (rPPG) via a Fast Fourier Transform (FFT) on forehead green channel intensity history, presenting real-time physiological vitals with zero local simulation.
+
+#### C. Resilient AI Fallback Client Console
+* **Description:** Unified LLM Client console logs demonstrating active model rotation on 429 rate limits, auto-disabling of credit/quota exhausted API tiers (OpenRouter/OpenAI), and successful recovery to primary `meta-llama/llama-4-scout-17b-16e-instruct` vision completions.
+ 
+---
+
+### 3. HK-07 Simulated Sensor HUD & Telemetry Gateway
 
 #### A. Simulated Sensor HUD Dashboard (13 Channels)
 ![Sensor Telemetry Dashboard](./asset/sensor-telemetry-dashboard.jpg)
@@ -46,7 +61,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 3. Robotics & Spatial Safety Systems
+### 4. Robotics & Spatial Safety Systems
 
 #### A. Three.js Holographic Twin & Occupancy Costmap
 ![Holographic Twin](./asset/holographic_twin.jpg)
@@ -60,7 +75,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 4. Clinical Telemetry & Patient Monitoring
+### 5. Clinical Telemetry & Patient Monitoring
 
 #### A. Dynamic Vitals Telemetry Monitor (60FPS)
 ![Dynamic Telemetry](./asset/dynamic-telemetry.jpg)
@@ -72,7 +87,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 5. Security & Authentication Access
+### 6. Security & Authentication Access
 
 #### A. Cinematic Terminal Login
 ![Terminal Login](./asset/auth_login.jpg)
@@ -84,19 +99,6 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 6. Edge Vision & Environment Simulation
-
-#### A. Robot Camera Vision (Online)
-![Robot Camera Online](./asset/robot-cam-simulate.jpg)
-* **Description:** Live feed simulator from the robot's onboard camera tracking its environment and path inside the Webots simulator workspace.
-
-#### B. Robot Camera Vision (Offline / Connection Lost)
-![Robot Camera Offline](./asset/robot-cam-simulate-vision-lost.jpg)
-* **Description:** Simulated vision fallback screen displaying static scanlines and warning telemetry when the robot camera stream is disconnected or lost.
-
-#### C. OpenCV rPPG & Forehead Thermal Tracking
-![Computer Vision Processing](./asset/robot-computer-visualize.jpg)
-* **Description:** Edge vision telemetry capturing real-time facial features. Cuts forehead/cheek ROIs to compute Blood Volume Pulse (rPPG Heart Rate) and forehead temperature with active fever warnings.
 
 ---
 

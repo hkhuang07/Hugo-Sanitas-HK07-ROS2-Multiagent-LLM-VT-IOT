@@ -139,7 +139,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8888"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://localhost:8888"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -190,14 +190,16 @@ async def empathetic_interact(body: dict):
     if not message:
         return {"error": "message field is required"}
     
+    user_id = body.get("userId", "owner@hk07.local")
+    
     # Retrieve current cached vitals to pass for medical/routing context
     latest_vitals = orchestrator.medical_agent.latest_vitals
     
     # Run orchestrator routing and state processing based on V2 feature flag
     if USE_ORCHESTRATOR_V2 and orchestrator_v2 is not None:
-        state = await orchestrator_v2.route_and_execute(message, latest_vitals)
+        state = await orchestrator_v2.route_and_execute(message, latest_vitals, user_id=user_id)
     else:
-        state = await orchestrator.route_and_execute(message, latest_vitals)
+        state = await orchestrator.route_and_execute(message, latest_vitals, user_id=user_id)
     
     return {
         "agent": state.get("current_agent", "EMPATHETIC_CHAT"),
@@ -220,11 +222,12 @@ async def orchestrate_v2(body: dict):
 
     message = body.get("message", "")
     vitals  = body.get("vitals", {})
+    user_id = body.get("userId", "owner@hk07.local")
     if not message:
         return {"error": "message field is required"}
 
     try:
-        state = await orchestrator_v2.route_and_execute(message, vitals)
+        state = await orchestrator_v2.route_and_execute(message, vitals, user_id=user_id)
         return {
             "orchestrator": "V2_TOOL_CALLING",
             "agent": state.get("current_agent"),
@@ -358,12 +361,13 @@ async def test_orchestrator(body: dict):
     message  = body.get("message", "Xin chào Hugo!")
     vitals   = body.get("vitals", {})
     use_v2   = body.get("use_v2", USE_ORCHESTRATOR_V2)
+    user_id  = body.get("userId", "owner@hk07.local")
 
     if use_v2 and orchestrator_v2 is not None:
-        state = await orchestrator_v2.route_and_execute(message, vitals)
+        state = await orchestrator_v2.route_and_execute(message, vitals, user_id=user_id)
         state["orchestrator_version"] = "V2"
     else:
-        state = await orchestrator.route_and_execute(message, vitals)
+        state = await orchestrator.route_and_execute(message, vitals, user_id=user_id)
         state["orchestrator_version"] = "V1"
 
     return state

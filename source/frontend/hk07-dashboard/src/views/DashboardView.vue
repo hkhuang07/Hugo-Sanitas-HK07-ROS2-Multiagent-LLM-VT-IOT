@@ -4,7 +4,7 @@
       <!-- ── Left side: Tactical Parameters Sidebar (30%) ─────────────────── -->
       <aside class="tactical-sidebar">
         <div class="sidebar-header">
-          <span class="text-cyan font-bold text-xs">[ TACTICAL_PARAMETERS ]</span>
+          <span class="text-green font-bold text-xs">[ TACTICAL_PARAMETERS ]</span>
           <span class="role-badge">{{ authStore.user?.role }}</span>
         </div>
 
@@ -68,7 +68,7 @@
               </div>
               <div class="diag-item">
                 <span class="diag-label text-[8px]">SLA TARGET:</span>
-                <span class="diag-val text-cyan text-[9px]">&lt; 5.00ms</span>
+                <span class="diag-val text-green text-[9px]">&lt; 5.00ms</span>
               </div>
               <div class="diag-item">
                 <span class="diag-label text-[8px]">VERDICT:</span>
@@ -83,7 +83,7 @@
             <div class="calibration-controls">
               <div class="control-row">
                 <span class="label text-[8px]">LiDAR RATE:</span>
-                <span class="value text-cyan text-[9px]">10Hz</span>
+                <span class="value text-green text-[9px]">10Hz</span>
               </div>
               <div class="control-row">
                 <span class="label text-[8px]">STATUS:</span>
@@ -115,25 +115,22 @@
 
       <!-- ── Right side: Data Visualization Canvas (70%) ─────────────────── -->
       <section class="data-canvas">
-        <!-- Real-Time Metrics & Visualization Row -->
-        <div class="dashboard-visual-row">
-          <!-- ECG Waveform Canvas -->
-          <div class="terminal-card corner-reticle flex-1">
-            <div class="terminal-card-header">
-              [ VITAL_STREAM_ECG ]
-              <span :class="['mono ml-2 text-[9px]', vitalsStore.isConnected ? 'text-green' : 'text-dim']">
-                {{ vitalsStore.isConnected ? 'STREAMING' : 'OFFLINE_SIM' }}
-              </span>
-            </div>
-            <div class="ecg-widget-wrapper">
-              <EcgWaveform :width="380" :height="90" />
-            </div>
+        <!-- ECG Waveform Canvas -->
+        <div class="terminal-card corner-reticle">
+          <div class="terminal-card-header">
+            [ VITAL_STREAM_ECG ]
+            <span :class="['mono ml-2 text-[9px]', vitalsStore.isConnected ? 'text-green' : 'text-dim']">
+              {{ vitalsStore.isConnected ? 'STREAMING' : 'OFFLINE_SIM' }}
+            </span>
           </div>
-          
-          <!-- Kinematics & Environment Widget -->
-          <div class="flex-1">
-            <KinematicsWidget :telemetry="currentTelemetry" />
+          <div class="ecg-widget-wrapper">
+            <EcgWaveform :height="90" />
           </div>
+        </div>
+        
+        <!-- Kinematics & Environment Widget -->
+        <div>
+          <KinematicsWidget :telemetry="currentTelemetry" />
         </div>
 
         <!-- Subsumption Architecture Summary -->
@@ -364,7 +361,7 @@ function formatTime(iso: string) {
 }
 
 function agentColor(type: string) {
-  return type === 'SAFETY' ? 'text-green' : 'text-cyan'
+  return 'text-green'
 }
 
 function onUnauthorized() {
@@ -426,7 +423,7 @@ onUnmounted(() => {
 
 .role-badge {
   background: var(--color-border-dim);
-  color: var(--color-accent-cyan);
+  color: var(--color-accent-green);
   padding: 1px 4px;
   border-radius: 2px;
   font-weight: bold;

@@ -3,13 +3,13 @@
     <!-- WIDGET CONTAINER -->
     <div
       class="widget-frame"
-      :style="{ borderColor: sensorAlertActive ? themeConfig.warningOrange : themeConfig.borderCyan }"
+      :style="{ borderColor: sensorAlertActive ? themeConfig.warningOrange : '#00FF66' }"
     >
       <!-- HEADER LABEL -->
       <div class="widget-header">
         <span class="label-upper">BIO-TELEMETRY STREAM</span>
         <span
-          v-if="sensorAlertActive"
+          v-if="sensorAlertActive && telemetry.sensorStatus.hrValid"
           class="alert-badge"
           :style="{ backgroundColor: themeConfig.warningOrange, color: '#000000' }"
         >
@@ -17,8 +17,19 @@
         </span>
       </div>
 
+      <!-- IF DISCONNECTED / OFFLINE -->
+      <div v-if="!telemetry.sensorStatus.hrValid" class="no-signal-container">
+        <div class="glow-alert blink-fast">[ NO TELEMETRY SIGNAL ]</div>
+        <div class="no-signal-sub">AWAITING WRISTBAND PAIRING</div>
+        <div class="sensor-matrix-dots">
+          <span class="dot-active"></span>
+          <span class="dot-active"></span>
+          <span class="dot-active"></span>
+        </div>
+      </div>
+
       <!-- METRICS GRID -->
-      <div class="metrics-container">
+      <div v-else class="metrics-container">
         <!-- HEART RATE METRIC -->
         <div class="metric-block">
           <div class="metric-label">HEART RATE</div>
@@ -60,7 +71,7 @@
       <div class="sensor-status-row">
         <div
           class="status-indicator"
-          :style="{ backgroundColor: telemetry.sensorStatus.hrValid ? themeConfig.successGreen : themeConfig.dangerRed }"
+          :style="{ backgroundColor: telemetry.sensorStatus.hrValid ? '#00FF66' : '#FF3333' }"
         />
         <span class="status-text">{{ telemetry.sensorStatus.hrValid ? 'HR SENSOR ACTIVE' : 'HR SENSOR OFFLINE' }}</span>
       </div>
@@ -117,7 +128,7 @@ function getSegmentColor(value: number, max: number): string {
   const ratio = value / max;
   if (ratio < 0.5) return themeConfig.value.dangerRed;
   if (ratio < 0.75) return themeConfig.value.warningOrange;
-  return themeConfig.value.successGreen;
+  return '#00FF66';
 }
 </script>
 
@@ -129,11 +140,11 @@ function getSegmentColor(value: number, max: number): string {
 }
 
 .widget-frame {
-  border: 1px solid #00FFCC;
+  border: 1px solid #00FF66;
   border-radius: 0;
   padding: 12px;
   background-color: #000000;
-  box-shadow: inset 0 0 8px rgba(0, 255, 204, 0.1), 0 0 12px rgba(0, 255, 204, 0.15);
+  box-shadow: inset 0 0 8px rgba(0, 255, 102, 0.1), 0 0 12px rgba(0, 255, 102, 0.15);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -148,7 +159,7 @@ function getSegmentColor(value: number, max: number): string {
   align-items: center;
   margin-bottom: 16px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 255, 204, 0.3);
+  border-bottom: 1px solid rgba(0, 255, 102, 0.3);
 }
 
 .label-upper {
@@ -176,6 +187,70 @@ function getSegmentColor(value: number, max: number): string {
   }
 }
 
+.no-signal-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 90px;
+  border: 1px dashed rgba(0, 255, 102, 0.25);
+  margin-bottom: 16px;
+  background: rgba(0, 255, 102, 0.03);
+}
+
+.glow-alert {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1.5px;
+  color: #FF3333;
+  text-shadow: 0 0 8px rgba(255, 51, 51, 0.6);
+}
+
+.blink-fast {
+  animation: blink-fast-anim 1s step-end infinite;
+}
+
+@keyframes blink-fast-anim {
+  50% { opacity: 0.2; }
+}
+
+.no-signal-sub {
+  font-size: 8px;
+  color: #888888;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+.sensor-matrix-dots {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.sensor-matrix-dots span {
+  width: 4px;
+  height: 4px;
+  background-color: rgba(0, 255, 102, 0.15);
+  border-radius: 50%;
+}
+
+.sensor-matrix-dots span.dot-active {
+  animation: pulse-dot 1.5s infinite;
+}
+
+.sensor-matrix-dots span:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.sensor-matrix-dots span:nth-child(3) {
+  animation-delay: 1s;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { background-color: rgba(0, 255, 102, 0.15); }
+  50% { background-color: #00FF66; box-shadow: 0 0 6px #00FF66; }
+}
+
 .metrics-container {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -193,7 +268,7 @@ function getSegmentColor(value: number, max: number): string {
   font-size: 8px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: #00FFCC;
+  color: #00FF66;
   font-weight: 600;
 }
 
@@ -213,7 +288,7 @@ function getSegmentColor(value: number, max: number): string {
 
 .metric-unit {
   font-size: 9px;
-  color: #00FFCC;
+  color: #00FF66;
   letter-spacing: 0.5px;
 }
 
@@ -227,15 +302,15 @@ function getSegmentColor(value: number, max: number): string {
 .segment {
   flex: 1;
   width: 100%;
-  border: 0.5px solid rgba(0, 255, 204, 0.2);
+  border: 0.5px solid rgba(0, 255, 102, 0.2);
   border-radius: 1px;
-  background-color: rgba(0, 255, 204, 0.15);
+  background-color: rgba(0, 255, 102, 0.15);
   transition: background-color 0.2s ease;
 }
 
 .metric-sub {
   font-size: 8px;
-  color: #00FFCC;
+  color: #00FF66;
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
@@ -245,7 +320,7 @@ function getSegmentColor(value: number, max: number): string {
   align-items: center;
   gap: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(0, 255, 204, 0.2);
+  border-top: 1px solid rgba(0, 255, 102, 0.2);
 }
 
 .status-indicator {

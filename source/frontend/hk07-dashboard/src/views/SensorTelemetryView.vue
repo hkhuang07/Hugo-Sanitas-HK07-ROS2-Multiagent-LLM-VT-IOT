@@ -12,10 +12,11 @@
         <div class="sv-title-block">
           <span class="sv-label">[ HK-07 // SENSOR TELEMETRY ]</span>
           <h1 class="sv-title"> HUGO SANITAS HK-07 SENSOR HUD</h1>
-          <span class="sv-sub">{{ deviceLabel }} · {{ packetRate }} PKT/S · LATENCY {{ latency }}MS</span>
+          <span class="sv-sub">{{ deviceLabel }} · HOST: {{ cfg.pcIp }}:{{ cfg.sensorPort }} · {{ packetRate }} PKT/S · LATENCY {{ latency }}MS</span>
         </div>
       </div>
       <div class="sv-header-right">
+        <DeviceIpConfigModal />
         <div class="sv-live-badge" :class="sensorStore.isLive ? 'badge-live' : 'badge-offline'">
           <span class="pulse-dot" v-if="sensorStore.isLive"></span>
           {{ sensorStore.isLive ? '◈ STREAMING' : '○ OFFLINE' }}
@@ -289,10 +290,13 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Chart, registerables } from 'chart.js'
 import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
+import { useDeviceConfigStore } from '../stores/deviceConfig'
+import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue'
 
 Chart.register(...registerables)
 
 const sensorStore = useSensorTelemetryStore()
+const cfg = useDeviceConfigStore()
 
 // ── Time / status ─────────────────────────────────────────────────────────────
 const currentTime = ref('')

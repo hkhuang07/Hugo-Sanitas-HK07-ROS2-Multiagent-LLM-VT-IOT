@@ -88,14 +88,22 @@ public class AgentDebugController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> testOrchestrator(
             @RequestBody(required = false) Map<String, Object> body) {
 
-        if (body == null) {
-            body = Map.of("message", "Xin chào Hugo!", "use_v2", true);
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String userId = (auth != null) ? auth.getName() : "owner@hk07.local";
+
+        java.util.Map<String, Object> mutableBody = new java.util.HashMap<>();
+        if (body != null) {
+            mutableBody.putAll(body);
+        } else {
+            mutableBody.put("message", "Xin chào Hugo!");
+            mutableBody.put("use_v2", true);
         }
+        mutableBody.put("userId", userId);
 
         try {
             Map<String, Object> result = agentClient.post()
                     .uri("/api/v1/agents/test/orchestrator")
-                    .bodyValue(body)
+                    .bodyValue(mutableBody)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(m -> (Map<String, Object>) m)
@@ -130,10 +138,20 @@ public class AgentDebugController {
     @SuppressWarnings("unchecked")
     public ResponseEntity<ApiResponse<Map<String, Object>>> orchestrateV2(
             @RequestBody Map<String, Object> body) {
+        
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String userId = (auth != null) ? auth.getName() : "owner@hk07.local";
+
+        java.util.Map<String, Object> mutableBody = new java.util.HashMap<>();
+        if (body != null) {
+            mutableBody.putAll(body);
+        }
+        mutableBody.put("userId", userId);
+
         try {
             Map<String, Object> result = agentClient.post()
                     .uri("/api/v1/agents/v2/orchestrate")
-                    .bodyValue(body)
+                    .bodyValue(mutableBody)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(m -> (Map<String, Object>) m)

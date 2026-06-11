@@ -124,6 +124,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
   const rppgHeartRate = ref(0.0)
   const thermalTemperature = ref(36.6)
   const feverAlert = ref(false)
+  const tracker = ref({ x: 42.0, y: 52.0, width: 80.0, height: 85.0 })
 
   const pmu = ref({
     voltage: 24.0,
@@ -264,6 +265,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     if (data.rppg_heart_rate !== undefined) rppgHeartRate.value = data.rppg_heart_rate
     if (data.thermal_temperature !== undefined) thermalTemperature.value = data.thermal_temperature
     if (data.fever_alert !== undefined) feverAlert.value = data.fever_alert
+    if (data.tracker) tracker.value = data.tracker
   }
 
   function setLive(live: boolean) {
@@ -330,6 +332,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     reset,
     rppgHeartRate,
     thermalTemperature,
-    feverAlert
+    feverAlert,
+    tracker
   }
 })

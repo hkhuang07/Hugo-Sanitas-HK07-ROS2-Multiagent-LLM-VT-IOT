@@ -65,6 +65,12 @@ export const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/vision',
+      name: 'Vision',
+      component: () => import('../views/BaymaxVisionView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/'
     }

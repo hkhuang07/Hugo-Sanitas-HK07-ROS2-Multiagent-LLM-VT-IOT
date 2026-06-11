@@ -73,19 +73,20 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 
 ---
 
-### 5. Giả Lập Camera & Xử Lý Thị Giác Biên (Edge Vision)
+### 5. Xử Lý Thị Giác Biên & Phân Tích Sinh Hiệu Trực Tiếp (Edge Vision)
 
-#### A. Luồng Hình Ảnh Trực Tiếp Từ Camera Robot (Online)
-![Robot Camera Online](./asset/robot-cam-simulate.jpg)
-* **Mô tả:** Luồng camera truyền hình ảnh trực tiếp từ góc nhìn của robot khi di chuyển trong không gian giả lập Webots.
+#### A. Theo Dõi Khuôn Mặt & Khoanh Vùng Trán Bằng MediaPipe
+![Theo Dõi MediaPipe](./asset/hk07-vision00.jpg)
+![Khoanh Vùng ROI](./asset/hk07-vision01.jpg)
+* **Mô tả:** Định vị và bám nét các điểm mốc trên khuôn mặt thời gian thực sử dụng MediaPipe. Tự động khoanh vùng trán (ROI) để tính toán biến động cường độ kênh màu Xanh lá (Green channel) phục vụ phân tích Blood Volume Pulse (BVP).
 
-#### B. Luồng Hình Ảnh Khi Mất Kết Nối (Offline / Connection Lost)
-![Robot Camera Offline](./asset/robot-cam-simulate-vision-lost.jpg)
-* **Mô tả:** Màn hình giả lập trạng thái mất tín hiệu camera của robot hiển thị nhiễu nhiễu CRT (scanlines) và telemetry cảnh báo khi luồng truyền phát video bị ngắt kết nối.
+#### B. Đo Nhịp Tim Từ Xa Bằng FFT rPPG
+![Đo Nhịp Tim FFT](./asset/hk07-vision02.jpg)
+* **Mô tả:** Ước lượng nhịp tim gián tiếp qua phân tích Fast Fourier Transform (FFT) trên chuỗi tín hiệu kênh màu xanh lá vùng trán, cung cấp dữ liệu nhịp tim thực tế mà không cần dữ liệu giả lập.
 
-#### C. Phân Tích rPPG & Theo Dõi Nhiệt Độ Trán Qua OpenCV
-![Computer Vision Processing](./asset/robot-computer-visualize.jpg)
-* **Mô tả:** Bộ xử lý thị giác máy tính biên phân tích khuôn mặt bệnh nhân qua MediaPipe, khoanh vùng trán/má (ROI) để tính toán nhịp tim rPPG (BVP) và đo nhiệt độ trán để đưa ra cảnh báo sốt thời gian thực.
+#### C. Nhật Ký Động Cơ Phục Hồi LLM Fallback Client
+![Nhật Ký LLM Fallback](./asset/hk07-vision03.jpg)
+* **Mô tả:** Nhật ký của Unified LLM Client thể hiện cơ chế tự động xoay tua model khi gặp lỗi 429 RateLimit, cô lập (vô hiệu hóa vĩnh viễn) các API tier hết tiền/hết quota (OpenRouter/OpenAI), và khôi phục thành công các yêu cầu thị giác máy tính qua model active `meta-llama/llama-4-scout-17b-16e-instruct`.
 
 ---
 

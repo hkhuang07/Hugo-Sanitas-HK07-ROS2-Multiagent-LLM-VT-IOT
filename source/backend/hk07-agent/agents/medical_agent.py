@@ -464,7 +464,7 @@ class MedicalAgent:
             if self._client:
                 await self._client.aclose()
 
-    async def process_text_interaction(self, user_message: str, current_vitals: dict, mode: str = "MEDICAL_ANALYSIS") -> str:
+    async def process_text_interaction(self, user_message: str, current_vitals: dict, mode: str = "MEDICAL_ANALYSIS", user_id: str = "owner@hk07.local") -> str:
         """Called by the supervisor orchestrator to analyze medical query & vitals"""
         if not self._client:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
@@ -500,28 +500,35 @@ class MedicalAgent:
         system_prompt = MEDICAL_ADVICE_SYSTEM_PROMPT if mode == "MEDICAL_ADVICE" else MEDICAL_SYSTEM_PROMPT
 
         # Inject medical baseline profile (Super Context) if available
-        baseline = await self.memory.recall_medical_baseline()
+        baseline = await self.memory.recall_medical_baseline(user_id=user_id)
         if baseline:
             system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
 
-        # 1. Primary: Groq API
+        # Use unified LLMClient
         res_str = ""
         provider_used = LLMProvider.LOCAL_RULE.value
-        
-        if self._groq_api_key:
-            res_str, success = await self._call_groq_text(prompt, system_prompt)
-            if success:
-                provider_used = LLMProvider.GROQ_PRIMARY.value
-            else:
-                log.warning("[MEDICAL_AGENT] Groq failed, switching to OpenRouter fallback")
 
-        # 2. Fallback: OpenRouter API
-        if not res_str and self._openrouter_api_key:
-            res_str, success = await self._call_openrouter_text(prompt, system_prompt)
-            if success:
-                provider_used = LLMProvider.OPENROUTER_FALLBACK.value
-            else:
-                log.error("[MEDICAL_AGENT] Both Groq and OpenRouter failed")
+        try:
+            from services.llm_client import LLMClient, MEDICAL_TIERS
+            res_content, provider_label = await LLMClient.generate_completion(
+                prompt=prompt,
+                tiers=MEDICAL_TIERS,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=1024,
+                timeout=12
+            )
+            if provider_label != "LOCAL_FALLBACK" and res_content:
+                extracted = safe_extract_json(res_content)
+                res_str = json.dumps(extracted, ensure_ascii=False)
+                if "GROQ" in provider_label:
+                    provider_used = LLMProvider.GROQ_PRIMARY.value
+                elif "OPENROUTER" in provider_label:
+                    provider_used = LLMProvider.OPENROUTER_FALLBACK.value
+                else:
+                    provider_used = provider_label
+        except Exception as e:
+            log.error("[MEDICAL_AGENT] LLMClient process_text_interaction failed: %s", e)
 
         # 3. Local rules fallback (returns JSON string)
         if not res_str:
@@ -610,33 +617,44 @@ class MedicalAgent:
             log.error("[MEDICAL_OPENROUTER_ERROR] Exception: %s", e)
             return "", False
 
-    async def _call_llm_with_fallback(self, vitals: dict) -> dict:
+    async def _call_llm_with_fallback(self, vitals: dict, user_id: str = "owner@hk07.local") -> dict:
         if not self._circuit_breaker.allow_request():
             log.warning("[CIRCUIT_BREAKER] Request blocked (circuit is OPEN). Triggering local rule-based diagnosis.")
             return self._generate_rule_based_diagnosis(vitals)
 
-        if self._groq_api_key:
-            result, success = await self._call_groq(vitals)
-            if success:
-                self._circuit_breaker.record_success()
-                return result
-            log.warning("[MEDICAL_AGENT] Groq failed — switching to OpenRouter fallback")
+        prompt_str = self._build_prompt(vitals)
+        system_prompt = MEDICAL_SYSTEM_PROMPT
+        baseline = await self.memory.recall_medical_baseline(user_id=user_id)
+        if baseline:
+            system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
 
-        if self._openrouter_api_key:
-            result, success = await self._call_openrouter(vitals)
-            if success:
-                self._circuit_breaker.record_success()
-                return result
-            log.error("[MEDICAL_AGENT] Both Groq and OpenRouter unavailable")
+        try:
+            from services.llm_client import LLMClient, MEDICAL_TIERS
+            res_content, provider_label = await LLMClient.generate_completion(
+                prompt=prompt_str,
+                tiers=MEDICAL_TIERS,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=512,
+                timeout=12
+            )
+            if provider_label != "LOCAL_FALLBACK" and res_content:
+                extracted = safe_extract_json(res_content)
+                if extracted and isinstance(extracted, dict) and "alert_level" in extracted:
+                    self._circuit_breaker.record_success()
+                    return extracted
+        except Exception as e:
+            log.error("[MEDICAL_AGENT] LLMClient _call_llm_with_fallback failed: %s", e)
 
         self._circuit_breaker.record_failure()
         return self._generate_rule_based_diagnosis(vitals)
 
 
-    async def _call_groq(self, vitals: dict) -> tuple[dict, bool]:
+
+    async def _call_groq(self, vitals: dict, user_id: str = "owner@hk07.local") -> tuple[dict, bool]:
         prompt_str = self._build_prompt(vitals)
         system_prompt = MEDICAL_SYSTEM_PROMPT
-        baseline = await self.memory.recall_medical_baseline()
+        baseline = await self.memory.recall_medical_baseline(user_id=user_id)
         if baseline:
             system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
         combined_prompt = f"System: {system_prompt}\n\nUser request: {prompt_str}"
@@ -664,10 +682,10 @@ class MedicalAgent:
             log.error("[MEDICAL_GROQ_BG_ERROR] Exception: %s", e)
             return {}, False
 
-    async def _call_openrouter(self, vitals: dict) -> tuple[dict, bool]:
+    async def _call_openrouter(self, vitals: dict, user_id: str = "owner@hk07.local") -> tuple[dict, bool]:
         prompt_str = self._build_prompt(vitals)
         system_prompt = MEDICAL_SYSTEM_PROMPT
-        baseline = await self.memory.recall_medical_baseline()
+        baseline = await self.memory.recall_medical_baseline(user_id=user_id)
         if baseline:
             system_prompt = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_prompt}"
         combined_prompt = f"System: {system_prompt}\n\nUser request: {prompt_str}"

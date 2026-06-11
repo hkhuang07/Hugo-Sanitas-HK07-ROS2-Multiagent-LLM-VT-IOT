@@ -54,7 +54,7 @@ class AgentOrchestratorV2:
     async def initialize(self):
         log.info("[ORCHESTRATOR_V2] Sub-agents initialized successfully.")
 
-    async def route_and_execute(self, user_message: str, current_vitals: dict) -> GraphState:
+    async def route_and_execute(self, user_message: str, current_vitals: dict, user_id: str = "owner@hk07.local") -> GraphState:
         """
         Main orchestration loop (Cognitive Orchestration):
         1. Router with Tool Calling analyzes intent and decides which tools to invoke
@@ -111,7 +111,7 @@ class AgentOrchestratorV2:
             log.critical("[ORCHESTRATOR_V2] EMERGENCY ACTIVATION via trigger_sos_protocol")
             state["alert_level"] = "CRITICAL"
             # trigger_sos_protocol is handled by Safety Agent (subsumption priority)
-            res = await self._execute_tool("trigger_sos_protocol", {}, current_vitals)
+            res = await self._execute_tool("trigger_sos_protocol", {}, current_vitals, user_id=user_id)
             state["outputs"]["trigger_sos_protocol"] = res
             state["actions"].append("EMERGENCY_RESPONSE")
             state["output"] = res
@@ -149,7 +149,7 @@ class AgentOrchestratorV2:
                 if medical_call and "analyze_clinical_symptoms" in state["current_agents"]:
                     try:
                         med_params = medical_call.get("parameters", {})
-                        med_result = await self._execute_tool("analyze_clinical_symptoms", med_params, current_vitals)
+                        med_result = await self._execute_tool("analyze_clinical_symptoms", med_params, current_vitals, user_id=user_id)
                         state["outputs"]["analyze_clinical_symptoms"] = med_result
                         log.info("[ORCHESTRATOR_V2] Medical tool completed before others")
                     except Exception as e:
@@ -163,7 +163,7 @@ class AgentOrchestratorV2:
                     parameters = tc.get("parameters", {})
                     if tool_name not in state["current_agents"]:
                         continue
-                    tasks.append((tool_name, self._execute_tool(tool_name, parameters, current_vitals)))
+                    tasks.append((tool_name, self._execute_tool(tool_name, parameters, current_vitals, user_id=user_id)))
 
                 if tasks:
                     results = await asyncio.gather(*[t for _, t in tasks], return_exceptions=True)
@@ -245,12 +245,12 @@ class AgentOrchestratorV2:
                  state["current_agents"], state["alert_level"], state["actions"])
         
         if self.memory and state.get("output"):
-            await self.memory.ingest_chat_cycle(user_message, state["output"])
+            await self.memory.ingest_chat_cycle(user_message, state["output"], user_id=user_id)
         
         return state
 
 
-    async def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], vitals: dict) -> str:
+    async def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], vitals: dict, user_id: str = "owner@hk07.local") -> str:
         """Execute a single tool and return its output"""
         try:
             if tool_name == "analyze_clinical_symptoms":
@@ -261,7 +261,8 @@ class AgentOrchestratorV2:
                 res = await self.medical_agent.process_text_interaction(
                     symptom, 
                     vitals, 
-                    mode="MEDICAL_ADVICE"
+                    mode="MEDICAL_ADVICE",
+                    user_id=user_id
                 )
                 
                 # Parse JSON response if available
@@ -325,7 +326,7 @@ class AgentOrchestratorV2:
                 user_msg = parameters.get("user_message", "")
                 emotional_tone = parameters.get("emotional_tone", "NEUTRAL")
                 
-                res = await self.empathetic_agent.process_text_interaction(user_msg)
+                res = await self.empathetic_agent.process_text_interaction(user_msg, user_id=user_id)
                 return res
 
             elif tool_name == "search_medical_guidelines":
@@ -372,7 +373,8 @@ class AgentOrchestratorV2:
                     fallback_res = await self.medical_agent.process_text_interaction(
                         query, 
                         vitals, 
-                        mode="MEDICAL_ADVICE"
+                        mode="MEDICAL_ADVICE",
+                        user_id=user_id
                     )
                     # Parse JSON if returned by medical agent
                     try:

@@ -163,6 +163,7 @@ let animationFrameId: number | null = null;
 
 const themeConfig = computed(() => props.theme);
 
+// Format number utility
 function formatNumber(value: number, decimals: number = 0): string {
   if (decimals === 0) {
     return Math.round(value).toString().padStart(3, ' ');
@@ -179,14 +180,14 @@ function getAxisColor(value: number, axis: string): string {
   const absVal = Math.abs(value);
   if (absVal > 20) return themeConfig.value.dangerRed;
   if (absVal > 10) return themeConfig.value.warningOrange;
-  return themeConfig.value.borderCyan;
+  return '#00FF66';
 }
 
 function getGMagnitudeColor(): string {
   const mag = calculateGMagnitude();
   if (mag > 25) return themeConfig.value.dangerRed;
   if (mag > 15) return themeConfig.value.warningOrange;
-  return themeConfig.value.successGreen;
+  return '#00FF66';
 }
 
 function drawWaveform() {
@@ -207,7 +208,7 @@ function drawWaveform() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // Draw grid
-  ctx.strokeStyle = 'rgba(0, 255, 204, 0.1)';
+  ctx.strokeStyle = 'rgba(0, 255, 102, 0.1)';
   ctx.lineWidth = 0.5;
   for (let i = 0; i <= 10; i++) {
     const y = (canvas.height / 10) * i;
@@ -218,7 +219,7 @@ function drawWaveform() {
   }
 
   // Draw waveform
-  ctx.strokeStyle = '#00FFCC';
+  ctx.strokeStyle = '#00FF66';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
 
@@ -268,17 +269,17 @@ onUnmounted(() => {
 }
 
 .widget-frame {
-  border: 1px solid #00FFCC;
+  border: 1px solid #00FF66;
   border-radius: 0;
   padding: 12px;
   background-color: #000000;
-  box-shadow: inset 0 0 8px rgba(0, 255, 204, 0.1), 0 0 12px rgba(0, 255, 204, 0.15);
+  box-shadow: inset 0 0 8px rgba(0, 255, 102, 0.1), 0 0 12px rgba(0, 255, 102, 0.15);
 }
 
 .widget-header {
   margin-bottom: 16px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 255, 204, 0.3);
+  border-bottom: 1px solid rgba(0, 255, 102, 0.3);
 }
 
 .label-upper {
@@ -297,11 +298,11 @@ onUnmounted(() => {
   font-size: 8px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: #00FFCC;
+  color: #00FF66;
   font-weight: 600;
   margin-bottom: 8px;
   padding-bottom: 4px;
-  border-bottom: 1px solid rgba(0, 255, 204, 0.2);
+  border-bottom: 1px solid rgba(0, 255, 102, 0.2);
 }
 
 .env-grid {
@@ -320,7 +321,7 @@ onUnmounted(() => {
   font-size: 7px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #00FFCC;
+  color: #00FF66;
 }
 
 .env-value {
@@ -334,19 +335,19 @@ onUnmounted(() => {
 
 .env-unit {
   font-size: 7px;
-  color: #00FFCC;
+  color: #00FF66;
 }
 
 .env-bar {
   height: 4px;
-  background-color: rgba(0, 255, 204, 0.15);
-  border: 0.5px solid rgba(0, 255, 204, 0.2);
+  background-color: rgba(0, 255, 102, 0.15);
+  border: 0.5px solid rgba(0, 255, 102, 0.2);
   overflow: hidden;
 }
 
 .bar-fill {
   height: 100%;
-  background-color: #00FFCC;
+  background-color: #00FF66;
   transition: width 0.3s ease;
 }
 
@@ -366,7 +367,7 @@ onUnmounted(() => {
   font-size: 7px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #00FFCC;
+  color: #00FF66;
 }
 
 .imu-value {
@@ -380,9 +381,9 @@ onUnmounted(() => {
   position: relative;
   width: 40px;
   height: 40px;
-  border: 1px solid #00FFCC;
+  border: 1px solid #00FF66;
   border-radius: 50%;
-  background-color: rgba(0, 255, 204, 0.05);
+  background-color: rgba(0, 255, 102, 0.05);
   margin-top: 4px;
 }
 
@@ -405,7 +406,7 @@ onUnmounted(() => {
   left: 50%;
   width: 4px;
   height: 4px;
-  background-color: #00FFCC;
+  background-color: #00FF66;
   border-radius: 50%;
   margin-left: -2px;
   margin-top: -2px;
@@ -432,7 +433,7 @@ onUnmounted(() => {
 
 .axis-label {
   width: 16px;
-  color: #00FFCC;
+  color: #00FF66;
   font-weight: 600;
   letter-spacing: 0.5px;
 }
@@ -444,11 +445,11 @@ onUnmounted(() => {
 
 .axis-unit {
   font-size: 7px;
-  color: #00FFCC;
+  color: #00FF66;
 }
 
 .gmag-display {
-  border-top: 1px solid rgba(0, 255, 204, 0.2);
+  border-top: 1px solid rgba(0, 255, 102, 0.2);
   padding-top: 8px;
 }
 
@@ -456,7 +457,7 @@ onUnmounted(() => {
   font-size: 7px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #00FFCC;
+  color: #00FF66;
   margin-bottom: 4px;
 }
 
@@ -469,21 +470,21 @@ onUnmounted(() => {
 
 .gmag-bar {
   height: 6px;
-  background-color: rgba(0, 255, 204, 0.15);
-  border: 0.5px solid rgba(0, 255, 204, 0.2);
+  background-color: rgba(0, 255, 102, 0.15);
+  border: 0.5px solid rgba(0, 255, 102, 0.2);
   overflow: hidden;
 }
 
 .canvas-container {
   margin-top: 12px;
-  border-top: 1px solid rgba(0, 255, 204, 0.2);
+  border-top: 1px solid rgba(0, 255, 102, 0.2);
   padding-top: 8px;
 }
 
 .waveform-canvas {
   width: 100%;
   height: 100px;
-  border: 1px solid rgba(0, 255, 204, 0.2);
+  border: 1px solid rgba(0, 255, 102, 0.2);
   background-color: #000000;
   display: block;
 }

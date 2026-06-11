@@ -34,7 +34,7 @@ class AgentOrchestrator:
     async def initialize(self):
         log.info("[ORCHESTRATOR] Sub-agents initialized successfully.")
 
-    async def route_and_execute(self, user_message: str, current_vitals: dict) -> GraphState:
+    async def route_and_execute(self, user_message: str, current_vitals: dict, user_id: str = "owner@hk07.local") -> GraphState:
         """
         Main routing loop:
         1. Router classifies intent (Node 0) and returns "ROUTING_TARGET: [SAFETY | MEDICAL | EMPATHETIC]"
@@ -72,7 +72,7 @@ class AgentOrchestrator:
             msg_lower = user_message.lower()
             if any(k in msg_lower for k in ["quét tôi", "quét hình ảnh", "nhìn tôi", "chẩn đoán qua ảnh", "scan me", "visual scan", "look at me", "tôi trông thế nào"]):
                 log.info("[ORCHESTRATOR] Keyword matching visual scan. Routing to execute_visual_scan().")
-                res = await self.empathetic_agent.execute_visual_scan(current_vitals)
+                res = await self.empathetic_agent.execute_visual_scan(current_vitals, user_id=user_id)
                 state["current_agent"] = "VISUAL_SCAN"
                 state["output"] = res
                 state["alert_level"] = "NORMAL"
@@ -84,7 +84,7 @@ class AgentOrchestrator:
                 state["action"] = "HARDWARE_STATUS_CHECK"
 
             elif target == "MEDICAL_ANALYSIS":
-                res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ANALYSIS")
+                res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ANALYSIS", user_id=user_id)
                 try:
                     res_json = json.loads(res)
                     state["output"] = res_json.get("summary", res)
@@ -96,7 +96,7 @@ class AgentOrchestrator:
                     state["action"] = "CLINICAL_ADVICE"
 
             elif target == "MEDICAL_ADVICE":
-                res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ADVICE")
+                res = await self.medical_agent.process_text_interaction(user_message, current_vitals, mode="MEDICAL_ADVICE", user_id=user_id)
                 try:
                     import re
                     res_json = json.loads(res)
@@ -137,7 +137,7 @@ class AgentOrchestrator:
                     state["action"] = "MEDICAL_FIRST_AID"
 
             else:  # EMPATHETIC_CHAT
-                res = await self.empathetic_agent.process_text_interaction(user_message)
+                res = await self.empathetic_agent.process_text_interaction(user_message, user_id=user_id)
                 state["output"] = res
                 state["alert_level"] = "NORMAL"
                 state["action"] = "COMPANION_CHAT"
@@ -153,7 +153,7 @@ class AgentOrchestrator:
                  state["current_agent"], state["alert_level"], state["action"])
         
         if self.memory and state.get("output"):
-            await self.memory.ingest_chat_cycle(user_message, state["output"])
+            await self.memory.ingest_chat_cycle(user_message, state["output"], user_id=user_id)
             
         return state
 

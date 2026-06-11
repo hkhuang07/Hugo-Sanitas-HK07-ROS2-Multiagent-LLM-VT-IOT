@@ -38,27 +38,31 @@
           <router-link to="/" class="sidebar-nav-item" active-class="active">
             <span class="index text-dim">[01]</span> DYNAMIC_TELEMETRY
           </router-link>
+          <router-link to="/vision" class="sidebar-nav-item vision-nav-item" active-class="active">
+            <span class="index text-dim">[02]</span> HK07_VISION
+          </router-link>
           <router-link to="/sensor-telemetry" class="sidebar-nav-item sensor-nav-item" active-class="active">
-            <span class="index text-dim">[02]</span> SENSOR_TELEMETRY
+            <span class="index text-dim">[03]</span> SENSOR_TELEMETRY
           </router-link>
           <router-link to="/digital-twin" class="sidebar-nav-item dt-nav-item" active-class="active">
-            <span class="index text-dim">[03]</span> HOLOGRAPHIC_TWIN
+            <span class="index text-dim">[04]</span> HOLOGRAPHIC_TWIN
           </router-link>
           <router-link to="/companion" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[04]</span> COMPANION_UPLINK
+            <span class="index text-dim">[05]</span> COMPANION_UPLINK
           </router-link>
           <router-link to="/agents" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[05]</span> AGENT_SYSTEM_LOG
+            <span class="index text-dim">[06]</span> AGENT_SYSTEM_LOG
           </router-link>
           <router-link to="/safety" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[06]</span> SAFETY_COORDINATES
+            <span class="index text-dim">[07]</span> SAFETY_COORDINATES
           </router-link>
           <router-link to="/history" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[07]</span> HISTORICAL_METRICS
+            <span class="index text-dim">[08]</span> HISTORICAL_METRICS
           </router-link>
           <router-link to="/profile" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[08]</span> PROFILE_SETTINGS
+            <span class="index text-dim">[09]</span> PROFILE_SETTINGS
           </router-link>
+          
         </div>
       </div>
 
@@ -258,5 +262,17 @@ const vitalsStore = useVitalsStore()
   background: rgba(0, 255, 102, 0.08) !important;
   box-shadow: 0 0 8px rgba(0, 255, 102, 0.15) inset;
   color: #00FF66 !important;
+}
+
+/* Vision Console nav item — holographic cyan / bio-emerald dual hover */
+.vision-nav-item {
+  border-color: rgba(0, 229, 255, 0.12) !important;
+  background: rgba(0, 229, 255, 0.02);
+}
+.vision-nav-item:hover,
+.vision-nav-item.active {
+  background: rgba(0, 229, 255, 0.08) !important;
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.15) inset;
+  color: #00E5FF !important;
 }
 </style>

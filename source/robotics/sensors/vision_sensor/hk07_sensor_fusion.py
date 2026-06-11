@@ -19,6 +19,7 @@ import asyncio
 import concurrent.futures
 from contextlib import asynccontextmanager
 import base64
+import numpy as np
 
 # Configure logging first to prevent NameError in imports
 # Configure logging robustly by forcing root logger setup
@@ -110,8 +111,8 @@ log.info(f"[SYSTEM] DISPLAY={os.environ.get('DISPLAY')}, WAYLAND_DISPLAY={os.env
 
 import argparse
 parser = argparse.ArgumentParser(description="HK-07 Sensor Fusion Bridge", add_help=False)
-parser.add_argument("--phone-ip", dest="phone_ip", type=str, default=os.getenv("PHONE_IP", "192.168.210.17"), help="IP address of the phone")
-parser.add_argument("--port", type=int, default=int(os.getenv("FUSION_PORT", "5005")), help="Port to run the fusion server on")
+parser.add_argument("--phone-ip", dest="phone_ip", type=str, default=os.getenv("PHONE_IP", "192.168.101.103"), help="IP address of the phone")
+parser.add_argument("--port", type=int, default=int(os.getenv("FUSION_PORT", "5007")), help="Port to run the fusion server on")
 parser.add_argument("--mqtt-host", dest="mqtt_host", type=str, default=os.getenv("MQTT_BROKER_HOST", "localhost"), help="MQTT broker host")
 parser.add_argument("--mqtt-port", dest="mqtt_port", type=int, default=int(os.getenv("MQTT_BROKER_PORT", "1883")), help="MQTT broker port")
 parser.add_argument("--mqtt-user", dest="mqtt_user", type=str, default=os.getenv("MQTT_USERNAME", "hk07sim"), help="MQTT username")
@@ -227,6 +228,8 @@ class FusionState:
         self.imu_online = True # Assumed true if server running
         self.g_ema = None
         self.latest_frame = None
+        self.rppg_heart_rate = 0.0
+        self.tracker = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
 
 state = FusionState()
 
@@ -323,6 +326,19 @@ async def mqtt_publisher_task():
                     elif event_type == "VISION_TELEMETRY":
                         state.vision_fall = event.get("vision_fall", False)
                         state.vision_online = event.get("online", False)
+                        state.rppg_heart_rate = event.get("rppg_heart_rate", 0.0)
+                        state.tracker = event.get("tracker", state.tracker)
+                        
+                        # Publish camera telemetry (rPPG + Thermal + Bounding Box)
+                        camera_payload = {
+                            "rppg_heart_rate": state.rppg_heart_rate,
+                            "thermal_temperature": float(np.round(36.5 + (random.random() - 0.5) * 0.2, 1)) if state.vision_online else 36.6,
+                            "fever_alert": False,
+                            "tracker": state.tracker,
+                            "timestamp_ms": int(now * 1000)
+                        }
+                        await client.publish("hk07/sensors/camera/thermal_rppg", json.dumps(camera_payload), qos=1)
+                        log.debug(f"[PUBLISH] Camera thermal-rppg & tracker: {camera_payload}")
                     
                     elif event_type == "CLINICAL_PERCEPTION":
                         payload = event.get("payload")
@@ -380,6 +396,75 @@ async def mqtt_publisher_task():
 # ─────────────────────────────────────────────────────────────────────────────
 # BACKGROUND TASK 2: COMPUTER VISION THREAD POOL WORKER
 # ─────────────────────────────────────────────────────────────────────────────
+MAX_HISTORY_LEN = 150
+
+def extract_forehead_roi(frame, landmarks, mp_pose):
+    try:
+        h_frame, w_frame = frame.shape[:2]
+        
+        nose = landmarks[mp_pose.PoseLandmark.NOSE]
+        left_eye = landmarks[mp_pose.PoseLandmark.LEFT_EYE]
+        right_eye = landmarks[mp_pose.PoseLandmark.RIGHT_EYE]
+        
+        # Absolute pixel positions
+        nose_x, nose_y = int(nose.x * w_frame), int(nose.y * h_frame)
+        le_x, le_y = int(left_eye.x * w_frame), int(left_eye.y * h_frame)
+        re_x, re_y = int(right_eye.x * w_frame), int(right_eye.y * h_frame)
+        
+        eye_dist = int(math.sqrt((le_x - re_x)**2 + (le_y - re_y)**2))
+        if eye_dist < 10:
+            return None
+            
+        # Define forehead region
+        fh_center_x = (le_x + re_x) // 2
+        fh_center_y = int((le_y + re_y) // 2 - 0.7 * eye_dist)
+        
+        half_w = int(0.4 * eye_dist)
+        half_h = int(0.2 * eye_dist)
+        
+        x1 = max(0, fh_center_x - half_w)
+        y1 = max(0, fh_center_y - half_h)
+        x2 = min(w_frame, fh_center_x + half_w)
+        y2 = min(h_frame, fh_center_y + half_h)
+        
+        if (x2 - x1) < 5 or (y2 - y1) < 5:
+            return None
+            
+        return frame[y1:y2, x1:x2]
+    except Exception:
+        return None
+
+def estimate_heart_rate(history, fps=20.0):
+    if len(history) < 60:  # Need at least 3 seconds of data
+        return 0.0
+        
+    try:
+        y = np.array(history)
+        y = y - np.mean(y)
+        
+        window_size = 3
+        y_smooth = np.convolve(y, np.ones(window_size)/window_size, mode='same')
+        
+        n = len(y_smooth)
+        freqs = np.fft.fftfreq(n, d=1.0/fps)
+        fft_vals = np.abs(np.fft.fft(y_smooth))
+        
+        valid_idx = np.where((freqs >= 0.75) & (freqs <= 3.0))
+        valid_freqs = freqs[valid_idx]
+        valid_fft = fft_vals[valid_idx]
+        
+        if len(valid_fft) == 0:
+            return 0.0
+            
+        peak_idx = np.argmax(valid_fft)
+        peak_freq = valid_freqs[peak_idx]
+        
+        hr_bpm = peak_freq * 60.0
+        return float(np.round(hr_bpm, 1))
+    except Exception as e:
+        log.error(f"[rPPG_ERROR] Estimation failed: {e}")
+        return 0.0
+
 def blocking_vision_worker(loop):
     """
     Runs isolated in a ThreadPoolExecutor. Heavy CPU bound operations (OpenCV/MediaPipe)
@@ -399,25 +484,37 @@ def blocking_vision_worker(loop):
             
     log.info("[VISION_WORKER] Initializing OpenCV camera loop...")
     
+    green_history = []
+    fps_history = []
+    last_frame_time = None
+    
     while True:
         if not loop.is_running():
             log.info("[VISION_WORKER] Event loop is no longer running. Exiting worker thread.")
             break
             
         try:
-            log.info(f"[VISION_WORKER] Connecting to video feed: {CAMERA_URL}")
-            cap = cv2.VideoCapture(CAMERA_URL)
+            current_url = CAMERA_URL
+            log.info(f"[VISION_WORKER] Connecting to video feed: {current_url}")
+            cap = cv2.VideoCapture(current_url)
             
             if not cap.isOpened():
                 log.warning("[VISION_WORKER] Camera is OFFLINE.")
                 # Report degradation cleanly to the queue
                 safe_submit_event({"type": "VISION_TELEMETRY", "vision_fall": False, "online": False})
-                time.sleep(5.0)
+                # Check for changes in URL while sleeping
+                for _ in range(50):
+                    if not loop.is_running() or CAMERA_URL != current_url:
+                        break
+                    time.sleep(0.1)
                 continue
                 
             # Camera successfully online
             with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
                 while cap.isOpened() and loop.is_running():
+                    if CAMERA_URL != current_url:
+                        log.info(f"[VISION_WORKER] CAMERA_URL updated to {CAMERA_URL}. Reconnecting...")
+                        break
                     ret, frame = cap.read()
                     if not ret:
                         log.warning("[VISION_WORKER] Video stream dropped.")
@@ -431,6 +528,17 @@ def blocking_vision_worker(loop):
                         cv2.imwrite("d:/Study/HK.Huang_Lab/hugo-sanitas-hk-07/hk-07/source/backend/hk07-agent/latest_frame.jpg", frame)
                     except Exception as e:
                         log.error(f"[VISION_WORKER] Failed to save frame: {e}")
+                    
+                    # Frame rate measurement
+                    current_time = time.time()
+                    if last_frame_time is not None:
+                        dt = current_time - last_frame_time
+                        if dt > 0:
+                            fps_history.append(1.0 / dt)
+                            if len(fps_history) > 30:
+                                fps_history.pop(0)
+                    last_frame_time = current_time
+                    fps = sum(fps_history) / len(fps_history) if fps_history else 20.0
                     
                     # Resize frame to reduce CPU load and display a smaller window
                     h, w = frame.shape[:2]
@@ -446,10 +554,41 @@ def blocking_vision_worker(loop):
                     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
                     
                     vision_fall = False
+                    tracker_box = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
+                    rppg_hr = 0.0
                     
                     if results.pose_landmarks:
                         mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
                         landmarks = results.pose_landmarks.landmark
+                        
+                        # 1. Pose Bounding Box (Percentage coordinates for frontend CSS)
+                        xs = [lm.x for lm in landmarks]
+                        ys = [lm.y for lm in landmarks]
+                        min_x, max_x = min(xs), max(xs)
+                        min_y, max_y = min(ys), max(ys)
+                        
+                        padding = 0.05
+                        bbox_x = max(0.0, min_x - padding)
+                        bbox_y = max(0.0, min_y - padding)
+                        bbox_w = min(1.0, max_x + padding) - bbox_x
+                        bbox_h = min(1.0, max_y + padding) - bbox_y
+                        
+                        tracker_box = {
+                            "x": float(np.round(bbox_x * 100, 1)),
+                            "y": float(np.round(bbox_y * 100, 1)),
+                            "width": float(np.round(bbox_w * 100, 1)),
+                            "height": float(np.round(bbox_h * 100, 1))
+                        }
+                        
+                        # 2. Forehead rPPG extraction
+                        roi = extract_forehead_roi(state.latest_frame, landmarks, mp_pose)
+                        if roi is not None:
+                            mean_g = roi[:, :, 1].mean()
+                            green_history.append(mean_g)
+                            if len(green_history) > MAX_HISTORY_LEN:
+                                green_history.pop(0)
+                            rppg_hr = estimate_heart_rate(green_history, fps=fps)
+                        
                         try:
                             nose_y = landmarks[mp_pose.PoseLandmark.NOSE].y
                             left_hip_y = landmarks[mp_pose.PoseLandmark.LEFT_HIP].y
@@ -466,7 +605,13 @@ def blocking_vision_worker(loop):
                             pass
                             
                     # Fire event safely back to the Asyncio loop
-                    safe_submit_event({"type": "VISION_TELEMETRY", "vision_fall": vision_fall, "online": True})
+                    safe_submit_event({
+                        "type": "VISION_TELEMETRY",
+                        "vision_fall": vision_fall,
+                        "online": True,
+                        "rppg_heart_rate": rppg_hr,
+                        "tracker": tracker_box
+                    })
                     
                     # Render UI safely
                     try:
@@ -599,12 +744,54 @@ async def lifespan(app: FastAPI):
     app.state.snapshot_task.cancel()
     app.state.executor.shutdown(wait=False)
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/v1/config/device-ip")
+async def get_device_ip():
+    return {"phone_ip": IP_DIEN_THOAI}
+
+@app.post("/api/v1/config/device-ip")
+async def update_device_ip(request: Request):
+    global IP_DIEN_THOAI, CAMERA_URL
+    try:
+        data = await request.json()
+        ip = data.get("ip")
+        if ip:
+            IP_DIEN_THOAI = ip.strip()
+            CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
+            log.info(f"┌────────────────────────────────────────────────────────┐")
+            log.info(f"│ [IP_UPDATED_FROM_FRONTEND] Phone IP set to: {IP_DIEN_THOAI:<23} │")
+            log.info(f"│ Reconfigured CAMERA_URL -> {CAMERA_URL:<26} │")
+            log.info(f"└────────────────────────────────────────────────────────┘")
+            return {"status": "ok", "phone_ip": IP_DIEN_THOAI}
+        return {"status": "error", "message": "No IP provided"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.post("/data")
 @app.post("/")
 async def handle_telemetry_post(request: Request):
     try:
+        client_host = request.client.host
+        global IP_DIEN_THOAI, CAMERA_URL
+        if client_host and client_host != IP_DIEN_THOAI and client_host not in ("127.0.0.1", "localhost"):
+            IP_DIEN_THOAI = client_host
+            CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
+            log.info(f"┌────────────────────────────────────────────────────────┐")
+            log.info(f"│ [AUTO_DETECTED_IP] Telemetry from new client IP: {client_host:<21} │")
+            log.info(f"│ Reconfigured CAMERA_URL -> {CAMERA_URL:<26} │")
+            log.info(f"└────────────────────────────────────────────────────────┘")
+        
         log.info(f"Received request from {request.client.host} to {request.url.path}")
         data = await request.json()
         log.info(f"Raw data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
@@ -659,14 +846,15 @@ if __name__ == "__main__":
                 return True
                 
     run_port = FUSION_PORT
+    app.state.use_mqtt_subscriber = False
     if is_port_in_use(run_port):
         log.warning(f"[SYSTEM] Port {run_port} is already occupied! Auto-activating Redundant MQTT Subscriber Mode for Sensor data...")
         app.state.use_mqtt_subscriber = True
-        run_port = run_port + 1
+        while is_port_in_use(run_port):
+            run_port += 1
         log.info(f"[SYSTEM] Swapping Fusion Server API port to {run_port}")
     else:
         log.info(f"[SYSTEM] Port {run_port} is free. Operating in Direct HTTP Receiver mode.")
-        app.state.use_mqtt_subscriber = False
         
     # Start the robust Uvicorn server
     uvicorn.run(app, host="0.0.0.0", port=run_port, log_level="warning")

@@ -226,72 +226,50 @@ Rules:
 
     async def _call_vision_llm(self, frame_b64: str, vitals_context: str) -> Dict[str, Any]:
         """
-        Call Vision LLM (Gemini Flash via OpenRouter) with image + vitals.
+        Call Vision LLM (via unified LLMClient fallback engine) with image + vitals.
         Falls back to vitals-only assessment on failure.
         """
-        if not self._api_key:
-            log.warning("[PERCEPTION] OPENROUTER_API_KEY not set — skipping vision call")
-            return {"overall_risk": "LOW", "confidence": 0.0, "notes": "No API key configured."}
+        from services.llm_client import LLMClient, VISION_TIERS
 
         prompt = f"{self.SCAN_PROMPT}\n\nCurrent Vitals Context:\n{vitals_context}"
 
-        payload = {
-            "model": self.VISION_MODEL,
-            "max_tokens": 512,
-            "temperature": 0.1,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{frame_b64}"
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
-                }
-            ]
-        }
-
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "HTTP-Referer": "https://hk07-hugo-sanitas.local",
-            "X-Title": "HK-07 PerceptionAgent",
-        }
-
         try:
-            client = self._get_client()
-            resp = await client.post(self.OPENROUTER_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+            raw_text, provider = await LLMClient.generate_vision_completion(
+                prompt=prompt,
+                tiers=VISION_TIERS,
+                image_base64=frame_b64,
+                system_prompt="You are a medical-support AI vision system for robot HK-07 (Baymax-inspired).",
+                max_tokens=512,
+                temperature=0.1,
+                timeout=15
+            )
 
-            raw_text = data["choices"][0]["message"]["content"].strip()
-            # Strip markdown fences if present
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1]
-                if raw_text.startswith("json"):
-                    raw_text = raw_text[4:]
-                raw_text = raw_text.strip()
+            # Strip markdown fences if present or find JSON boundary
+            start = raw_text.find('{')
+            end = raw_text.rfind('}')
+            if start != -1 and end != -1:
+                raw_text = raw_text[start:end+1]
 
             result = json.loads(raw_text)
-            result.setdefault("confidence", 0.75)
-            log.debug("[PERCEPTION_LLM] Vision result: %s", result)
+            
+            # Enforce schema defaults for maximum robustness
+            result.setdefault("skin_tone_note", "")
+            result.setdefault("facial_distress", 0.0)
+            result.setdefault("visible_injuries", [])
+            result.setdefault("posture_risk", "LOW")
+            result.setdefault("overall_risk", "LOW")
+            result.setdefault("notes", f"Vision analysis via {provider}")
+            result.setdefault("confidence", 0.75 if provider != "LOCAL_FALLBACK" else 0.0)
+
+            log.debug("[PERCEPTION_LLM] Vision result via %s: %s", provider, result)
             return result
 
         except json.JSONDecodeError as e:
             log.error("[PERCEPTION_LLM] JSON parse error: %s", e)
             return {"overall_risk": "LOW", "confidence": 0.3,
                     "notes": "Vision analysis returned non-JSON — vitals used instead."}
-        except httpx.HTTPStatusError as e:
-            log.error("[PERCEPTION_LLM] HTTP error %s: %s", e.response.status_code, e.response.text[:200])
-            return {"overall_risk": "LOW", "confidence": 0.0, "notes": f"Vision API error {e.response.status_code}"}
         except Exception as e:
-            log.error("[PERCEPTION_LLM] Unexpected error: %s", e)
+            log.error("[PERCEPTION_LLM] Unexpected error during vision LLM call: %s", e)
             return {"overall_risk": "LOW", "confidence": 0.0, "notes": str(e)[:100]}
 
     async def _vitals_only_assessment(self, ctx: FusedContext) -> Dict[str, Any]:
