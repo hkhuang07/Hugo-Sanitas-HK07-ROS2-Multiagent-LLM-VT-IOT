@@ -375,11 +375,26 @@ function riskClass(risk: string) {
 
 async function executeScan() {
   if (scanLoading.value) return
+  
+  const token = authStore.accessToken
+  if (!token || token === 'undefined' || token === 'null') {
+    console.error("CRITICAL: Access Token is missing from authStore. Attempting silent session refresh...");
+    const restored = await authStore.refreshSession()
+    if (!restored) {
+      chatLog.value.push({
+        role: 'hugo',
+        content: '[ERR_AUTH_REQUIRED] Yêu cầu đăng nhập để thực hiện quét sinh thể.',
+        timestamp: getCurrentTimeString()
+      })
+      return
+    }
+  }
+
   scanLoading.value = true
   scanResult.value = null
   try {
-    const resp = await api.post('/agents/perception/scan', {})
-    const data = resp.data
+    const resp = await api.post('/agents/perception/scan', {}, { timeout: 30000 })
+    const data = resp.data?.data
     if (data?.scan) {
       scanResult.value = data.scan as PerceptionScan
       // Push scan context to chat log
@@ -461,6 +476,24 @@ async function sendChat() {
   const msg = userInput.value.trim()
   if (!msg) return
   
+  const token = authStore.accessToken
+  if (!token || token === 'undefined' || token === 'null') {
+    console.error("CRITICAL: Access Token is missing from authStore");
+  }
+  
+  // Pre-flight: ensure we have a valid token before sending
+  if (!authStore.accessToken || authStore.accessToken === 'undefined' || authStore.accessToken === 'null') {
+    const restored = await authStore.refreshSession()
+    if (!restored) {
+      chatLog.value.push({
+        role: 'hugo',
+        content: '[ERR_AUTH_REQUIRED] Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+        timestamp: getCurrentTimeString()
+      })
+      return
+    }
+  }
+  
   userInput.value = ''
   chatLoading.value = true
   
@@ -474,7 +507,7 @@ async function sendChat() {
   scrollChatToBottom()
 
   try {
-    const resp = await api.post('/agents/empathetic/interact', { message: msg })
+    const resp = await api.post('/agents/empathetic/interact', { message: msg }, { timeout: 30000 })
     const reply = resp.data.data?.response || 'Không nhận được câu trả lời hợp lệ từ Agent.'
     chatLog.value.push({
       role: 'hugo',
@@ -607,9 +640,13 @@ const pendingPlan = ref<any>(null)
 let checkInterval: any = null
 
 async function checkPendingActions() {
+  const currentToken = authStore.accessToken;
+  if (!currentToken || currentToken === 'undefined' || currentToken === 'null') {
+      return; // Absolute freeze. Zero network usage if the token is literal junk.
+  }
   try {
     const response = await api.get('/agents/action/plan/latest')
-    const plan = response.data?.plan
+    const plan = response.data?.data?.plan
     if (plan && plan.status === 'AWAITING_CONFIRM') {
       pendingPlan.value = plan
     } else {
@@ -624,11 +661,19 @@ async function confirmAction(confirm: boolean) {
   if (!pendingPlan.value) return
   const planId = pendingPlan.value.plan_id
   pendingPlan.value = null
+  const token = authStore.accessToken
+  if (!token || token === 'undefined' || token === 'null') {
+    console.error("CRITICAL: Access Token is missing from authStore. Attempting silent session refresh...");
+    const success = await authStore.refreshSession()
+    if (!success) {
+      return
+    }
+  }
   try {
-    const resp = await api.post('/agents/action/confirm', { plan_id: planId, confirm })
+    const resp = await api.post('/agents/action/confirm', { plan_id: planId, confirm }, { timeout: 30000 })
     chatLog.value.push({
       role: 'hugo',
-      content: `[ACTION_PLAN_CONFIRMATION] ${confirm ? 'Đã xác nhận thực thi hành động.' : 'Đã hủy thực thi hành động.'} Kết quả: ${resp.data?.result || ''}`,
+      content: `[ACTION_PLAN_CONFIRMATION] ${confirm ? 'Đã xác nhận thực thi hành động.' : 'Đã hủy thực thi hành động.'} Kết quả: ${resp.data?.data?.result || ''}`,
       timestamp: getCurrentTimeString()
     })
     await nextTick()
@@ -643,14 +688,26 @@ async function confirmAction(confirm: boolean) {
   }
 }
 
+function handleUnauthorized() {
+  if (checkInterval) {
+    clearInterval(checkInterval)
+    checkInterval = null
+  }
+}
+
 onMounted(() => {
   agentsStore.initSession(authStore.user?.id)
   scrollChatToBottom()
   checkInterval = setInterval(checkPendingActions, 2000)
+  document.addEventListener('hk07:unauthorized', handleUnauthorized)
 })
 
 onUnmounted(() => {
-  if (checkInterval) clearInterval(checkInterval)
+  if (checkInterval) {
+    clearInterval(checkInterval)
+    checkInterval = null
+  }
+  document.removeEventListener('hk07:unauthorized', handleUnauthorized)
 })
 </script>
 

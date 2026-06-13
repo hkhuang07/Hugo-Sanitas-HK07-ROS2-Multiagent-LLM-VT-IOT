@@ -19,10 +19,24 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8888',
         changeOrigin: true,
+        timeout: 60000,
+        proxyTimeout: 60000,
+        // Forward cookies correctly: rewrite domain so browser cookies pass through
+        cookieDomainRewrite: 'localhost',
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // Explicitly forward Cookie header — required for HttpOnly refresh token
+            if (req.headers.cookie) {
+              proxyReq.setHeader('Cookie', req.headers.cookie)
+            }
+          })
+        }
       },
       '/ws': {
         target: 'ws://localhost:8888',
         ws: true,
+        timeout: 60000,
+        proxyTimeout: 60000,
       },
     },
   },

@@ -29,4 +29,6 @@ public class AgentLogRequest {
     private String llmProvider;      // GROQ | GEMINI | THRESHOLD | MOCK
 
     private int latencyMs;           // End-to-end latency measured by Python agent
+
+    private String userId;
 }

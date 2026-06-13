@@ -22,7 +22,8 @@ import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from services.agent_log_client import log_agent_decision
 from utils.enums import LLMProvider
-from services.blackboard_service import get_blackboard, ClinicalEntry
+from services.blackboard_service import get_blackboard, ClinicalEntry, current_user_id
+from typing import Optional
 
 # Load env variables
 load_dotenv()
@@ -136,6 +137,7 @@ class MedicalAgent:
         self._status = "INITIALIZING"
         self._last_analysis = None
         self._buffer = collections.deque(maxlen=50)
+        self._buffers = {}  # Per-device vitals buffers
         self._circuit_breaker = CircuitBreaker()
         self._last_state = "NORMAL"
         self._last_analyzed_hr = 0.0
@@ -177,11 +179,18 @@ class MedicalAgent:
             if len(parts) >= 4:
                 device_id = parts[3]
                 self._volatile_context["device_id"] = device_id
+                
+                if not hasattr(self, "_buffers"):
+                    self._buffers = {}
+                if device_id not in self._buffers:
+                    self._buffers[device_id] = collections.deque(maxlen=50)
+                self._buffers[device_id].append(data)
         except Exception:
             pass
 
-    def _aggregate_vitals(self) -> dict:
-        if not self._buffer:
+    def _aggregate_vitals(self, buf=None) -> dict:
+        buffer_to_use = buf if buf is not None else self._buffer
+        if not buffer_to_use:
             return {}
 
         total_hr = 0.0
@@ -189,9 +198,9 @@ class MedicalAgent:
         total_temp = 0.0
         total_sys = 0.0
         total_dia = 0.0
-        count = len(self._buffer)
+        count = len(buffer_to_use)
 
-        for item in self._buffer:
+        for item in buffer_to_use:
             total_hr += item.get("heartRate", 72)
             total_spo2 += item.get("spo2", 98.0)
             total_temp += item.get("bodyTemperature", 36.6)
@@ -212,6 +221,7 @@ class MedicalAgent:
         Falls back to factory default constants if backend is offline or unauthenticated.
         """
         from services.agent_log_client import _client as log_client
+        from services.blackboard_service import current_auth_token
         
         defaults = {
             "hrMin": 50, "hrMax": 120,
@@ -219,13 +229,18 @@ class MedicalAgent:
             "systolicMax": 140, "diastolicMax": 90
         }
         
-        if not log_client or not log_client._http or not log_client._token:
+        if not log_client or not log_client._http:
+            return defaults
+            
+        token = current_auth_token.get() or log_client._token
+        if not token:
             return defaults
             
         try:
+            auth_val = token if token.startswith("Bearer ") else f"Bearer {token}"
             resp = await log_client._http.get(
                 f"/api/thresholds/{device_id}",
-                headers={"Authorization": f"Bearer {log_client._token}"}
+                headers={"Authorization": auth_val}
             )
             if resp.status_code == 200:
                 body = resp.json()
@@ -240,12 +255,13 @@ class MedicalAgent:
             
         return defaults
 
-    def compute_stress_index(self) -> dict:
+    def compute_stress_index(self, buf=None) -> dict:
         """
         Calculate clinical StressIndex approximated via Heart Rate Variability (HRV SDNN)
         over the sliding buffer of physiological telemetry.
         """
-        hr_samples = [item.get("heartRate") for item in self._buffer if item.get("heartRate")]
+        buffer_to_use = buf if buf is not None else self._buffer
+        hr_samples = [item.get("heartRate") for item in buffer_to_use if item.get("heartRate")]
         
         if len(hr_samples) < 5:
             return {
@@ -285,52 +301,64 @@ class MedicalAgent:
         }
 
     async def _process_latest_buffer(self):
-        if not self._buffer:
+        if not hasattr(self, "_buffers") or not self._buffers:
+            if self._buffer:
+                await self._process_device_buffer("default", self._buffer)
             return
 
+        for device_id, buf in list(self._buffers.items()):
+            if not buf:
+                continue
+            await self._process_device_buffer(device_id, buf)
+
+    async def _process_device_buffer(self, device_id: str, buf):
         # 1. Compute sliding window average (Edge Computing)
-        agg = self._aggregate_vitals()
+        agg = self._aggregate_vitals(buf)
         if not agg:
             return
 
         # Compute HRV Stress Index and track in Blackboard history
-        stress_info = self.compute_stress_index()
+        stress_info = self.compute_stress_index(buf)
         score = stress_info.get("score", 15)
         bb = get_blackboard()
+        
+        # Resolve thresholds
+        now_time = time.time()
+        if device_id not in self._thresholds_cache or (now_time - self._last_thresholds_fetch_time) > 5.0:
+            self._thresholds_cache[device_id] = await self._fetch_dynamic_thresholds(device_id)
+            self._last_thresholds_fetch_time = now_time
+            
+        thresholds = self._thresholds_cache[device_id]
+        
+        # Get target userId from thresholds
+        user_id = thresholds.get("userId") or "a0000000-0000-0000-0000-000000000001"
+        
         try:
-            history = await bb.read_value("blackboard:clinical:stress_history")
+            stress_history_key = f"blackboard:clinical:stress_history:{user_id}"
+            history = await bb.read_value(stress_history_key)
             if not history:
                 history = []
             if not history or history[-1] != score:
                 history.append(score)
                 if len(history) > 3:
                     history.pop(0)
-                await bb.write_value("blackboard:clinical:stress_history", history, ttl_seconds=300)
-                log.debug("[STRESS_HISTORY_TRACK] Updated stress history on Blackboard: %s", history)
+                await bb.write_value(stress_history_key, history, ttl_seconds=300)
+                log.debug("[STRESS_HISTORY_TRACK] Updated stress history on Blackboard for %s: %s", user_id, history)
         except Exception as e:
-            log.error("[STRESS_HISTORY_ERROR] Error updating stress history: %s", e)
-
+            log.error("[STRESS_HISTORY_ERROR] Error updating stress history for %s: %s", user_id, e)
 
         hr = agg["heartRate"]
         spo2 = agg["spo2"]
         temp = agg["bodyTemperature"]
 
-        # Dynamic Threshold resolution
-        now_time = time.time()
-        device_id = self._volatile_context.get("device_id", "default")
-        if device_id not in self._thresholds_cache or (now_time - self._last_thresholds_fetch_time) > 5.0:
-            self._thresholds_cache[device_id] = await self._fetch_dynamic_thresholds(device_id)
-            self._last_thresholds_fetch_time = now_time
-            
-        thresholds = self._thresholds_cache[device_id]
         hr_min = thresholds.get("hrMin", 50)
         hr_max = thresholds.get("hrMax", 120)
         spo2_min = thresholds.get("spo2Min", 92.0)
         temp_max = thresholds.get("tempMax", 38.5)
 
         # Check if the aggregated vitals are critical using dynamic thresholds
-        is_falling = any(item.get("is_falling") in (True, 1, 1.0, "true", "True") for item in self._buffer)
-        emergency_pressed = any(item.get("emergency_button_pressed") in (True, 1, 1.0, "true", "True") for item in self._buffer)
+        is_falling = any(item.get("is_falling") in (True, 1, 1.0, "true", "True") for item in buf)
+        emergency_pressed = any(item.get("emergency_button_pressed") in (True, 1, 1.0, "true", "True") for item in buf)
 
         is_critical = (
             hr < hr_min or hr > hr_max or
@@ -340,10 +368,18 @@ class MedicalAgent:
 
         current_state = "CRITICAL" if is_critical else "NORMAL"
         
-        # 2. State-Transition Filtering & Delta calculation
-        state_changed = (current_state != self._last_state)
+        # We need a state tracking dict per device!
+        if not hasattr(self, "_last_device_states"):
+            self._last_device_states = {}
+        if not hasattr(self, "_last_device_analyzed_hr"):
+            self._last_device_analyzed_hr = {}
+            
+        last_state = self._last_device_states.get(device_id, "NORMAL")
+        last_analyzed_hr = self._last_device_analyzed_hr.get(device_id, 0.0)
         
-        if current_state == "CRITICAL" and self._last_state != "CRITICAL":
+        state_changed = (current_state != last_state)
+        
+        if current_state == "CRITICAL" and last_state != "CRITICAL":
             # State transitioned to CRITICAL - publish immediate WAKEUP event to MQTT
             triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             trigger_reasons = []
@@ -369,7 +405,8 @@ class MedicalAgent:
                 "outputDecision": f"[CẢNH BÁO NGUY HIỂM] Phát hiện {reasons_desc}. Tôi đang kích hoạt quy trình cứu hộ SOS khẩn cấp. Vui lòng giữ bình tĩnh, trợ giúp đang đến.",
                 "llmProvider": "LOCAL_RULE",
                 "latencyMs": 0,
-                "triggeredAt": triggered_at
+                "triggeredAt": triggered_at,
+                "userId": user_id
             }
             try:
                 self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
@@ -378,27 +415,27 @@ class MedicalAgent:
                 log.error("[MEDICAL_PROACTIVE_WAKEUP_ERROR] Failed to publish wakeup event: %s", e)
 
         delta_hr = 0.0
-        if self._last_analyzed_hr > 0.0:
-            delta_hr = abs(hr - self._last_analyzed_hr) / self._last_analyzed_hr
+        if last_analyzed_hr > 0.0:
+            delta_hr = abs(hr - last_analyzed_hr) / last_analyzed_hr
             
         should_trigger_llm = state_changed or (current_state == "CRITICAL" and delta_hr >= 0.15)
 
         if should_trigger_llm:
             summary = f"Aggregated Vitals: HR={hr:.1f}bpm SpO2={spo2:.1f}% Temp={temp:.1f}°C"
-            log.info("[MEDICAL_TRIGGER] Triggering LLM analysis: StateChanged=%s | DeltaHR=%.2f%%", state_changed, delta_hr * 100)
+            log.info("[MEDICAL_TRIGGER] Triggering LLM analysis for %s: StateChanged=%s | DeltaHR=%.2f%%", user_id, state_changed, delta_hr * 100)
             
             # Save new states
-            self._last_state = current_state
+            self._last_device_states[device_id] = current_state
             if is_critical:
-                self._last_analyzed_hr = hr
+                self._last_device_analyzed_hr[device_id] = hr
             else:
-                self._last_analyzed_hr = 0.0 # Reset last analyzed HR when normal
+                self._last_device_analyzed_hr[device_id] = 0.0
 
             # Trigger LLM in background task (Non-blocking)
-            async def run_bg_analysis(vitals_data, vitals_summary):
+            async def run_bg_analysis(vitals_data, vitals_summary, target_user_id):
                 try:
                     start_time = time.time()
-                    analysis = await self._call_llm_with_fallback(vitals_data)
+                    analysis = await self._call_llm_with_fallback(vitals_data, user_id=target_user_id)
                     self._last_analysis = analysis
                     latency = int((time.time() - start_time) * 1000)
 
@@ -415,7 +452,8 @@ class MedicalAgent:
                         "outputDecision": f"{analysis.get('summary', '')} LỜI KHUYÊN: {analysis.get('action', '')}",
                         "llmProvider": "GROQ_PROACTIVE" if is_emergency else "GROQ_ANALYSIS",
                         "latencyMs": latency,
-                        "triggeredAt": triggered_at
+                        "triggeredAt": triggered_at,
+                        "userId": target_user_id
                       }
 
                     self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
@@ -438,11 +476,11 @@ class MedicalAgent:
                         action_recommended=analysis.get("action", "Lời khuyên sơ cứu"),
                         confidence_score=0.9
                     )
-                    await bb.write_clinical(entry)
+                    await bb.write_clinical(entry, user_id=target_user_id)
                 except Exception as ex:
                     log.error("[MEDICAL_BG_ANALYSIS_ERROR] Exception: %s", ex)
 
-            asyncio.create_task(run_bg_analysis(agg, summary))
+            asyncio.create_task(run_bg_analysis(agg, summary, user_id))
 
     async def run_loop(self):
         self._status = "ACTIVE"
@@ -464,7 +502,9 @@ class MedicalAgent:
             if self._client:
                 await self._client.aclose()
 
-    async def process_text_interaction(self, user_message: str, current_vitals: dict, mode: str = "MEDICAL_ANALYSIS", user_id: str = "owner@hk07.local") -> str:
+    async def process_text_interaction(self, user_message: str, current_vitals: dict, mode: str = "MEDICAL_ANALYSIS", user_id: Optional[str] = None) -> str:
+        if user_id is None:
+            user_id = current_user_id.get()
         """Called by the supervisor orchestrator to analyze medical query & vitals"""
         if not self._client:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
@@ -617,7 +657,9 @@ class MedicalAgent:
             log.error("[MEDICAL_OPENROUTER_ERROR] Exception: %s", e)
             return "", False
 
-    async def _call_llm_with_fallback(self, vitals: dict, user_id: str = "owner@hk07.local") -> dict:
+    async def _call_llm_with_fallback(self, vitals: dict, user_id: Optional[str] = None) -> dict:
+        if user_id is None:
+            user_id = current_user_id.get()
         if not self._circuit_breaker.allow_request():
             log.warning("[CIRCUIT_BREAKER] Request blocked (circuit is OPEN). Triggering local rule-based diagnosis.")
             return self._generate_rule_based_diagnosis(vitals)
@@ -651,7 +693,9 @@ class MedicalAgent:
 
 
 
-    async def _call_groq(self, vitals: dict, user_id: str = "owner@hk07.local") -> tuple[dict, bool]:
+    async def _call_groq(self, vitals: dict, user_id: Optional[str] = None) -> tuple[dict, bool]:
+        if user_id is None:
+            user_id = current_user_id.get()
         prompt_str = self._build_prompt(vitals)
         system_prompt = MEDICAL_SYSTEM_PROMPT
         baseline = await self.memory.recall_medical_baseline(user_id=user_id)
@@ -682,7 +726,9 @@ class MedicalAgent:
             log.error("[MEDICAL_GROQ_BG_ERROR] Exception: %s", e)
             return {}, False
 
-    async def _call_openrouter(self, vitals: dict, user_id: str = "owner@hk07.local") -> tuple[dict, bool]:
+    async def _call_openrouter(self, vitals: dict, user_id: Optional[str] = None) -> tuple[dict, bool]:
+        if user_id is None:
+            user_id = current_user_id.get()
         prompt_str = self._build_prompt(vitals)
         system_prompt = MEDICAL_SYSTEM_PROMPT
         baseline = await self.memory.recall_medical_baseline(user_id=user_id)

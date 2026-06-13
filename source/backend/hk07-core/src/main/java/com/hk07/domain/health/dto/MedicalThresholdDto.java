@@ -19,6 +19,7 @@ import java.util.UUID;
 public class MedicalThresholdDto {
 
     private UUID id;
+    private UUID userId;
     private String deviceId;
 
     // Heart Rate (BPM)

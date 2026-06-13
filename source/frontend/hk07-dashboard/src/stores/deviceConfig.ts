@@ -28,8 +28,8 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
   if (_storedSensorPort === '8080') localStorage.removeItem(LS_PORT_SENSOR)
 
   const _oldIp = localStorage.getItem('hk07_device_ip')
-  const phoneIp = ref(localStorage.getItem(LS_PHONE_IP) || _oldIp || '192.168.101.103')
-  const pcIp = ref(localStorage.getItem(LS_PC_IP) || '192.168.101.49')
+  const phoneIp = ref(localStorage.getItem(LS_PHONE_IP) || _oldIp)
+  const pcIp = ref(localStorage.getItem(LS_PC_IP))
   const cameraPort = ref(localStorage.getItem(LS_PORT_CAM) || '8080')
   const sensorPort = ref(localStorage.getItem(LS_PORT_SENSOR) || '5007')
 
@@ -126,7 +126,7 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ip: phoneIp.value })
       })
-    } catch {}
+    } catch { }
   }, 1000)
 
   return {

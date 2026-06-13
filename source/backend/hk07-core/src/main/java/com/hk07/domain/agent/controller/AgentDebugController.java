@@ -33,7 +33,7 @@ public class AgentDebugController {
     private final WebClient agentClient;
 
     public AgentDebugController(
-            @Value("${hk07.ai.agent-url:http://127.0.0.1:8889}") String agentUrl) {
+            @Value("${hk07.ai.agent-url:http://127.0.0.1:8000}") String agentUrl) {
         this.agentClient = WebClient.builder()
                 .baseUrl(agentUrl)
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024)) // 2MB buffer
@@ -86,10 +86,11 @@ public class AgentDebugController {
     @PostMapping("/test/orchestrator")
     @SuppressWarnings("unchecked")
     public ResponseEntity<ApiResponse<Map<String, Object>>> testOrchestrator(
-            @RequestBody(required = false) Map<String, Object> body) {
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
 
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        String userId = (auth != null) ? auth.getName() : "owner@hk07.local";
+        String userId = (auth != null) ? auth.getName() : "a0000000-0000-0000-0000-000000000001";
 
         java.util.Map<String, Object> mutableBody = new java.util.HashMap<>();
         if (body != null) {
@@ -101,8 +102,13 @@ public class AgentDebugController {
         mutableBody.put("userId", userId);
 
         try {
-            Map<String, Object> result = agentClient.post()
-                    .uri("/api/v1/agents/test/orchestrator")
+            var requestSpec = agentClient.post()
+                    .uri("/api/v1/agents/test/orchestrator");
+            if (authHeader != null) {
+                requestSpec = requestSpec.header("Authorization", authHeader);
+            }
+
+            Map<String, Object> result = requestSpec
                     .bodyValue(mutableBody)
                     .retrieve()
                     .bodyToMono(Map.class)
@@ -137,10 +143,11 @@ public class AgentDebugController {
     @PostMapping("/v2/orchestrate")
     @SuppressWarnings("unchecked")
     public ResponseEntity<ApiResponse<Map<String, Object>>> orchestrateV2(
-            @RequestBody Map<String, Object> body) {
+            @RequestBody Map<String, Object> body,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        String userId = (auth != null) ? auth.getName() : "owner@hk07.local";
+        String userId = (auth != null) ? auth.getName() : "a0000000-0000-0000-0000-000000000001";
 
         java.util.Map<String, Object> mutableBody = new java.util.HashMap<>();
         if (body != null) {
@@ -149,8 +156,13 @@ public class AgentDebugController {
         mutableBody.put("userId", userId);
 
         try {
-            Map<String, Object> result = agentClient.post()
-                    .uri("/api/v1/agents/v2/orchestrate")
+            var requestSpec = agentClient.post()
+                    .uri("/api/v1/agents/v2/orchestrate");
+            if (authHeader != null) {
+                requestSpec = requestSpec.header("Authorization", authHeader);
+            }
+
+            Map<String, Object> result = requestSpec
                     .bodyValue(mutableBody)
                     .retrieve()
                     .bodyToMono(Map.class)

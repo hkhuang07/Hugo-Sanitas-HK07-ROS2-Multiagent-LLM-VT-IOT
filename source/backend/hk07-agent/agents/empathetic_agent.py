@@ -12,10 +12,11 @@ import os
 import time
 import paho.mqtt.client as mqtt
 from collections import deque
+from typing import Optional
 from services.agent_log_client import log_agent_decision
 from utils.enums import LLMProvider
 from services.llm_client import LLMClient, EMPATHY_TIERS, SYSTEM_QUERY_TIERS, VISION_TIERS
-from services.blackboard_service import get_blackboard, EmotionalEntry
+from services.blackboard_service import get_blackboard, EmotionalEntry, current_user_id
 
 log = logging.getLogger("hk07.empathy_agent")
 
@@ -72,53 +73,58 @@ class EmpatheticAgent:
             while True:
                 await asyncio.sleep(2.0)  # Check stress history trend every 2.0s
                 
-                # Check stress history from Blackboard
+                # Check stress history from Blackboard for all active users
                 bb = get_blackboard()
                 try:
-                    history = await bb.read_value("blackboard:clinical:stress_history")
-                    if history and len(history) >= 3:
-                        # history is [t1, t2, t3], t3 is the latest
-                        t1, t2, t3 = history[-3], history[-2], history[-1]
-                        
-                        # Consecutively rising and latest >= 30 (not calm)
-                        if t3 > t2 > t1 and t3 >= 30:
-                            # Verify if this trend was already processed
-                            last_processed = await bb.read_value("blackboard:empathy:stress_processed_trend")
-                            if last_processed != history:
-                                # Mark as processed
-                                await bb.write_value("blackboard:empathy:stress_processed_trend", history, ttl_seconds=300)
-                                
-                                # Generate and publish comforting proactive response
-                                decision_text = (
-                                    "[HÀNH VI CHỦ ĐỘNG] Tôi nhận thấy chỉ số căng thẳng của bạn đang tăng liên tục. "
-                                    "Hãy cùng tôi thực hiện bài tập thở sâu và thư giãn cơ thể nhé. "
-                                    "Tôi luôn ở đây bên bạn."
-                                )
-                                
-                                triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                                payload = {
-                                    "id": f"evt-{int(time.time())}",
-                                    "eventType": "AGENT_DECISION",
-                                    "agentType": "EMPATHETIC",
-                                    "alertLevel": "NORMAL",
-                                    "inputContext": f"Proactive Stress Spike: trend={history}",
-                                    "outputDecision": decision_text,
-                                    "llmProvider": "LOCAL_PROACTIVE",
-                                    "latencyMs": 0,
-                                    "triggeredAt": triggered_at
-                                }
-                                
-                                # Publish proactive alert to dashboard
-                                self._mqtt.publish("hk07/agents/empathetic/output", json.dumps(payload), qos=1)
-                                log.info("[EMPATHY_PROACTIVE_TRIGGER] Consecutively rising stress detected %s. Published comforting payload.", history)
-                                
-                                # Write EmotionalEntry to Blackboard
-                                entry = EmotionalEntry(
-                                    detected_emotion="anxious",
-                                    emotional_intensity=float(t3 / 100.0),
-                                    tone_analysis=f"Stress score is rising: {history}"
-                                )
-                                await bb.write_emotional(entry)
+                    user_ids = await bb.get_active_stress_user_ids()
+                    for user_id in user_ids:
+                        stress_history_key = f"blackboard:clinical:stress_history:{user_id}"
+                        history = await bb.read_value(stress_history_key)
+                        if history and len(history) >= 3:
+                            # history is [t1, t2, t3], t3 is the latest
+                            t1, t2, t3 = history[-3], history[-2], history[-1]
+                            
+                            # Consecutively rising and latest >= 30 (not calm)
+                            if t3 > t2 > t1 and t3 >= 30:
+                                # Verify if this trend was already processed
+                                processed_key = f"blackboard:empathy:stress_processed_trend:{user_id}"
+                                last_processed = await bb.read_value(processed_key)
+                                if last_processed != history:
+                                    # Mark as processed
+                                    await bb.write_value(processed_key, history, ttl_seconds=300)
+                                    
+                                    # Generate and publish comforting proactive response
+                                    decision_text = (
+                                        "[HÀNH VI CHỦ ĐỘNG] Tôi nhận thấy chỉ số căng thẳng của bạn đang tăng liên tục. "
+                                        "Hãy cùng tôi thực hiện bài tập thở sâu và thư giãn cơ thể nhé. "
+                                        "Tôi luôn ở đây bên bạn."
+                                    )
+                                    
+                                    triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                                    payload = {
+                                        "id": f"evt-{int(time.time())}",
+                                        "eventType": "AGENT_DECISION",
+                                        "agentType": "EMPATHETIC",
+                                        "alertLevel": "NORMAL",
+                                        "inputContext": f"Proactive Stress Spike: trend={history}",
+                                        "outputDecision": decision_text,
+                                        "llmProvider": "LOCAL_PROACTIVE",
+                                        "latencyMs": 0,
+                                        "triggeredAt": triggered_at,
+                                        "userId": user_id
+                                    }
+                                    
+                                    # Publish proactive alert to dashboard
+                                    self._mqtt.publish("hk07/agents/empathetic/output", json.dumps(payload), qos=1)
+                                    log.info("[EMPATHY_PROACTIVE_TRIGGER] Consecutively rising stress detected %s for user %s. Published comforting payload.", history, user_id)
+                                    
+                                    # Write EmotionalEntry to Blackboard
+                                    entry = EmotionalEntry(
+                                        detected_emotion="anxious",
+                                        emotional_intensity=float(t3 / 100.0),
+                                        tone_analysis=f"Stress score is rising: {history}"
+                                    )
+                                    await bb.write_emotional(entry, user_id=user_id)
                 except Exception as ex:
                     log.error("[EMPATHY_AGENT_LOOP_ERROR] Error running proactive empathy loop: %s", ex)
         except asyncio.CancelledError:
@@ -138,7 +144,9 @@ class EmpatheticAgent:
         if hasattr(self, '_client') and self._client:
             await self._client.aclose()
 
-    async def process_text_interaction(self, user_message: str, user_id: str = "owner@hk07.local") -> str:
+    async def process_text_interaction(self, user_message: str, user_id: Optional[str] = None) -> str:
+        if user_id is None:
+            user_id = current_user_id.get()
         start_time = time.time()
         
         # 1. Retrieve memory context from LanceDB
@@ -179,7 +187,7 @@ class EmpatheticAgent:
 
         # Fetch latest clinical data from Blackboard (Shared Context)
         from services.blackboard_service import get_blackboard
-        latest_clinical = await get_blackboard().read_latest_clinical()
+        latest_clinical = await get_blackboard().read_latest_clinical(user_id=user_id)
         if latest_clinical:
             diag_clean = latest_clinical.diagnosis
             act_clean = latest_clinical.action_recommended
@@ -347,7 +355,9 @@ class EmpatheticAgent:
         res = execute_sensor_ping("wristband")
         return f"Tôi đã tự động kiểm tra kết nối thiết bị Wristband. Trạng thái: {res['status']}, Độ trễ: {res['latency']}."
 
-    async def _log_interaction(self, user_message: str, content: str, provider: str, latency: int, user_id: str = "owner@hk07.local"):
+    async def _log_interaction(self, user_message: str, content: str, provider: str, latency: int, user_id: Optional[str] = None):
+        if user_id is None:
+            user_id = current_user_id.get()
         self._history.append({"role": "user", "content": user_message})
         self._history.append({"role": "assistant", "content": content})
         
@@ -363,7 +373,8 @@ class EmpatheticAgent:
             input_context=user_message,
             output_decision=content,
             llm_provider=provider,
-            latency_ms=latency
+            latency_ms=latency,
+            user_id=user_id
         )
 
     def _generate_local_fallback(self, user_message: str) -> str:
@@ -392,7 +403,9 @@ class EmpatheticAgent:
             return "Mọi chuyện rồi sẽ ổn thôi. Nhắm mắt lại, thư giãn cơ thể và tập trung vào hơi thở của mình nhé."
         return "Tôi luôn sẵn sàng lắng nghe bạn chia sẻ. Hãy cho tôi biết nếu bạn cần trợ giúp hoặc trò chuyện."
 
-    async def execute_visual_scan(self, current_vitals: dict, user_id: str = "owner@hk07.local") -> str:
+    async def execute_visual_scan(self, current_vitals: dict, user_id: Optional[str] = None) -> str:
+        if user_id is None:
+            user_id = current_user_id.get()
         """
         Reads the latest_frame.jpg from buffer, encodes to Base64, and queries the Vision API
         using the centralized LLM client.

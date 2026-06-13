@@ -22,6 +22,9 @@ public interface MedicalThresholdRepository extends JpaRepository<MedicalThresho
     /** Find active threshold profile for a specific user + device combination */
     Optional<MedicalThresholdEntity> findByUser_IdAndDeviceId(UUID userId, String deviceId);
 
+    /** Find active threshold profile for a device across all users (internal/admin lookup) */
+    Optional<MedicalThresholdEntity> findByDeviceId(String deviceId);
+
     /** Find all profiles belonging to a user (for profile list API) */
     java.util.List<MedicalThresholdEntity> findAllByUser_Id(UUID userId);
 

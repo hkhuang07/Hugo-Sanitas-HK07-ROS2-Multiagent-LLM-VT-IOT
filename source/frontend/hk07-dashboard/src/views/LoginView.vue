@@ -378,7 +378,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import axios from 'axios'
+import api from '../services/api'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -474,7 +474,7 @@ async function handleLogin() {
   errorMsg.value = ''
   
   try {
-    const res = await axios.post('/api/v1/auth/login', form.value)
+    const res = await api.post('/auth/login', form.value)
     if (!res.data || !res.data.data) {
       throw new Error('Invalid API response format')
     }
@@ -505,7 +505,7 @@ async function handleRegister() {
   registerError.value = ''
 
   try {
-    const res = await axios.post('/api/v1/auth/register', registerForm.value)
+    const res = await api.post('/auth/register', registerForm.value)
     if (res.data && res.data.data) {
       generatedRecoveryCodes.value = res.data.data.recoveryCodes || []
       // Temporarily store credentials for auto-login
@@ -550,7 +550,7 @@ async function handleForgotPassword() {
   forgotMessage.value = ''
 
   try {
-    await axios.post('/api/v1/auth/reset-password', {
+    await api.post('/auth/reset-password', {
       email: forgotForm.value.email,
       recoveryCode: forgotForm.value.recoveryCode,
       newPassword: forgotForm.value.newPassword
@@ -602,7 +602,7 @@ async function handlePinLogin() {
   try {
     // POST to backend PIN auth endpoint
     // Falls back to email/password login using PIN as a device token
-    const res = await axios.post('/api/v1/auth/pin-login', { pin: rawPin })
+    const res = await api.post('/auth/pin-login', { pin: rawPin })
 
     if (!res.data || !res.data.data) {
       throw new Error('Invalid API response format')

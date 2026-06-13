@@ -11,6 +11,7 @@ from agents.router_agent import RouterAgent
 from agents.safety_agent import SafetyAgent
 from agents.medical_agent import MedicalAgent
 from agents.empathetic_agent import EmpatheticAgent
+from services.blackboard_service import current_user_id
 
 log = logging.getLogger("hk07.agent_orchestrator")
 
@@ -34,7 +35,9 @@ class AgentOrchestrator:
     async def initialize(self):
         log.info("[ORCHESTRATOR] Sub-agents initialized successfully.")
 
-    async def route_and_execute(self, user_message: str, current_vitals: dict, user_id: str = "owner@hk07.local") -> GraphState:
+    async def route_and_execute(self, user_message: str, current_vitals: dict, user_id: Optional[str] = None) -> GraphState:
+        if user_id is None:
+            user_id = current_user_id.get()
         """
         Main routing loop:
         1. Router classifies intent (Node 0) and returns "ROUTING_TARGET: [SAFETY | MEDICAL | EMPATHETIC]"

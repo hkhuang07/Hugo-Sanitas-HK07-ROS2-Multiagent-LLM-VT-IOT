@@ -111,7 +111,7 @@ log.info(f"[SYSTEM] DISPLAY={os.environ.get('DISPLAY')}, WAYLAND_DISPLAY={os.env
 
 import argparse
 parser = argparse.ArgumentParser(description="HK-07 Sensor Fusion Bridge", add_help=False)
-parser.add_argument("--phone-ip", dest="phone_ip", type=str, default=os.getenv("PHONE_IP", "192.168.101.103"), help="IP address of the phone")
+parser.add_argument("--phone-ip", dest="phone_ip", type=str, default=os.getenv("PHONE_IP", "192.168.253.14"), help="IP address of the phone")
 parser.add_argument("--port", type=int, default=int(os.getenv("FUSION_PORT", "5007")), help="Port to run the fusion server on")
 parser.add_argument("--mqtt-host", dest="mqtt_host", type=str, default=os.getenv("MQTT_BROKER_HOST", "localhost"), help="MQTT broker host")
 parser.add_argument("--mqtt-port", dest="mqtt_port", type=int, default=int(os.getenv("MQTT_BROKER_PORT", "1883")), help="MQTT broker port")

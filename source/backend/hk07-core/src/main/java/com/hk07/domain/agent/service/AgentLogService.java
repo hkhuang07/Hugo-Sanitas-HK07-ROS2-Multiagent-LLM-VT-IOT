@@ -50,21 +50,23 @@ public class AgentLogService {
                 .outputDecision(decision)
                 .llmProvider(req.getLlmProvider())
                 .latencyMs(req.getLatencyMs())
+                .userId(req.getUserId())
                 .triggeredAt(triggeredAt)
                 .build();
 
         AgentLogEntity savedLog = agentLogRepository.save(log);
 
         // Broadcast to frontend immediately (no WebSocket ID needed — log is global)
-        Map<String, Object> logPayload = Map.of(
-            "id", savedLog.getId().toString(),
-            "agentType", savedLog.getAgentType().name(),
-            "inputContext", context != null ? context : "",
-            "outputDecision", decision,
-            "llmProvider", savedLog.getLlmProvider() != null ? savedLog.getLlmProvider() : "UNKNOWN",
-            "latencyMs", savedLog.getLatencyMs(),
-            "triggeredAt", triggeredAt.toString()
-        );
+        java.util.Map<String, Object> logPayload = new java.util.HashMap<>();
+        logPayload.put("id", savedLog.getId().toString());
+        logPayload.put("agentType", savedLog.getAgentType().name());
+        logPayload.put("inputContext", context != null ? context : "");
+        logPayload.put("outputDecision", decision);
+        logPayload.put("llmProvider", savedLog.getLlmProvider() != null ? savedLog.getLlmProvider() : "UNKNOWN");
+        logPayload.put("latencyMs", savedLog.getLatencyMs());
+        logPayload.put("triggeredAt", triggeredAt.toString());
+        logPayload.put("userId", savedLog.getUserId() != null ? savedLog.getUserId() : "");
+
         wsTemplate.convertAndSend("/topic/agent-events", logPayload);
         wsTemplate.convertAndSend("/topic/agent-logs", logPayload);
 

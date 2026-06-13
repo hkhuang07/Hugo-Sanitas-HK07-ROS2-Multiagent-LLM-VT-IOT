@@ -41,6 +41,9 @@ public class AgentLogEntity {
 
     private int latencyMs;          // End-to-end latency of this decision
 
+    @Column(name = "user_id", length = 36)
+    private String userId;
+
     @CreationTimestamp
     private LocalDateTime triggeredAt;
 }

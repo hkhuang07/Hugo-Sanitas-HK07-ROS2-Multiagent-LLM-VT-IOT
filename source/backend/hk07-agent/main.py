@@ -14,6 +14,14 @@ import asyncio
 import logging
 import os
 import sys
+# Prevent UnicodeEncodeError on Windows CP1252/other non-UTF-8 console encodings
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 import warnings
 from contextlib import asynccontextmanager
 
@@ -25,7 +33,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import uvicorn
-from fastapi import FastAPI
+import fastapi
+from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.agent_orchestrator import AgentOrchestrator
@@ -33,7 +42,7 @@ from agents.perception_agent import PerceptionAgent
 from arbitrator.arbitrator import Arbitrator
 from memory.lance_memory import LanceMemory
 from services.agent_log_client import start_log_client, stop_log_client
-from services.blackboard_service import get_blackboard
+from services.blackboard_service import get_blackboard, current_user_id, current_auth_token
 from services.sensor_fusion_buffer import get_fusion_buffer, VitalsSample, CameraFrame
 
 
@@ -77,11 +86,11 @@ perception_agent = PerceptionAgent(arbitrator=arbitrator)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown sequence for the agent engine"""
-    log.info("╔══════════════════════════════════════════════════╗")
-    log.info("║  HK-07 MULTI-AGENT ENGINE - STARTING             ║")
-    log.info("║  Architecture: Supervisor Node-Router Graph      ║")
-    log.info("║  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          ║")
-    log.info("╚══════════════════════════════════════════════════╝")
+    log.info("+--------------------------------------------------+")
+    log.info("|  HK-07 MULTI-AGENT ENGINE - STARTING             |")
+    log.info("|  Architecture: Supervisor Node-Router Graph      |")
+    log.info("|  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          |")
+    log.info("+--------------------------------------------------+")
 
     # Initialize LanceDB memory
     await memory.initialize()
@@ -184,13 +193,18 @@ async def admin_ingest(body: dict):
 
 
 @app.post("/agents/empathetic/interact")
-async def empathetic_interact(body: dict):
+async def empathetic_interact(body: dict, authorization: str = fastapi.Header(None)):
     """Unified interaction endpoint utilizing Supervisor Router and Agent Orchestrator"""
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
+
     message = body.get("message", "")
     if not message:
         return {"error": "message field is required"}
     
-    user_id = body.get("userId", "owner@hk07.local")
+    user_id = body.get("userId", "a0000000-0000-0000-0000-000000000001")
+    current_user_id.set(user_id)
     
     # Retrieve current cached vitals to pass for medical/routing context
     latest_vitals = orchestrator.medical_agent.latest_vitals
@@ -211,18 +225,24 @@ async def empathetic_interact(body: dict):
 
 # ─── Orchestrator V2 Endpoint ─────────────────────────────────────────────────
 @app.post("/api/v1/agents/v2/orchestrate")
-async def orchestrate_v2(body: dict):
+async def orchestrate_v2(body: dict, authorization: str = fastapi.Header(None)):
     """
     Cognitive Orchestrator V2 — Parallel Tool-Calling Router.
     Requires USE_ORCHESTRATOR_V2=true.
     Body: { "message": str, "vitals": dict (optional) }
     """
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
+
     if not USE_ORCHESTRATOR_V2 or orchestrator_v2 is None:
         return {"error": "Orchestrator V2 is disabled. Set USE_ORCHESTRATOR_V2=true in .env"}
 
     message = body.get("message", "")
     vitals  = body.get("vitals", {})
-    user_id = body.get("userId", "owner@hk07.local")
+    user_id = body.get("userId", "a0000000-0000-0000-0000-000000000001")
+    current_user_id.set(user_id)
+    
     if not message:
         return {"error": "message field is required"}
 
@@ -272,10 +292,14 @@ async def blackboard_inspect():
 
 # ─── Action Plan Endpoints (Phase 5) ──────────────────────────────────────────
 @app.get("/api/v1/agents/action/plan/latest")
-async def get_latest_action_plan():
+async def get_latest_action_plan(userId: str = "a0000000-0000-0000-0000-000000000001", authorization: str = Header(None)):
     """
     Get the latest ActionPlanEntry from Blackboard.
     """
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
+    current_user_id.set(userId)
     bb = get_blackboard()
     plan = await bb.read_latest_action_plan()
     if plan is None:
@@ -285,11 +309,17 @@ async def get_latest_action_plan():
     return {"status": "ok", "plan": asdict(plan)}
 
 @app.post("/api/v1/agents/action/confirm")
-async def confirm_action_plan(body: dict):
+async def confirm_action_plan(body: dict, authorization: str = Header(None)):
     """
     Confirm or cancel a pending action plan.
     Body: { "plan_id": str, "confirm": bool }
     """
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
+    user_id = body.get("userId", "a0000000-0000-0000-0000-000000000001")
+    current_user_id.set(user_id)
+    
     plan_id = body.get("plan_id")
     confirm = body.get("confirm", False)
     if not plan_id:
@@ -352,16 +382,19 @@ async def fhir_clinical_bundle_latest():
 
 # ─── Test Orchestrator Endpoint ───────────────────────────────────────────────
 @app.post("/api/v1/agents/test/orchestrator")
-async def test_orchestrator(body: dict):
+async def test_orchestrator(body: dict, authorization: str = Header(None)):
     """
     Integration test endpoint: feed a synthetic message + vitals, get full
     orchestrator state back (useful for frontend demo of MoA behavior).
     Body: { "message": str, "vitals": dict (optional), "use_v2": bool }
     """
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
     message  = body.get("message", "Xin chào Hugo!")
     vitals   = body.get("vitals", {})
     use_v2   = body.get("use_v2", USE_ORCHESTRATOR_V2)
-    user_id  = body.get("userId", "owner@hk07.local")
+    user_id  = body.get("userId", "a0000000-0000-0000-0000-000000000001")
 
     if use_v2 and orchestrator_v2 is not None:
         state = await orchestrator_v2.route_and_execute(message, vitals, user_id=user_id)
@@ -376,13 +409,20 @@ async def test_orchestrator(body: dict):
 # ─── Perception Agent Endpoints ───────────────────────────────────────────────
 
 @app.post("/api/v1/agents/perception/scan")
-async def perception_scan(body: dict = None):
+async def perception_scan(body: dict = None, authorization: str = Header(None)):
     """
     Trigger a full-body multi-modal perception scan.
     Pulls latest camera frame + vitals + LiDAR snapshot from SensorFusionBuffer,
     calls Vision LLM (Gemini Flash), writes PerceptionScan to Blackboard.
     Returns PerceptionScan JSON.
     """
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
+    body_dict = body or {}
+    user_id = body_dict.get("userId", "a0000000-0000-0000-0000-000000000001")
+    current_user_id.set(user_id)
+
     # Optional: push synthetic camera frame path from request body
     if body:
         frame_path = body.get("frame_path", "")
@@ -406,10 +446,14 @@ async def perception_scan(body: dict = None):
 
 
 @app.get("/api/v1/agents/perception/latest")
-async def perception_latest():
+async def perception_latest(userId: str = "a0000000-0000-0000-0000-000000000001", authorization: str = Header(None)):
     """
     Return the latest cached PerceptionScan from Blackboard (no new scan).
     """
+    if authorization:
+        token = authorization.split(" ")[1] if " " in authorization else authorization
+        current_auth_token.set(token)
+    current_user_id.set(userId)
     scan = await perception_agent.read_latest_scan()
     if scan is None:
         return {"status": "no_scan", "scan": None}
@@ -455,7 +499,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8889,
+        port=8000,
         workers=1,
         loop="asyncio",
         log_level="info",

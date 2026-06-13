@@ -3,6 +3,7 @@ package com.hk07.config;
 import com.hk07.common.enums.UserRole;
 import com.hk07.infrastructure.security.JwtAuthFilter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -16,6 +17,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
 
 /**
  * Security Configuration — JWT + RBAC (Phase 02)
@@ -27,6 +30,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableWebSecurity
 @EnableMethodSecurity
 @RequiredArgsConstructor
+@Slf4j
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
@@ -38,16 +42,40 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                // Public endpoints
-                .requestMatchers("/api/v1/auth/**", "/ws/**", "/health").permitAll()
-                // Operator + above can view all data
+                // ── Public & Infrastructure endpoints ────────────────────────────
+                // /error MUST be whitelisted: Spring's DispatcherServlet re-dispatches to /error
+                // on any exception. Without this, the error endpoint itself triggers a new 401
+                // which creates an Infinite Request Loop, saturating Tomcat handler threads.
+                .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers("/api/v1/auth/**", "/ws", "/ws/**", "/health", "/error", "/actuator/health").permitAll()
+                // ── Internal service endpoints (Python hk07-agent → hk07-core) ──
+                // Agent log POST uses internal JWT — already protected by JWT filter
+                // ── Role-Based Access Control ────────────────────────────────────
                 .requestMatchers("/api/v1/safety/**", "/api/v1/agents/**")
                     .hasAnyRole(UserRole.OWNER.name(), UserRole.OPERATOR.name())
-                // Only OWNER can control robot
+                // Only OWNER can issue shutdown command
                 .requestMatchers("/api/v1/robot/command/shutdown")
                     .hasRole(UserRole.OWNER.name())
-                // Everything else requires authentication
+                // Everything else requires at minimum a valid JWT
                 .anyRequest().authenticated()
+            )
+            .exceptionHandling(ex -> ex
+                .accessDeniedHandler((request, response, accessDeniedException) -> {
+                    log.warn("[ACCESS_DENIED] path={} principal={} authorities={} error={}",
+                        request.getRequestURI(),
+                        request.getUserPrincipal() != null ? request.getUserPrincipal().getName() : "anonymous",
+                        org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication() != null 
+                            ? org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication().getAuthorities() 
+                            : "none",
+                        accessDeniedException.getMessage());
+                    response.sendError(jakarta.servlet.http.HttpServletResponse.SC_FORBIDDEN, "Access Denied");
+                })
+                .authenticationEntryPoint((request, response, authException) -> {
+                    log.warn("[UNAUTHORIZED] path={} error={}",
+                        request.getRequestURI(),
+                        authException.getMessage());
+                    response.sendError(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
+                })
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .build();

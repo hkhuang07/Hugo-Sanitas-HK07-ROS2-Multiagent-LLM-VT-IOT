@@ -59,7 +59,14 @@ public class MedicalThresholdController {
     public ResponseEntity<ApiResponse<MedicalThresholdDto>> getThreshold(
             @PathVariable String deviceId, Authentication auth) {
         UUID userId = UUID.fromString(auth.getName());
-        return thresholdRepository.findByUser_IdAndDeviceId(userId, deviceId)
+        boolean isAdminOrStaff = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_OWNER") || a.getAuthority().equals("ROLE_OPERATOR"));
+
+        java.util.Optional<MedicalThresholdEntity> entityOpt = isAdminOrStaff
+                ? thresholdRepository.findByDeviceId(deviceId)
+                : thresholdRepository.findByUser_IdAndDeviceId(userId, deviceId);
+
+        return entityOpt
                 .map(e -> ResponseEntity.ok(ApiResponse.ok(toDto(e))))
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -142,6 +149,7 @@ public class MedicalThresholdController {
     private MedicalThresholdDto toDto(MedicalThresholdEntity e) {
         return MedicalThresholdDto.builder()
                 .id(e.getId())
+                .userId(e.getUser().getId())
                 .deviceId(e.getDeviceId())
                 .hrMin(e.getHrMin())
                 .hrMax(e.getHrMax())

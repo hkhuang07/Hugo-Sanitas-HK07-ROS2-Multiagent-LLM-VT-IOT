@@ -467,15 +467,17 @@ async function triggerPerceptionScan() {
   if (scanning.value) return;
   scanning.value = true;
   try {
-    const res = await api.post('/agents/perception/scan');
-    if (res.data?.status === 'ok') latestScan.value = res.data.scan;
+    const res = await api.post('/agents/perception/scan', {}, { timeout: 30000 });
+    const data = res.data?.data;
+    if (data?.status === 'ok') latestScan.value = data.scan;
   } catch (e) { console.warn('[VISION] Scan error:', e); }
   finally { scanning.value = false; }
 }
 async function fetchLatestScan() {
   try {
     const res = await api.get('/agents/perception/latest');
-    if (res.data?.status === 'ok') latestScan.value = res.data.scan;
+    const data = res.data?.data;
+    if (data?.status === 'ok') latestScan.value = data.scan;
   } catch (e) { /* silent */ }
 }
 

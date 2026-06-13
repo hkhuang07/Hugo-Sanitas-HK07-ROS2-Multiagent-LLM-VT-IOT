@@ -49,7 +49,7 @@
 
 <script setup lang="ts">
 import { computed, watch, ref, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useVitalsStore } from './stores/vitals'
 import { initWebSocket, disconnectWebSocket } from './services/websocket'
@@ -60,6 +60,7 @@ import RoleSidebar from './components/RoleSidebar.vue'
 import CommonFooter from './components/CommonFooter.vue'
 
 const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
 
@@ -141,12 +142,18 @@ function cancelSos() {
   }
 }
 
+function handleUnauthorized() {
+  router.push('/login')
+}
+
 onMounted(() => {
   document.addEventListener('hk07:ai-emergency-wakeup', handleWakeupEvent)
+  document.addEventListener('hk07:unauthorized', handleUnauthorized)
 })
 
 onUnmounted(() => {
   document.removeEventListener('hk07:ai-emergency-wakeup', handleWakeupEvent)
+  document.removeEventListener('hk07:unauthorized', handleUnauthorized)
 })
 </script>
 

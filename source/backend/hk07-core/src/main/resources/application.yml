@@ -1,6 +1,12 @@
 spring:
   application:
     name: hk07-core
+  mvc:
+    async:
+      request-timeout: 30000
+  threads:
+    virtual:
+      enabled: true
   config:
     import:
       - optional:file:../.env[.properties]
@@ -74,7 +80,7 @@ hk07:
     # No real secret in source — provide MQTT_PASSWORD via env / .env (see source/backend/.env.example)
     password: ${MQTT_PASSWORD:}
   ai:
-    agent-url: ${AGENT_ENGINE_URL:http://127.0.0.1:8889}
+    agent-url: ${AGENT_ENGINE_URL:http://127.0.0.1:8000}
     groq:
       api-key: ${GROQ_API_KEY:}     # Set via Docker env or .env file
     gemini:
@@ -84,6 +90,7 @@ hk07:
       secret: ${JWT_SECRET:hk07-dev-secret-change-in-production-min-32-chars}
       access-token-expiry-ms: 900000    # 15 minutes
       refresh-token-expiry-ms: 604800000 # 7 days
+    internal-api-key: ${INTERNAL_API_KEY:hk07-internal-api-key-bypass}
   subsumption:
     safety-override-timeout-ms: 5      # HARD LIMIT: 5ms max response time
 

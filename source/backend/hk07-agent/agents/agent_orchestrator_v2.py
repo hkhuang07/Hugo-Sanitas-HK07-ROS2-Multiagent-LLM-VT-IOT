@@ -22,7 +22,7 @@ from agents.perception_agent import PerceptionAgent
 from agents.action_agent import ActionAgent
 from arbitrator.arbitrator import Arbitrator
 
-from services.blackboard_service import get_blackboard, ClinicalEntry, ActionPlanEntry
+from services.blackboard_service import get_blackboard, ClinicalEntry, ActionPlanEntry, current_user_id
 
 log = logging.getLogger("hk07.agent_orchestrator_v2")
 
@@ -54,7 +54,9 @@ class AgentOrchestratorV2:
     async def initialize(self):
         log.info("[ORCHESTRATOR_V2] Sub-agents initialized successfully.")
 
-    async def route_and_execute(self, user_message: str, current_vitals: dict, user_id: str = "owner@hk07.local") -> GraphState:
+    async def route_and_execute(self, user_message: str, current_vitals: dict, user_id: Optional[str] = None) -> GraphState:
+        if user_id is None:
+            user_id = current_user_id.get()
         """
         Main orchestration loop (Cognitive Orchestration):
         1. Router with Tool Calling analyzes intent and decides which tools to invoke
@@ -250,7 +252,9 @@ class AgentOrchestratorV2:
         return state
 
 
-    async def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], vitals: dict, user_id: str = "owner@hk07.local") -> str:
+    async def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], vitals: dict, user_id: Optional[str] = None) -> str:
+        if user_id is None:
+            user_id = current_user_id.get()
         """Execute a single tool and return its output"""
         try:
             if tool_name == "analyze_clinical_symptoms":
@@ -281,7 +285,7 @@ class AgentOrchestratorV2:
                         diagnosis=diag,
                         action_recommended=act,
                         confidence_score=0.9
-                    ))
+                    ), user_id=user_id)
                     
                     # Strip technical prefix labels (e.g. "Chẩn đoán:", "Kế hoạch hành động:")
                     def clean_medical_text(text: str) -> str:

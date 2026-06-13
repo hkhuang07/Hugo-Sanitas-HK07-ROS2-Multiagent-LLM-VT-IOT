@@ -27,6 +27,11 @@ export function initWebSocket(onReady?: () => void): void {
   if (_client?.active) return
 
   const authStore = useAuthStore()
+  const token = authStore.accessToken
+  if (!token || token === 'null' || token === 'undefined') {
+    console.warn('[WS] initWebSocket gated: No valid token available.')
+    return
+  }
 
   _client = new Client({
     webSocketFactory: () => new SockJS(import.meta.env.VITE_WS_URL || '/ws'),
@@ -35,7 +40,7 @@ export function initWebSocket(onReady?: () => void): void {
     reconnectDelay: Math.min(1000 * Math.pow(2, _reconnectAttempts), 30_000),
 
     connectHeaders: {
-      Authorization: `Bearer ${authStore.accessToken}`
+      Authorization: `Bearer ${token}`
     },
 
     beforeConnect: async () => {
@@ -43,9 +48,17 @@ export function initWebSocket(onReady?: () => void): void {
       if (authStore.isAuthenticated) {
         await authStore.refreshSession()
       }
+      const activeToken = authStore.accessToken
+      if (!activeToken || activeToken === 'null' || activeToken === 'undefined') {
+        console.warn('[WS] beforeConnect aborted: Token is null or undefined.')
+        if (_client) {
+          _client.deactivate()
+        }
+        return
+      }
       if (_client) {
         _client.connectHeaders = {
-          Authorization: `Bearer ${authStore.accessToken}`
+          Authorization: `Bearer ${activeToken}`
         }
         // Update reconnect delay for next potential failure
         _client.reconnectDelay = Math.min(1000 * Math.pow(2, _reconnectAttempts), 30_000)

@@ -24,6 +24,10 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
+  function clearSession() {
+    clearAuth()
+  }
+
   /**
    * Called on app boot (main.ts — before mount).
    *
@@ -81,6 +85,7 @@ export const useAuthStore = defineStore('auth', () => {
     isOwner,
     setAuth,
     clearAuth,
+    clearSession,
     tryAutoLogin,
     refreshSession,
   }

@@ -2,7 +2,7 @@
 Agent Log Client — HTTP Bridge: Python hk07-agent → Spring Boot hk07-core
 
 Sends agent decision logs to the Spring Boot backend REST API.
-The backend persists them to PostgreSQL and broadcasts via WebSocket.
+The backend persists them to MySQL and broadcasts via WebSocket.
 
 Usage: Import and call in MedicalAgent, EmpathyAgent after each decision.
 
@@ -35,6 +35,7 @@ log = logging.getLogger("hk07.agent_log_client")
 CORE_API_URL = os.getenv("CORE_API_URL") or os.getenv("HK07_CORE_URL") or "http://127.0.0.1:8888"
 AUTH_EMAIL = os.getenv("AGENT_AUTH_EMAIL", "owner@hk07.local")
 AUTH_PASSWORD = os.getenv("AGENT_AUTH_PASSWORD", "HK07-Admin-Change-Me!")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "hk07-internal-api-key-bypass")
 
 BATCH_SIZE = 10
 FLUSH_INTERVAL_S = 5.0
@@ -47,6 +48,7 @@ class AgentLogEntry:
     output_decision: str
     llm_provider: str        # GROQ | GEMINI | THRESHOLD | MOCK
     latency_ms: int
+    user_id: Optional[str] = None
     queued_at: float = field(default_factory=time.time)
 
 
@@ -86,7 +88,8 @@ class AgentLogClient:
             await self._http.aclose()
 
     async def log_decision(self, agent_type: str, input_context: str,
-                           output_decision: str, llm_provider: str, latency_ms: int):
+                           output_decision: str, llm_provider: str, latency_ms: int,
+                           user_id: Optional[str] = None):
         """
         Queue a decision log entry. Non-blocking — returns immediately.
         Buffer is flushed in background every FLUSH_INTERVAL_S seconds or when BATCH_SIZE is reached.
@@ -107,7 +110,8 @@ class AgentLogClient:
             input_context=input_context[:800] if input_context else "",
             output_decision=output_decision[:1500] if output_decision else "",
             llm_provider=llm_provider,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
+            user_id=user_id
         )
 
         async with self._lock:
@@ -141,6 +145,11 @@ class AgentLogClient:
         # Use asyncio.gather to prevent blocking the async loop sequentially
         async def _post_log(entry):
             try:
+                headers = {}
+                if self._token:
+                    headers["Authorization"] = f"Bearer {self._token}"
+                if INTERNAL_API_KEY:
+                    headers["X-Internal-API-Key"] = INTERNAL_API_KEY
                 resp = await self._http.post(
                     "/api/v1/agents/log",
                     json={
@@ -149,8 +158,9 @@ class AgentLogClient:
                         "outputDecision": entry.output_decision,
                         "llmProvider": entry.llm_provider,
                         "latencyMs": entry.latency_ms,
+                        "userId": entry.user_id,
                     },
-                    headers={"Authorization": f"Bearer {self._token}"}
+                    headers=headers
                 )
                 if resp.status_code not in (200, 202):
                     log.warning("[AGENT_LOG_CLIENT] POST failed: %s", resp.text[:100])
@@ -235,6 +245,7 @@ async def stop_log_client():
 
 
 async def log_agent_decision(agent_type: str, input_context: str,
-                              output_decision: str, llm_provider: str, latency_ms: int):
+                              output_decision: str, llm_provider: str, latency_ms: int,
+                              user_id: Optional[str] = None):
     """Convenience function for agents — import and call this directly"""
-    await _client.log_decision(agent_type, input_context, output_decision, llm_provider, latency_ms)
+    await _client.log_decision(agent_type, input_context, output_decision, llm_provider, latency_ms, user_id=user_id)

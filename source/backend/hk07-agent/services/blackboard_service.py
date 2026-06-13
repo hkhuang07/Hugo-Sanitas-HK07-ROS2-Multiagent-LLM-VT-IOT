@@ -17,8 +17,15 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 import os
+import contextvars
+import fnmatch
 
 log = logging.getLogger("hk07.blackboard")
+
+# ContextVar for request-local user context isolation
+current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar("current_user_id", default="a0000000-0000-0000-0000-000000000001")
+current_auth_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_auth_token", default="")
+
 
 # ─── Blackboard Entry Schema ──────────────────────────────────────────────────
 @dataclass
@@ -170,218 +177,332 @@ class BlackboardService:
             log.debug("[BLACKBOARD] Redis not available or unreachable (%s). Using in-memory fallback.", str(e)[:120])
             self._use_redis = False
 
-    async def write_clinical(self, entry: ClinicalEntry) -> None:
+    async def write_clinical(self, entry: ClinicalEntry, user_id: str = None) -> None:
         """Medical Agent writes clinical findings"""
-        key = f"blackboard:clinical:{entry.timestamp}"
+        if user_id is None:
+            user_id = current_user_id.get()
+        key = f"blackboard:clinical:{user_id}:{entry.timestamp}"
+        latest_key = f"blackboard:clinical:{user_id}:latest"
         data = asdict(entry)
         
         if self._use_redis and self._redis_client:
             try:
-                await self._redis_client.setex(
-                    key,
-                    entry.ttl_seconds,
-                    json.dumps(data)
-                )
+                await self._redis_client.setex(key, entry.ttl_seconds, json.dumps(data))
+                await self._redis_client.setex(latest_key, entry.ttl_seconds, json.dumps(data))
                 log.debug("[BLACKBOARD] Clinical entry written to Redis: %s", key)
             except Exception as e:
                 log.error("[BLACKBOARD_REDIS_ERROR] Failed to write: %s", e)
                 # Fallback to in-memory
                 self._in_memory_store[key] = data
+                self._in_memory_store[latest_key] = data
         else:
             self._in_memory_store[key] = data
+            self._in_memory_store[latest_key] = data
             log.debug("[BLACKBOARD] Clinical entry written to memory: %s", key)
 
-    async def read_latest_clinical(self) -> Optional[ClinicalEntry]:
+    async def read_latest_clinical(self, user_id: str = None) -> Optional[ClinicalEntry]:
         """Empathetic/Orchestrator reads latest clinical findings"""
+        if user_id is None:
+            user_id = current_user_id.get()
+        latest_key = f"blackboard:clinical:{user_id}:latest"
         if self._use_redis and self._redis_client:
             try:
-                # Scan for latest clinical entry
-                pattern = "blackboard:clinical:*"
-                keys = await self._redis_client.keys(pattern)
-                if not keys:
-                    return None
-                
-                # Get latest (by key timestamp)
-                latest_key = sorted(keys)[-1]
                 data_str = await self._redis_client.get(latest_key)
                 if data_str:
                     data = json.loads(data_str)
                     return ClinicalEntry(**data)
             except Exception as e:
-                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read clinical: %s", e)
-                # Fallback
+                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read clinical from latest key: %s. Trying fallback scan.", e)
+                
+            try:
+                # Fallback scan for latest clinical entry
+                pattern = f"blackboard:clinical:{user_id}:*"
+                keys = await self._redis_client.keys(pattern)
+                if keys:
+                    sorted_keys = sorted([k for k in keys if not k.endswith(":latest")])
+                    if sorted_keys:
+                        latest_k = sorted_keys[-1]
+                        data_str = await self._redis_client.get(latest_k)
+                        if data_str:
+                            data = json.loads(data_str)
+                            return ClinicalEntry(**data)
+            except Exception as e:
+                log.error("[BLACKBOARD_REDIS_ERROR] Fallback scan failed: %s", e)
         
-        # In-memory fallback
+        # In-memory lookup
+        latest_data = self._in_memory_store.get(latest_key)
+        if latest_data:
+            entry = ClinicalEntry(**latest_data)
+            if not entry.is_expired():
+                return entry
+            else:
+                try:
+                    del self._in_memory_store[latest_key]
+                except KeyError:
+                    pass
+        
+        # In-memory fallback scan
         clinical_entries = [
             (k, v) for k, v in self._in_memory_store.items()
-            if k.startswith("blackboard:clinical:")
+            if k.startswith(f"blackboard:clinical:{user_id}:") and not k.endswith(":latest")
         ]
         if not clinical_entries:
             return None
         
-        latest_key, latest_data = sorted(clinical_entries)[-1]
+        latest_k, latest_data = sorted(clinical_entries)[-1]
         entry = ClinicalEntry(**latest_data)
         if entry.is_expired():
-            del self._in_memory_store[latest_key]
+            try:
+                del self._in_memory_store[latest_k]
+            except KeyError:
+                pass
             return None
         return entry
 
-    async def write_emotional(self, entry: EmotionalEntry) -> None:
+    async def write_emotional(self, entry: EmotionalEntry, user_id: str = None) -> None:
         """Empathetic Agent writes emotional analysis"""
-        key = f"blackboard:emotional:{entry.timestamp}"
+        if user_id is None:
+            user_id = current_user_id.get()
+        key = f"blackboard:emotional:{user_id}:{entry.timestamp}"
+        latest_key = f"blackboard:emotional:{user_id}:latest"
         data = asdict(entry)
         
         if self._use_redis and self._redis_client:
             try:
-                await self._redis_client.setex(
-                    key,
-                    entry.ttl_seconds,
-                    json.dumps(data)
-                )
+                await self._redis_client.setex(key, entry.ttl_seconds, json.dumps(data))
+                await self._redis_client.setex(latest_key, entry.ttl_seconds, json.dumps(data))
                 log.debug("[BLACKBOARD] Emotional entry written to Redis: %s", key)
             except Exception as e:
                 log.error("[BLACKBOARD_REDIS_ERROR] Failed to write emotional: %s", e)
                 self._in_memory_store[key] = data
+                self._in_memory_store[latest_key] = data
         else:
             self._in_memory_store[key] = data
+            self._in_memory_store[latest_key] = data
             log.debug("[BLACKBOARD] Emotional entry written to memory: %s", key)
 
-    async def read_latest_emotional(self) -> Optional[EmotionalEntry]:
+    async def read_latest_emotional(self, user_id: str = None) -> Optional[EmotionalEntry]:
         """Orchestrator reads latest emotional state"""
+        if user_id is None:
+            user_id = current_user_id.get()
+        latest_key = f"blackboard:emotional:{user_id}:latest"
         if self._use_redis and self._redis_client:
             try:
-                pattern = "blackboard:emotional:*"
-                keys = await self._redis_client.keys(pattern)
-                if not keys:
-                    return None
-                
-                latest_key = sorted(keys)[-1]
                 data_str = await self._redis_client.get(latest_key)
                 if data_str:
                     data = json.loads(data_str)
                     return EmotionalEntry(**data)
             except Exception as e:
-                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read emotional: %s", e)
+                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read emotional from latest key: %s. Trying fallback scan.", e)
+                
+            try:
+                pattern = f"blackboard:emotional:{user_id}:*"
+                keys = await self._redis_client.keys(pattern)
+                if keys:
+                    sorted_keys = sorted([k for k in keys if not k.endswith(":latest")])
+                    if sorted_keys:
+                        latest_k = sorted_keys[-1]
+                        data_str = await self._redis_client.get(latest_k)
+                        if data_str:
+                            data = json.loads(data_str)
+                            return EmotionalEntry(**data)
+            except Exception as e:
+                log.error("[BLACKBOARD_REDIS_ERROR] Fallback scan failed: %s", e)
         
+        # In-memory lookup
+        latest_data = self._in_memory_store.get(latest_key)
+        if latest_data:
+            entry = EmotionalEntry(**latest_data)
+            if not entry.is_expired():
+                return entry
+            else:
+                try:
+                    del self._in_memory_store[latest_key]
+                except KeyError:
+                    pass
+        
+        # In-memory fallback scan
         emotional_entries = [
             (k, v) for k, v in self._in_memory_store.items()
-            if k.startswith("blackboard:emotional:")
+            if k.startswith(f"blackboard:emotional:{user_id}:") and not k.endswith(":latest")
         ]
         if not emotional_entries:
             return None
         
-        latest_key, latest_data = sorted(emotional_entries)[-1]
+        latest_k, latest_data = sorted(emotional_entries)[-1]
         entry = EmotionalEntry(**latest_data)
         if entry.is_expired():
-            del self._in_memory_store[latest_key]
+            try:
+                del self._in_memory_store[latest_k]
+            except KeyError:
+                pass
             return None
         return entry
 
-    async def write_context(self, entry: ContextEntry) -> None:
+    async def write_context(self, entry: ContextEntry, user_id: str = None) -> None:
         """Orchestrator writes orchestration decisions"""
-        key = f"blackboard:context:{entry.timestamp}"
+        if user_id is None:
+            user_id = current_user_id.get()
+        key = f"blackboard:context:{user_id}:{entry.timestamp}"
+        latest_key = f"blackboard:context:{user_id}:latest"
         data = asdict(entry)
         
         if self._use_redis and self._redis_client:
             try:
-                await self._redis_client.setex(
-                    key,
-                    entry.ttl_seconds,
-                    json.dumps(data)
-                )
+                await self._redis_client.setex(key, entry.ttl_seconds, json.dumps(data))
+                await self._redis_client.setex(latest_key, entry.ttl_seconds, json.dumps(data))
                 log.debug("[BLACKBOARD] Context entry written to Redis: %s", key)
             except Exception as e:
                 log.error("[BLACKBOARD_REDIS_ERROR] Failed to write context: %s", e)
                 self._in_memory_store[key] = data
+                self._in_memory_store[latest_key] = data
         else:
             self._in_memory_store[key] = data
+            self._in_memory_store[latest_key] = data
 
-    async def read_latest_context(self) -> Optional[ContextEntry]:
+    async def read_latest_context(self, user_id: str = None) -> Optional[ContextEntry]:
         """Agents read orchestration context"""
+        if user_id is None:
+            user_id = current_user_id.get()
+        latest_key = f"blackboard:context:{user_id}:latest"
         if self._use_redis and self._redis_client:
             try:
-                pattern = "blackboard:context:*"
-                keys = await self._redis_client.keys(pattern)
-                if not keys:
-                    return None
-                
-                latest_key = sorted(keys)[-1]
                 data_str = await self._redis_client.get(latest_key)
                 if data_str:
                     data = json.loads(data_str)
                     return ContextEntry(**data)
             except Exception as e:
-                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read context: %s", e)
+                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read context from latest key: %s. Trying fallback scan.", e)
+                
+            try:
+                pattern = f"blackboard:context:{user_id}:*"
+                keys = await self._redis_client.keys(pattern)
+                if keys:
+                    sorted_keys = sorted([k for k in keys if not k.endswith(":latest")])
+                    if sorted_keys:
+                        latest_k = sorted_keys[-1]
+                        data_str = await self._redis_client.get(latest_k)
+                        if data_str:
+                            data = json.loads(data_str)
+                            return ContextEntry(**data)
+            except Exception as e:
+                log.error("[BLACKBOARD_REDIS_ERROR] Fallback scan failed: %s", e)
         
+        # In-memory lookup
+        latest_data = self._in_memory_store.get(latest_key)
+        if latest_data:
+            entry = ContextEntry(**latest_data)
+            if not entry.is_expired():
+                return entry
+            else:
+                try:
+                    del self._in_memory_store[latest_key]
+                except KeyError:
+                    pass
+        
+        # In-memory fallback scan
         context_entries = [
             (k, v) for k, v in self._in_memory_store.items()
-            if k.startswith("blackboard:context:")
+            if k.startswith(f"blackboard:context:{user_id}:") and not k.endswith(":latest")
         ]
         if not context_entries:
             return None
         
-        latest_key, latest_data = sorted(context_entries)[-1]
+        latest_k, latest_data = sorted(context_entries)[-1]
         entry = ContextEntry(**latest_data)
         if entry.is_expired():
-            del self._in_memory_store[latest_key]
+            try:
+                del self._in_memory_store[latest_k]
+            except KeyError:
+                pass
             return None
         return entry
 
-    async def write_action_plan(self, entry: ActionPlanEntry) -> None:
+    async def write_action_plan(self, entry: ActionPlanEntry, user_id: str = None) -> None:
         """Action Agent / Orchestrator writes action plans"""
-        key = f"blackboard:action_plan:{entry.plan_id or entry.timestamp}"
+        if user_id is None:
+            user_id = current_user_id.get()
+        key = f"blackboard:action_plan:{user_id}:{entry.plan_id or entry.timestamp}"
+        latest_key = f"blackboard:action_plan:{user_id}:latest"
         data = asdict(entry)
         
         if self._use_redis and self._redis_client:
             try:
-                await self._redis_client.setex(
-                    key,
-                    entry.ttl_seconds,
-                    json.dumps(data)
-                )
+                await self._redis_client.setex(key, entry.ttl_seconds, json.dumps(data))
+                await self._redis_client.setex(latest_key, entry.ttl_seconds, json.dumps(data))
                 log.debug("[BLACKBOARD] Action plan written to Redis: %s", key)
             except Exception as e:
                 log.error("[BLACKBOARD_REDIS_ERROR] Failed to write action plan: %s", e)
                 self._in_memory_store[key] = data
+                self._in_memory_store[latest_key] = data
         else:
             self._in_memory_store[key] = data
+            self._in_memory_store[latest_key] = data
             log.debug("[BLACKBOARD] Action plan written to memory: %s", key)
 
-    async def read_latest_action_plan(self) -> Optional[ActionPlanEntry]:
+    async def read_latest_action_plan(self, user_id: str = None) -> Optional[ActionPlanEntry]:
         """Read latest action plan from Blackboard"""
+        if user_id is None:
+            user_id = current_user_id.get()
+        latest_key = f"blackboard:action_plan:{user_id}:latest"
         if self._use_redis and self._redis_client:
             try:
-                pattern = "blackboard:action_plan:*"
-                keys = await self._redis_client.keys(pattern)
-                if not keys:
-                    return None
-                
-                latest_key = sorted(keys)[-1]
                 data_str = await self._redis_client.get(latest_key)
                 if data_str:
                     data = json.loads(data_str)
                     return ActionPlanEntry(**data)
             except Exception as e:
-                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read action plan: %s", e)
+                log.error("[BLACKBOARD_REDIS_ERROR] Failed to read action plan from latest key: %s. Trying fallback scan.", e)
+                
+            try:
+                pattern = f"blackboard:action_plan:{user_id}:*"
+                keys = await self._redis_client.keys(pattern)
+                if keys:
+                    sorted_keys = sorted([k for k in keys if not k.endswith(":latest")])
+                    if sorted_keys:
+                        latest_k = sorted_keys[-1]
+                        data_str = await self._redis_client.get(latest_k)
+                        if data_str:
+                            data = json.loads(data_str)
+                            return ActionPlanEntry(**data)
+            except Exception as e:
+                log.error("[BLACKBOARD_REDIS_ERROR] Fallback scan failed: %s", e)
         
-        # In-memory fallback
+        # In-memory lookup
+        latest_data = self._in_memory_store.get(latest_key)
+        if latest_data:
+            entry = ActionPlanEntry(**latest_data)
+            if not entry.is_expired():
+                return entry
+            else:
+                try:
+                    del self._in_memory_store[latest_key]
+                except KeyError:
+                    pass
+        
+        # In-memory fallback scan
         action_entries = [
             (k, v) for k, v in self._in_memory_store.items()
-            if k.startswith("blackboard:action_plan:")
+            if k.startswith(f"blackboard:action_plan:{user_id}:") and not k.endswith(":latest")
         ]
         if not action_entries:
             return None
         
-        latest_key, latest_data = sorted(action_entries)[-1]
+        latest_k, latest_data = sorted(action_entries)[-1]
         entry = ActionPlanEntry(**latest_data)
         if entry.is_expired():
-            del self._in_memory_store[latest_key]
+            try:
+                del self._in_memory_store[latest_k]
+            except KeyError:
+                pass
             return None
         return entry
 
-    async def read_action_plan(self, plan_id: str) -> Optional[ActionPlanEntry]:
+    async def read_action_plan(self, plan_id: str, user_id: str = None) -> Optional[ActionPlanEntry]:
         """Read specific action plan by id"""
-        key = f"blackboard:action_plan:{plan_id}"
+        if user_id is None:
+            user_id = current_user_id.get()
+        key = f"blackboard:action_plan:{user_id}:{plan_id}"
         if self._use_redis and self._redis_client:
             try:
                 data_str = await self._redis_client.get(key)
@@ -459,6 +580,33 @@ class BlackboardService:
             "context": len([k for k in self._in_memory_store if k.startswith("blackboard:context:")]),
             "action_plan": len([k for k in self._in_memory_store if k.startswith("blackboard:action_plan:")]),
         }
+
+    async def get_active_stress_user_ids(self) -> list[str]:
+        """Scan Redis/memory for active stress history keys and extract user UUIDs"""
+        pattern = "blackboard:clinical:stress_history:*"
+        if self._use_redis and self._redis_client:
+            try:
+                keys = await self._redis_client.keys(pattern)
+                return [k.split(":")[-1] for k in keys if k]
+            except Exception as e:
+                log.error("[BLACKBOARD_REDIS_ERROR] Failed to scan stress history keys: %s", e)
+        
+        # In-memory scan
+        keys = [k for k in self._in_memory_store.keys() if fnmatch.fnmatch(k, pattern)]
+        
+        # Filter out expired items in memory
+        now = time.time()
+        active_users = []
+        for k in keys:
+            data = self._in_memory_store.get(k)
+            if data and now <= data.get("expiry", 0.0):
+                active_users.append(k.split(":")[-1])
+            elif data:
+                try:
+                    del self._in_memory_store[k]
+                except KeyError:
+                    pass
+        return active_users
 
     async def write_value(self, key: str, value: Any, ttl_seconds: int = 300) -> None:
         """Write generic/custom value to Blackboard"""
