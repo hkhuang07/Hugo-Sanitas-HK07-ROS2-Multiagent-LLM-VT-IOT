@@ -19,13 +19,13 @@ public class DatabaseStartupLogger implements CommandLineRunner {
     @Autowired
     private DataSource dataSource;
 
-    @Value("${spring.data.redis.host:127.0.0.1}")
+    @Value("${spring.data.redis.host:localhost}")
     private String redisHost;
 
     @Value("${spring.data.redis.port:6379}")
     private int redisPort;
 
-    @Value("${hk07.mqtt.broker-url:tcp://127.0.0.1:1883}")
+    @Value("${hk07.mqtt.broker-url:tcp://localhost:1883}")
     private String mqttBrokerUrl;
 
     @Override

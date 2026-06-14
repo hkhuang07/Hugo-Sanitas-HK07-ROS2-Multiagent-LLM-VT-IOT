@@ -99,9 +99,6 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-
----
-
 ### 7. User Profile & Security Settings
 
 #### A. Profile Configuration & MFA Controls
@@ -110,8 +107,6 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-
-
 ## ⚙️ System Architecture
 
 ```
@@ -119,8 +114,8 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 │                        HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE                        │
 ├───────────────────────┬─────────────────────────┬──────────────────────────────────────┤
 │    [FRONTEND]         │     [BACKEND CORE]      │            [AGENT ENGINE]            │
-│    Vue 3 + Vite       │    Spring Boot 3.2      │            Python FastAPI            │
-│    Port: 5173         │     Java 21 VT          │            Port: 8889                │
+│    Vue 3 + Vite       │    Spring Boot 3.4      │            Python FastAPI            │
+│    Port: 5173         │     Java 21 VT          │            Port: 8000                │
 │    Three.js 3D Twin   │     Port: 8888          │            Multi-Agent Loops         │
 │    Voice UI (TTS/STT) │     JWT Auth & RBAC     │            Redis Blackboard          │
 └──────────┬────────────┴──────────┬──────────────┴──────────────────┬───────────────────┘
@@ -194,19 +189,21 @@ The system supports two operating modes: **Docker Orchestration** (fully integra
 
 ### 1. Docker Deployment Mode
 
-```bash
-# 1. Enter target backend configuration folder
-cd source/backend
-cp .env.example .env
-# Fill in your GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY inside the .env file
+Running the standard `docker compose up -d` command from the repository root directory exclusively launches the backing infrastructure services (MariaDB on Port 3307, Redis on Port 6379, and Mosquitto Broker on Port 1883). This leaves application ports 8888 and 8000 unoccupied so that you can run `hk07-core` and `hk07-agent` locally in terminal windows for active development and debugging.
 
-# 2. Spin up the integrated container stack
-docker compose up -d --build
+To run the fully containerized end-to-end operational production stack in Docker, you must pass the `--profile operation` flag:
+```bash
+# 1. Copy environment template
+cp source/backend/.env.example source/backend/.env
+# Fill in your GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY inside the source/backend/.env file
+
+# 2. Spin up the entire system including application services
+docker compose --profile operation up -d --build
 
 # 3. Access endpoints
-# Frontend Dashboard:  http://localhost:4205 (nginx reverse proxy)
+# Frontend Dashboard:  http://localhost:4205 (Nginx Reverse Proxy)
 # Backend Swagger Docs: http://localhost:8888/swagger-ui.html
-# AI Agent API Docs:   http://localhost:8889/docs
+# AI Agent API Docs:   http://localhost:8000/docs
 ```
 
 To run localized edge simulation scripts against the Docker cluster, set the appropriate host parameters and execute:
@@ -224,76 +221,69 @@ python source/robotics/sensors/vision_sensor/hk07_sensor_fusion.py
 
 ### 2. Local Developer Mode
 
-#### Step 0: Boot Infrastructure Databases & Broker
-Before running services locally, start the local databases (MariaDB 3307, Redis 6379, Mosquitto 1883):
+Before running services locally, spin up the backing database and message broker infrastructure:
 ```powershell
-# Using the preconfigured Powershell runner (starts services and configures DB credentials)
+# In PowerShell (Windows Host) from repository root:
 ./source/backend/run_backend.ps1
 ```
 
-#### Step 1: Run Spring Boot Backend
-```bash
-cd source/backend/hk07-core
-mvn clean install -DskipTests
-mvn spring-boot:run
-# Listening on: http://localhost:8888
-```
+Once infrastructure is active, launch each subsystem in a dedicated terminal window using relative paths from the repository root (`hk-07/`):
 
-#### Step 2: Run Python AI Multi-Agent API
-```bash
-cd source/backend/hk07-agent
-pip install -r requirements.txt
-python -m uvicorn main:app --reload --port 8889
-# Listening on: http://localhost:8889
-```
+* **[TERMINAL 1]: ROS2 Server Bridge (WSL2 Ubuntu Environment)**
+  * **Purpose**: Establishes the primary WebSocket communication bridge network gateway operating on Port 9090. This node acts as the foundational translation layer enabling real-time bi-directional telemetry data synchronization between the ROS2 robotic domain, the Python Multi-Agent systems, and the user interface dashboard.
+  * **Execution Path**: `source/robotics`
+  * **Step-by-Step Commands**:
+    ```bash
+    cd source/robotics
+    source /opt/ros/humble/setup.bash
+    ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+    ```
 
-#### Step 3: Run Vue 3 UI Dashboard
-```bash
-cd source/frontend/hk07-dashboard
-npm install
-npm run dev
-# Vite server active on: http://localhost:5173
-```
+* **[TERMINAL 2]: hk07-core Middleware Backend (Windows Host CMD / PowerShell)**
+  * **Purpose**: Launches the core Enterprise Java enterprise infrastructure engine powered by Spring Boot 3.4 running on Port 8888. This subsystem governs system authentication, coordinates persistent relational logging via the MariaDB ledger, processes dynamic medical vital sign threshold mappings, and synchronizes real-time device configurations.
+  * **Execution Path**: `source/backend/hk07-core`
+  * **Step-by-Step Commands**:
+    ```bash
+    cd source/backend/hk07-core
+    ./mvnw spring-boot:run
+    ```
 
-#### Step 4: Run ROS 2 Robotics Core
-To run the high-performance robotics node execution loop, open a dedicated **WSL2 Ubuntu Terminal**:
+* **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (Windows Host CMD)**
+  * **Purpose**: Activates the primary artificial intelligence decision-making engine built on FastAPI running on Port 8000. This component deploys the multi-layered Subsumption architecture (Tiers 0-2), spins up the async isolated watchdog heartbeats, handles query routing, and manages the shared Redis blackboard memory matrix.
+  * **Execution Path**: `source/backend/hk07-agent`
+  * **Step-by-Step Commands**:
+    ```bash
+    cd source/backend/hk07-agent
+    python main.py
+    ```
 
-```bash
-# 1. Enter the target robotics workspace
-cd source/robotics
+* **[TERMINAL 4]: ROS2 Sensors Orchestrator Node (WSL2 Ubuntu Environment)**
+  * **Purpose**: Fires up the core consolidated robotics ingestion loop. This high-performance Python node captures raw high-frequency mobile sensor payloads from the network gateway, parses IMU quaternions, processes the non-contact rPPG facial video metrics, and computes Artificial Potential Field (APF) obstacle repulsion vectors.
+  * **Execution Path**: `source/robotics`
+  * **Step-by-Step Commands**:
+    ```bash
+    cd source/robotics
+    source /opt/ros/humble/setup.bash
+    source install/setup.bash
+    ros2 run sensors hk07_runtime_orchestrator
+    ```
 
-# 2. Source the global ROS 2 Humble environment
-source /opt/ros/humble/setup.bash
+* **[TERMINAL 5]: hk07-dashboard Operator Interface Frontend (Windows Host CMD)**
+  * **Purpose**: Spins up the local Vite-powered single page application development server on Port 5173. This component renders the web operations cockpit, visualizes live 60Hz ECG canvas waveforms, maps spatial data via the Three.js 3D Holographic Twin, and deploys the Push-to-Talk Voice UI modules.
+  * **Execution Path**: `source/frontend/hk07-dashboard`
+  * **Step-by-Step Commands**:
+    ```bash
+    cd source/frontend/hk07-dashboard
+    npm run dev
+    ```
 
-# 3. Compile the sensors package using a clean build configuration
-rm -rf build log install
-colcon build --packages-select sensors
+---
 
-# 4. Source the localized workspace installation variables
-source install/setup.bash
+### 3. Dynamic Connectivity Endpoint Contracts
 
-# 5. Launch all 8 robotics nodes consolidated under a single OS thread process
-ros2 run sensors hk07_runtime_orchestrator
-
-
-# Or Launch consolidated ROS 2 nodes & the MQTT Dual Bridge
-ros2 run sensors ros2_mqtt_bridge_node
-ros2 run sensors hk07_physics_node
-ros2 run sensors balance_controller
-ros2 run sensors navigation_agent
-ros2 run sensors rtos_watchdog_simulator
-
-
-```
-
-#### Step 5: Run Mobile Phone HTTP-to-MQTT Bridge
-Point your phone's logging application to publish data directly into this host adapter bridge:
-```bash
-cd source/robotics/sensors/mobile_gateway
-pip install Flask paho-mqtt
-python vivo_http_mqtt_bridge.py --port 5005
-```
-*(The bridge will automatically resolve your Wi-Fi interface IP and output the hot spot configuration URL, e.g. `http://<WIFI_IP>:<PORT>/data`).*
+Point your diagnostic/mobile peripherals to the target addresses allocated by the network configuration automation scripts:
+* **Mobile Device Target URL (SensorLogs Application)**: `http://<LAPTOP_WIFI_IP>:5005/data`
+* **Edge Video Stream Input URL (IPWebCam Application)**: `http://<PHONE_HOTSPOT_IP>:8080/video`
 
 ---
 

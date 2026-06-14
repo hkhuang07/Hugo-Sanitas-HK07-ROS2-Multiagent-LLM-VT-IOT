@@ -82,6 +82,316 @@ orchestrator_v2 = AgentOrchestratorV2(memory=memory, arbitrator=arbitrator) if U
 # Perception Agent (Tier 0.5) — on-demand scan, no background loop
 perception_agent = PerceptionAgent(arbitrator=arbitrator)
 
+_safety_tripped = False
+
+async def run_subsumption_safety_worker():
+    """
+    Background worker mimicking Tầng 0 (Safety Logic).
+    Monitors LiDAR/environment states and trips when critical.
+    """
+    global _safety_tripped
+    import time
+    import json
+    fusion_buf = get_fusion_buffer()
+    log.info("[SAFETY_WORKER] Subsumption Safety Worker started.")
+    
+    # Wait for app startup
+    await asyncio.sleep(2.0)
+    
+    while True:
+        try:
+            lidar = await fusion_buf.latest_lidar()
+            trip = False
+            reason = ""
+            lidar_clear = True
+            
+            # Missing LiDAR or environment state buffer indicators
+            if lidar is None:
+                # Disabled hardware trip on empty/missing LiDAR buffer
+                if not hasattr(run_subsumption_safety_worker, "_logged_absent"):
+                    log.info("[SAFETY_GUARDS] LiDAR hardware absent; operating on Camera Vision and Mobile Ingestion layout.")
+                    run_subsumption_safety_worker._logged_absent = True
+            # Distance drops below critical levels (20cm = 0.2m)
+            elif lidar.min_distance_m < 0.2:
+                trip = True
+                reason = f"Obstacle distance {lidar.min_distance_m:.2f}m is below critical threshold 0.2m"
+                
+            if trip:
+                _safety_tripped = True
+                arbitrator.inhibit("EMPATHETIC", duration_s=10)
+                arbitrator.inhibit("MEDICAL", duration_s=10)
+                
+                # Write direct safety trip state to Blackboard
+                try:
+                    bb = get_blackboard()
+                    await bb.write_value("safety:tripped", True)
+                    await bb.write_value("safety:reason", reason)
+                except Exception as bb_err:
+                    log.error(f"[SAFETY_WORKER] Blackboard write failed: {bb_err}")
+                
+                log.warning(f"[SAFETY_WORKER] TRIP: {reason}. Empathy and Medical streams overridden.")
+            else:
+                _safety_tripped = False
+                try:
+                    bb = get_blackboard()
+                    await bb.write_value("safety:tripped", False)
+                except Exception:
+                    pass
+                
+            await asyncio.sleep(0.5) # 2Hz loop
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"[SAFETY_WORKER] Error: {e}")
+            await asyncio.sleep(1.0)
+
+
+def start_isolated_heartbeat_thread():
+    import threading
+    import websockets
+    import json
+    import time
+
+    def thread_target():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def isolated_heartbeat_loop():
+            uri = "ws://localhost:9090"
+            backoff = 1.0
+            while True:
+                try:
+                    log.info(f"[ISOLATED_HEARTBEAT] Connecting to {uri}...")
+                    async with websockets.connect(uri) as websocket:
+                        log.info("[ISOLATED_HEARTBEAT] Connected to Rosbridge. Starting pulse check transmission.")
+                        
+                        # Advertise heartbeat topic type to Rosbridge
+                        adv_msg = {
+                            "op": "advertise",
+                            "topic": "/system/heartbeat",
+                            "type": "std_msgs/msg/Header"
+                        }
+                        await websocket.send(json.dumps(adv_msg))
+                        
+                        backoff = 1.0
+                        while True:
+                            t = time.time()
+                            sec = int(t)
+                            nanosec = int((t - sec) * 1e9)
+                            msg = {
+                                "op": "publish",
+                                "topic": "/system/heartbeat",
+                                "msg": {
+                                    "stamp": {
+                                        "sec": sec,
+                                        "nanosec": nanosec
+                                    },
+                                    "frame_id": "system"
+                                }
+                            }
+                            await websocket.send(json.dumps(msg))
+                            await asyncio.sleep(1.0)
+                except Exception as e:
+                    log.error(f"[ISOLATED_HEARTBEAT_ERROR] Error in heartbeat loop: {e}")
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2.0, 30.0)
+
+        loop.run_until_complete(isolated_heartbeat_loop())
+
+    t = threading.Thread(target=thread_target, name="isolated-heartbeat-thread", daemon=True)
+    t.start()
+
+
+async def rosbridge_client_loop():
+    import websockets
+    import json
+    import base64
+    import struct
+    import math
+    from services.sensor_fusion_buffer import get_fusion_buffer, VitalsSample, LidarSnapshot
+    from services.blackboard_service import get_blackboard
+
+    uri = "ws://localhost:9090"
+    backoff = 1.0
+    
+    while True:
+        try:
+            log.info(f"[ROSBRIDGE_CLIENT] Connecting to {uri}...")
+            async with websockets.connect(uri) as websocket:
+                log.info("[ROSBRIDGE_CLIENT] Connected to rosbridge_suite.")
+                backoff = 1.0
+                
+                # Subscribe to topics
+                subscribe_topics = [
+                    {"topic": "/telemetry/sensors/vitals", "type": "sensor_msgs/msg/JointState"},
+                    {"topic": "/sensors/camera/thermal_rppg", "type": "sensor_msgs/msg/JointState"},
+                    {"topic": "/telemetry/lidar/points", "type": "sensor_msgs/msg/PointCloud2"},
+                    {"topic": "/vitals/wristband", "type": "sensor_msgs/msg/JointState"},
+                    {"topic": "/telemetry/imu", "type": "sensor_msgs/msg/Imu"},
+                    {"topic": "/hk07/perception/clinical", "type": "std_msgs/msg/String"}
+                ]
+                for sub in subscribe_topics:
+                    req = {
+                        "op": "subscribe",
+                        "topic": sub["topic"],
+                        "type": sub["type"]
+                    }
+                    await websocket.send(json.dumps(req))
+                
+                async for message in websocket:
+                    data = json.loads(message)
+                    op = data.get("op")
+                    if op == "publish":
+                        topic = data.get("topic")
+                        msg = data.get("msg", {})
+                        
+                        fusion_buf = get_fusion_buffer()
+                        bb = get_blackboard()
+                        
+                        if topic == "/telemetry/sensors/vitals":
+                            pos = msg.get("position", [])
+                            if len(pos) >= 5:
+                                sample = VitalsSample(
+                                    heart_rate=float(pos[0]),
+                                    spo2=float(pos[1]),
+                                    body_temperature=float(pos[2]),
+                                    step_count=0,
+                                    alert_level="NORMAL"
+                                )
+                                await fusion_buf.push_vitals(sample)
+                                
+                        elif topic == "/sensors/camera/thermal_rppg":
+                            pos = msg.get("position", [])
+                            if len(pos) >= 2:
+                                latest = await fusion_buf.latest_vitals()
+                                sample = VitalsSample(
+                                    heart_rate=float(pos[0]) if pos[0] > 0 else (latest.heart_rate if latest else 72.0),
+                                    spo2=latest.spo2 if latest else 98.0,
+                                    body_temperature=float(pos[1]) if pos[1] > 0 else (latest.body_temperature if latest else 36.6),
+                                    alert_level="CRITICAL" if (len(pos) >= 3 and pos[2] > 0) else "NORMAL"
+                                )
+                                await fusion_buf.push_vitals(sample)
+                                
+                        elif topic == "/vitals/wristband":
+                            pos = msg.get("position", [])
+                            if len(pos) >= 2:
+                                is_falling = bool(pos[0])
+                                emergency = bool(pos[1])
+                                await bb.write_value("sensor:vitals:is_falling", is_falling)
+                                await bb.write_value("sensor:vitals:emergency", emergency)
+                            if len(pos) >= 41:
+                                await bb.write_value("sensor:vitals:wrist_motion_magnitude", float(pos[40]))
+                                
+                        elif topic == "/telemetry/imu":
+                            orientation = msg.get("orientation", {})
+                            accel = msg.get("linear_acceleration", {})
+                            gyro = msg.get("angular_velocity", {})
+                            
+                            ax = accel.get("x", 0.0)
+                            ay = accel.get("y", 0.0)
+                            az = accel.get("z", 9.81)
+                            g_mag = (ax**2 + ay**2 + az**2) ** 0.5
+                            
+                            wrist_motion_mag = 0.0
+                            try:
+                                wrist_motion_mag = await bb.read_value("sensor:vitals:wrist_motion_magnitude") or 0.0
+                            except Exception:
+                                pass
+                                
+                            imu_data = {
+                                "accel_x": ax,
+                                "accel_y": ay,
+                                "accel_z": az,
+                                "gyro_x": gyro.get("x", 0.0),
+                                "gyro_y": gyro.get("y", 0.0),
+                                "gyro_z": gyro.get("z", 0.0),
+                                "qw": orientation.get("w", 1.0),
+                                "qx": orientation.get("x", 0.0),
+                                "qy": orientation.get("y", 0.0),
+                                "qz": orientation.get("z", 0.0),
+                                "frame_id": msg.get("header", {}).get("frame_id", ""),
+                                "wrist_motion_magnitude": wrist_motion_mag,
+                                "g_magnitude": g_mag
+                            }
+                            await bb.write_value("sensor:imu:latest", imu_data)
+                            
+                        elif topic == "/telemetry/lidar/points":
+                            raw_bytes = base64.b64decode(msg.get("data", ""))
+                            width = msg.get("width", 0)
+                            height = msg.get("height", 0)
+                            point_step = msg.get("point_step", 12)
+                            num_points = width * height
+                            
+                            min_distance_m = 999.0
+                            obstacle_count = 0
+                            sector_data = {"N": 999.0, "NE": 999.0, "E": 999.0, "SE": 999.0, "S": 999.0, "SW": 999.0, "W": 999.0, "NW": 999.0}
+                            
+                            for i in range(num_points):
+                                offset = i * point_step
+                                if offset + 12 <= len(raw_bytes):
+                                    x, y, z = struct.unpack_from('<fff', raw_bytes, offset)
+                                    dx = x - 0.0
+                                    dy = y - 1.1
+                                    dz = z - 0.0
+                                    dist = math.sqrt(dx**2 + dy**2 + dz**2)
+                                    if dist < 0.01:
+                                        continue
+                                    if dist < min_distance_m:
+                                        min_distance_m = dist
+                                    if dist < 1.5:
+                                        obstacle_count += 1
+                                        
+                                    angle = math.atan2(dz, dx)
+                                    deg = math.degrees(angle)
+                                    if deg < 0:
+                                        deg += 360
+                                    
+                                    if 337.5 <= deg or deg < 22.5:
+                                        sector = "E"
+                                    elif 22.5 <= deg < 67.5:
+                                        sector = "SE"
+                                    elif 67.5 <= deg < 112.5:
+                                        sector = "S"
+                                    elif 112.5 <= deg < 157.5:
+                                        sector = "SW"
+                                    elif 157.5 <= deg < 202.5:
+                                        sector = "W"
+                                    elif 202.5 <= deg < 247.5:
+                                        sector = "NW"
+                                    elif 247.5 <= deg < 292.5:
+                                        sector = "N"
+                                    else:
+                                        sector = "NE"
+                                        
+                                    if dist < sector_data[sector]:
+                                        sector_data[sector] = dist
+                                        
+                            threat_level = "CLEAR"
+                            if min_distance_m < 0.2:
+                                threat_level = "CRITICAL"
+                            elif min_distance_m < 1.0:
+                                threat_level = "WARNING"
+                                
+                            snapshot = LidarSnapshot(
+                                min_distance_m=min_distance_m,
+                                obstacle_count=obstacle_count,
+                                sector_data=sector_data,
+                                threat_level=threat_level
+                            )
+                            await fusion_buf.push_lidar(snapshot)
+                            
+                        elif topic == "/hk07/perception/clinical":
+                            try:
+                                clinical_data = json.loads(msg.get("data", "{}"))
+                                await bb.write_value("sensor:perception:clinical", clinical_data)
+                            except Exception:
+                                pass
+                                
+        except Exception as e:
+            log.error(f"[ROSBRIDGE_CLIENT_ERROR] Connection error: {e}")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2.0, 30.0)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,15 +408,21 @@ async def lifespan(app: FastAPI):
     # Start agent log client for REST logging
     await start_log_client()
 
-    # Launch background loops for all agents + memory compaction
+    # Launch background loops for all agents + memory compaction + rosbridge client
     active_orch = orchestrator_v2 if (USE_ORCHESTRATOR_V2 and orchestrator_v2) else orchestrator
     agent_tasks = [
         asyncio.create_task(active_orch.empathetic_agent.run_loop(), name="empathy-agent"),
         asyncio.create_task(active_orch.medical_agent.run_loop(), name="medical-agent"),
         asyncio.create_task(active_orch.safety_agent.run_loop(), name="safety-agent"),
         asyncio.create_task(memory.run_compaction_loop(), name="memory-compaction"),
+        asyncio.create_task(run_subsumption_safety_worker(), name="subsumption-safety-worker"),
+        asyncio.create_task(rosbridge_client_loop(), name="rosbridge-client"),
     ]
-    log.info("[ENGINE] All 3 agent tasks + memory compaction launched on event loop using active orchestrator")
+    # Start isolated heartbeat background thread
+    start_isolated_heartbeat_thread()
+    log.info("[ENGINE] Dedicated isolated heartbeat thread started.")
+
+    log.info("[ENGINE] All agent tasks + memory compaction + safety worker + rosbridge client launched on event loop")
 
     yield  # App is running — serve API requests
 
@@ -199,6 +515,14 @@ async def empathetic_interact(body: dict, authorization: str = fastapi.Header(No
         token = authorization.split(" ")[1] if " " in authorization else authorization
         current_auth_token.set(token)
 
+    if _safety_tripped:
+        return {
+            "agent": "SAFETY",
+            "response": "[SAFETY_ALERT]: Critical obstacle detected or sensor failure. Action inhibited.",
+            "alert_level": "CRITICAL",
+            "action": "SAFE_HOLD"
+        }
+
     message = body.get("message", "")
     if not message:
         return {"error": "message field is required"}
@@ -234,6 +558,16 @@ async def orchestrate_v2(body: dict, authorization: str = fastapi.Header(None)):
     if authorization:
         token = authorization.split(" ")[1] if " " in authorization else authorization
         current_auth_token.set(token)
+
+    if _safety_tripped:
+        return {
+            "orchestrator": "V2_TOOL_CALLING",
+            "agent": "SAFETY",
+            "response": "[SAFETY_ALERT]: Critical obstacle detected or sensor failure. Action inhibited.",
+            "alert_level": "CRITICAL",
+            "tools_invoked": [],
+            "provider": "SAFETY_WORKER"
+        }
 
     if not USE_ORCHESTRATOR_V2 or orchestrator_v2 is None:
         return {"error": "Orchestrator V2 is disabled. Set USE_ORCHESTRATOR_V2=true in .env"}

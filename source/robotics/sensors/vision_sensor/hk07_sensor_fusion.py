@@ -1,36 +1,31 @@
 import os
 import sys
-
-# Suppress C++ system logging from TensorFlow/MediaPipe and silence warning streams
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['GLOG_minloglevel'] = '2'
-
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import cv2
 import json
 import time
 import math
 import random
-import logging
-import asyncio
-import concurrent.futures
-from contextlib import asynccontextmanager
 import base64
+import threading
+import asyncio
 import numpy as np
 
-# Configure logging first to prevent NameError in imports
-# Configure logging robustly by forcing root logger setup
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-for h in root_logger.handlers[:]:
-    root_logger.removeHandler(h)
-h_stream = logging.StreamHandler(sys.stdout)
-h_stream.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s"))
-root_logger.addHandler(h_stream)
-log = logging.getLogger("hk07_fusion")
+# Suppress system logging from TF/MediaPipe
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['GLOG_minloglevel'] = '2'
+
+try:
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import JointState
+    from std_msgs.msg import String
+except ImportError:
+    print("=================================================================================")
+    print(">>> [ROBOTICS ARCHITECTURE ERROR] ROS 2 client library 'rclpy' is not installed.")
+    print("=================================================================================")
+    sys.exit(1)
+
+import mediapipe as mp
 
 # Dynamic directory traversal to find the agent directory for imports
 def get_agent_dir():
@@ -55,481 +50,217 @@ if agent_dir:
 
 try:
     from services.llm_client import LLMClient, VISION_TIERS
-    log.info("[VISION_LLM] LLMClient loaded successfully.")
-except ImportError as ie:
-    log.error(f"[VISION_LLM] Failed to load LLMClient: {ie}")
+except ImportError:
     LLMClient = None
     VISION_TIERS = []
 
-# Set SelectorEventLoop on Windows to support aiomqtt (ProactorEventLoop doesn't support add_reader)
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-from fastapi import FastAPI, Request
-import uvicorn
-import aiomqtt
-import mediapipe as mp
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ENVIRONMENT & CONFIGURATION RESOLUTION (Parent Traversal search)
-# ─────────────────────────────────────────────────────────────────────────────
-def load_env_file():
-    curr_dir = os.path.dirname(os.path.abspath(__file__))
-    for _ in range(10):
-        checks = [
-            os.path.join(curr_dir, "backend", ".env"),
-            os.path.join(curr_dir, "source", "backend", ".env"),
-            os.path.join(curr_dir, ".env"),
-        ]
-        for path in checks:
-            if os.path.exists(path):
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line or line.startswith("#"):
-                                continue
-                            if "=" in line:
-                                key, val = line.split("=", 1)
-                                key = key.strip()
-                                val = val.strip().strip('"').strip("'")
-                                if key and key not in os.environ:
-                                    os.environ[key] = val
-                    log.info(f"Loaded environment variables from {path}")
-                    return True
-                except Exception as e:
-                    log.warning(f"Failed to read .env at {path}: {e}")
-        parent = os.path.dirname(curr_dir)
-        if parent == curr_dir:
-            break
-        curr_dir = parent
-    return False
-
-load_env_file()
-log.info(f"[SYSTEM] DISPLAY={os.environ.get('DISPLAY')}, WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY')}")
-
-import argparse
-parser = argparse.ArgumentParser(description="HK-07 Sensor Fusion Bridge", add_help=False)
-parser.add_argument("--phone-ip", dest="phone_ip", type=str, default=os.getenv("PHONE_IP", "192.168.253.14"), help="IP address of the phone")
-parser.add_argument("--port", type=int, default=int(os.getenv("FUSION_PORT", "5007")), help="Port to run the fusion server on")
-parser.add_argument("--mqtt-host", dest="mqtt_host", type=str, default=os.getenv("MQTT_BROKER_HOST", "localhost"), help="MQTT broker host")
-parser.add_argument("--mqtt-port", dest="mqtt_port", type=int, default=int(os.getenv("MQTT_BROKER_PORT", "1883")), help="MQTT broker port")
-parser.add_argument("--mqtt-user", dest="mqtt_user", type=str, default=os.getenv("MQTT_USERNAME", "hk07sim"), help="MQTT username")
-parser.add_argument("--mqtt-pass", dest="mqtt_pass", type=str, default=os.getenv("MQTT_PASSWORD", ""), help="MQTT password")
-
-def _is_wsl2_virtual_ip(ip: str) -> bool:
-    """Return True if IP is in WSL2 / Hyper-V virtual adapter range (172.16.0.0/12)."""
-    import struct
-    try:
-        packed = struct.unpack("!I", socket.inet_aton(ip))[0]
-        return 0xAC100000 <= packed <= 0xAC1FFFFF
-    except Exception:
-        return False
-
-def _is_valid_gateway(ip: str) -> bool:
-    try:
-        socket.inet_aton(ip)
-        return ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255") and not _is_wsl2_virtual_ip(ip)
-    except Exception:
-        return False
-
-def detect_phone_gateway_ip():
-    import subprocess
-    import socket
-
-    # Strategy 1: PowerShell targeting Wi-Fi adapter only (no inner single quotes — WSL2 fix)
-    try:
-        cmd = ["powershell.exe", "-NoProfile", "-Command",
-               "Get-NetRoute -DestinationPrefix 0.0.0.0/0 -InterfaceAlias Wi-Fi | Select-Object -ExpandProperty NextHop"]
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode("utf-8").strip()
-        for ip in out.split():
-            if _is_valid_gateway(ip):
-                return ip
-    except Exception:
-        pass
-
-    # Strategy 2: All routes via PowerShell, skip WSL2 172.16.0.0/12 range
-    try:
-        cmd = ["powershell.exe", "-NoProfile", "-Command",
-               "Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Select-Object -ExpandProperty NextHop"]
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode("utf-8").strip()
-        for ip in out.split():
-            if _is_valid_gateway(ip):
-                return ip
-    except Exception:
-        pass
-
-    # Strategy 3: Linux ip route (pure Linux without WSL2)
-    try:
-        import sys
-        if sys.platform != "win32":
-            out = subprocess.check_output("ip route show default", shell=True, timeout=3).decode("utf-8").strip()
-            for line in out.splitlines():
-                if "default via" in line:
-                    parts = line.split()
-                    idx = parts.index("via")
-                    if idx + 1 < len(parts):
-                        gw = parts[idx + 1]
-                        if _is_valid_gateway(gw):
-                            return gw
-    except Exception:
-        pass
-    return None
-
-args, unknown = parser.parse_known_args()
-
-# Check if user explicitly passed --phone-ip on command line
-user_override = any(arg.startswith("--phone-ip") for arg in sys.argv)
-detected_ip = detect_phone_gateway_ip()
-
-if not user_override and detected_ip:
-    log.info(f"┌────────────────────────────────────────────────────────┐")
-    log.info(f"│ [CONNECTED_PHONE_GATEWAY] Hotspot Phone Gateway detected │")
-    log.info(f"│ IP: {detected_ip:<50} │")
-    log.info(f"│ Auto-configuring IP_DIEN_THOAI to match gateway.      │")
-    log.info(f"└────────────────────────────────────────────────────────┘")
-    IP_DIEN_THOAI = detected_ip
-else:
-    IP_DIEN_THOAI = args.phone_ip
-
-FUSION_PORT = args.port
-MQTT_BROKER = args.mqtt_host
-MQTT_PORT = args.mqtt_port
-MQTT_USER = args.mqtt_user
-MQTT_PASS = args.mqtt_pass
-
-CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
-
-PRIMARY_TOPIC = "hk07/vitals/wristband"
-COMPAT_TOPIC = "hk07/sensors/wristband/wristband-sim-001/vitals"
-
-FALL_COOLDOWN_SEC = 3.0
-
-# ─────────────────────────────────────────────────────────────────────────────
-# EVENT-DRIVEN STATE & QUEUES
-# ─────────────────────────────────────────────────────────────────────────────
-event_queue = asyncio.Queue()
-
-# Internal state mutated safely in the single asyncio event loop
-class FusionState:
+class Hk07SensorFusionNode(Node):
     def __init__(self):
-        self.accel_x = 0.0
-        self.accel_y = 0.0
-        self.accel_z = 9.81
-        self.light_lux = 15.0
-        self.proximity = 5.0
-        self.is_falling = False
-        self.last_fall_time = 0.0
-        self.is_night_mode = False
-        self.obstacle_warning = False
-        self.vision_fall = False
-        self.vision_online = False
-        self.imu_online = True # Assumed true if server running
-        self.g_ema = None
+        super().__init__('hk07_sensor_fusion_node')
+
+        # Environment & Config Loading
+        self.load_env_file()
+        self.phone_ip = os.getenv("PHONE_IP", "192.168.133.228")
+        self.CAMERA_URL = f"http://{self.phone_ip}:8080/video"
+
+        # Publishers
+        self.thermal_rppg_pub = self.create_publisher(JointState, '/sensors/camera/thermal_rppg', 10)
+        self.clinical_pub = self.create_publisher(String, '/hk07/perception/clinical', 10)
+
+        # Shared State Variables (Thread-safe)
+        self.state_lock = threading.Lock()
         self.latest_frame = None
         self.rppg_heart_rate = 0.0
-        self.tracker = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
+        self.vision_fall = False
+        self.tracker_box = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
 
-state = FusionState()
+        # Event Loop for Async LLM Vision calls
+        self.async_loop = asyncio.new_event_loop()
+        self.async_thread = threading.Thread(target=self._run_async_loop, daemon=True)
+        self.async_thread.start()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKGROUND TASK 1: ASYNC MQTT PUBLISHER & SUBSCRIBER
-# ─────────────────────────────────────────────────────────────────────────────
-async def mqtt_subscriber_loop(client):
-    try:
-        # Subscribe to IMU topic published by vivo_http_mqtt_bridge.py
-        await client.subscribe("hk07/sensors/imu/state")
-        log.info("[MQTT_SUBSCRIBER] Subscribed to topic: hk07/sensors/imu/state")
-        
-        async for message in client.messages:
-            try:
-                payload_data = json.loads(message.payload.decode())
-                # Push event to queue for immediate fusion
-                await event_queue.put({
-                    "type": "IMU_TELEMETRY",
-                    "accel_x": payload_data.get("accel_x", 0.0),
-                    "accel_y": payload_data.get("accel_y", 0.0),
-                    "accel_z": payload_data.get("accel_z", 9.81),
-                    # Fallbacks for other telemetry
-                    "light_lux": payload_data.get("light_lux", 15.0),
-                    "proximity": payload_data.get("proximity", 5.0)
-                })
-            except Exception as parse_err:
-                log.error(f"[MQTT_SUBSCRIBER] Parse error: {parse_err}")
-    except Exception as sub_err:
-        log.error(f"[MQTT_SUBSCRIBER] Subscription loop error: {sub_err}")
+        # OpenCV and MediaPipe Thread
+        self.vision_thread = threading.Thread(target=self._blocking_vision_worker, daemon=True)
+        self.vision_thread.start()
 
-async def mqtt_publisher_task():
-    log.info("[MQTT_PUBLISHER] Task started. Waiting for events...")
-    
-    while True:
+        # Snapshot Analyzer Thread
+        self.snapshot_thread = threading.Thread(target=self._snapshot_analyzer_worker, daemon=True)
+        self.snapshot_thread.start()
+
+        # Timer to publish JointState at 10Hz
+        self.timer = self.create_timer(0.1, self.publish_telemetry)
+
+        self.get_logger().info("=== HK07 SENSOR FUSION ROS2 NODE INITIALIZED ===")
+
+    def load_env_file(self):
+        curr_dir = os.path.dirname(os.path.abspath(__file__))
+        for _ in range(10):
+            checks = [
+                os.path.join(curr_dir, "backend", ".env"),
+                os.path.join(curr_dir, "source", "backend", ".env"),
+                os.path.join(curr_dir, ".env"),
+            ]
+            for path in checks:
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line or line.startswith("#"):
+                                    continue
+                                if "=" in line:
+                                    key, val = line.split("=", 1)
+                                    key = key.strip()
+                                    val = val.strip().strip('"').strip("'")
+                                    if key and key not in os.environ:
+                                        os.environ[key] = val
+                        return
+                    except Exception:
+                        pass
+            parent = os.path.dirname(curr_dir)
+            if parent == curr_dir:
+                break
+            curr_dir = parent
+
+    def _run_async_loop(self):
+        asyncio.set_event_loop(self.async_loop)
+        self.async_loop.run_forever()
+
+    def publish_telemetry(self):
+        with self.state_lock:
+            hr = self.rppg_heart_rate
+            vision_fall = self.vision_fall
+
+        # Simulate physiological temperature fluctuations
+        temp_thermal = round(36.5 + (random.random() - 0.5) * 0.2, 1)
+        fever_alert = 1.0 if temp_thermal >= 38.0 else 0.0
+
+        # Construct ROS2 JointState message
+        js_msg = JointState()
+        js_msg.header.stamp = self.get_clock().now().to_msg()
+        js_msg.header.frame_id = "camera_optical_frame"
+        js_msg.name = ["rppg_heart_rate", "thermal_temperature", "fever_alert"]
+        js_msg.position = [float(hr), float(temp_thermal), float(fever_alert)]
+
         try:
-            # aiomqtt handles auto-reconnect gracefully within the context manager
-            async with aiomqtt.Client(
-                hostname=MQTT_BROKER,
-                port=MQTT_PORT,
-                username=MQTT_USER,
-                password=MQTT_PASS,
-                identifier="hk07-vision-publisher"
-            ) as client:
-                log.info(f"[MQTT] Connected to broker {MQTT_BROKER}:{MQTT_PORT}")
-                
-                # Auto-failover: activate subscriber if port 5005 is occupied
-                use_sub = False
-                try:
-                    use_sub = app.state.use_mqtt_subscriber
-                except Exception:
-                    pass
-                    
-                if use_sub:
-                    log.info("[MQTT_SUBSCRIBER] Activating IMU MQTT Subscriber mode...")
-                    asyncio.create_task(mqtt_subscriber_loop(client))
-                
-                while True:
-                    # Sleep (0% CPU) until an event is pushed into the queue
-                    event = await event_queue.get()
-                    
-                    event_type = event.get("type")
-                    now = time.time()
-                    
-                    if event_type == "IMU_TELEMETRY":
-                        state.accel_x = event.get("accel_x", state.accel_x)
-                        state.accel_y = event.get("accel_y", state.accel_y)
-                        state.accel_z = event.get("accel_z", state.accel_z)
-                        state.light_lux = event.get("light_lux", state.light_lux)
-                        state.proximity = event.get("proximity", state.proximity)
-                        
-                        g = math.sqrt(state.accel_x**2 + state.accel_y**2 + state.accel_z**2)
-                        
-                        if state.g_ema is None:
-                            state.g_ema = g
-                        else:
-                            state.g_ema = 0.9 * state.g_ema + 0.1 * g
-                            
-                        is_linear = (state.g_ema < 3.0)
-                        
-                        if is_linear:
-                            is_falling_now = (g > 15.0)
-                        else:
-                            is_falling_now = (g < 4.0) or (g > 20.0)
-                        
-                        if is_falling_now:
-                            state.last_fall_time = now
-                            log.warning(f"[ACCEL_ALERT] Fall G-force: {g:.2f} m/s^2 [Mode: {'LINEAR' if is_linear else 'RAW'}]")
-                            
-                        state.is_falling = (now - state.last_fall_time) < FALL_COOLDOWN_SEC
-                        state.is_night_mode = state.light_lux < 10.0
-                        state.obstacle_warning = state.proximity < 2.0
-                        state.imu_online = True
-                        
-                    elif event_type == "VISION_TELEMETRY":
-                        state.vision_fall = event.get("vision_fall", False)
-                        state.vision_online = event.get("online", False)
-                        state.rppg_heart_rate = event.get("rppg_heart_rate", 0.0)
-                        state.tracker = event.get("tracker", state.tracker)
-                        
-                        # Publish camera telemetry (rPPG + Thermal + Bounding Box)
-                        camera_payload = {
-                            "rppg_heart_rate": state.rppg_heart_rate,
-                            "thermal_temperature": float(np.round(36.5 + (random.random() - 0.5) * 0.2, 1)) if state.vision_online else 36.6,
-                            "fever_alert": False,
-                            "tracker": state.tracker,
-                            "timestamp_ms": int(now * 1000)
-                        }
-                        await client.publish("hk07/sensors/camera/thermal_rppg", json.dumps(camera_payload), qos=1)
-                        log.debug(f"[PUBLISH] Camera thermal-rppg & tracker: {camera_payload}")
-                    
-                    elif event_type == "CLINICAL_PERCEPTION":
-                        payload = event.get("payload")
-                        await client.publish("hk07/perception/clinical", json.dumps(payload), qos=1)
-                        log.info(f"[PUBLISH] Clinical perception updated: {payload}")
-                        event_queue.task_done()
-                        continue
-                    
-                    master_emergency = state.is_falling or state.vision_fall
-                    
-                    # Generate logical vitals based on emergency
-                    hr = random.randint(70, 80) if not master_emergency else random.randint(130, 160)
-                    spo2 = random.randint(95, 99) if not master_emergency else random.randint(88, 92)
-                    
-                    payload = {
-                        "heartRate": hr,
-                        "systolic": 120.0 if not master_emergency else 165.0,
-                        "diastolic": 80.0 if not master_emergency else 105.0,
-                        "bodyTemperature": 36.6 if not master_emergency else 37.9,
-                        "spo2": float(spo2),
-                        "emergency_button_pressed": master_emergency,
-                        "is_falling": state.is_falling,
-                        "vision_fall_detected": state.vision_fall,
-                        "is_night_mode": state.is_night_mode,
-                        "obstacle_warning": state.obstacle_warning,
-                        "light_lux": state.light_lux,
-                        "proximity": state.proximity,
-                        "accelerometer": {
-                            "x": state.accel_x,
-                            "y": state.accel_y,
-                            "z": state.accel_z
-                        },
-                        "sensor_health": {
-                            "vision": "ONLINE" if state.vision_online else "OFFLINE",
-                            "imu": "ONLINE" if state.imu_online else "OFFLINE"
-                        },
-                        "timestamp_ms": int(now * 1000)
-                    }
-                    
-                    await client.publish(PRIMARY_TOPIC, json.dumps(payload), qos=1)
-                    await client.publish(COMPAT_TOPIC, json.dumps(payload), qos=1)
-                    
-                    log.info(f"[PUBLISH] SOS={master_emergency} (Sens={state.is_falling}, Cam={state.vision_fall}) | Health: Vis={payload['sensor_health']['vision']} IMU={payload['sensor_health']['imu']}")
-                    
-                    event_queue.task_done()
-                    
-        except aiomqtt.MqttError as e:
-            log.warning(f"[MQTT] Connection lost: {e}. Reconnecting in 3 seconds...")
-            await asyncio.sleep(3.0)
-        except Exception as e:
-            log.error(f"[MQTT] Fatal publisher error: {e}")
-            await asyncio.sleep(3.0)
+            if rclpy.ok():
+                self.thermal_rppg_pub.publish(js_msg)
+        except Exception:
+            pass
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKGROUND TASK 2: COMPUTER VISION THREAD POOL WORKER
-# ─────────────────────────────────────────────────────────────────────────────
-MAX_HISTORY_LEN = 150
-
-def extract_forehead_roi(frame, landmarks, mp_pose):
-    try:
-        h_frame, w_frame = frame.shape[:2]
-        
-        nose = landmarks[mp_pose.PoseLandmark.NOSE]
-        left_eye = landmarks[mp_pose.PoseLandmark.LEFT_EYE]
-        right_eye = landmarks[mp_pose.PoseLandmark.RIGHT_EYE]
-        
-        # Absolute pixel positions
-        nose_x, nose_y = int(nose.x * w_frame), int(nose.y * h_frame)
-        le_x, le_y = int(left_eye.x * w_frame), int(left_eye.y * h_frame)
-        re_x, re_y = int(right_eye.x * w_frame), int(right_eye.y * h_frame)
-        
-        eye_dist = int(math.sqrt((le_x - re_x)**2 + (le_y - re_y)**2))
-        if eye_dist < 10:
-            return None
+    def extract_forehead_roi(self, frame, landmarks, mp_pose):
+        try:
+            h_frame, w_frame = frame.shape[:2]
+            left_eye = landmarks[mp_pose.PoseLandmark.LEFT_EYE]
+            right_eye = landmarks[mp_pose.PoseLandmark.RIGHT_EYE]
             
-        # Define forehead region
-        fh_center_x = (le_x + re_x) // 2
-        fh_center_y = int((le_y + re_y) // 2 - 0.7 * eye_dist)
-        
-        half_w = int(0.4 * eye_dist)
-        half_h = int(0.2 * eye_dist)
-        
-        x1 = max(0, fh_center_x - half_w)
-        y1 = max(0, fh_center_y - half_h)
-        x2 = min(w_frame, fh_center_x + half_w)
-        y2 = min(h_frame, fh_center_y + half_h)
-        
-        if (x2 - x1) < 5 or (y2 - y1) < 5:
-            return None
+            le_x, le_y = int(left_eye.x * w_frame), int(left_eye.y * h_frame)
+            re_x, re_y = int(right_eye.x * w_frame), int(right_eye.y * h_frame)
             
-        return frame[y1:y2, x1:x2]
-    except Exception:
-        return None
+            eye_dist = int(math.sqrt((le_x - re_x)**2 + (le_y - re_y)**2))
+            if eye_dist < 10:
+                return None
+                
+            fh_center_x = (le_x + re_x) // 2
+            fh_center_y = int((le_y + re_y) // 2 - 0.7 * eye_dist)
+            
+            half_w = int(0.4 * eye_dist)
+            half_h = int(0.2 * eye_dist)
+            
+            x1 = max(0, fh_center_x - half_w)
+            y1 = max(0, fh_center_y - half_h)
+            x2 = min(w_frame, fh_center_x + half_w)
+            y2 = min(h_frame, fh_center_y + half_h)
+            
+            if (x2 - x1) < 5 or (y2 - y1) < 5:
+                return None
+                
+            return frame[y1:y2, x1:x2]
+        except Exception:
+            return None
 
-def estimate_heart_rate(history, fps=20.0):
-    if len(history) < 60:  # Need at least 3 seconds of data
-        return 0.0
-        
-    try:
-        y = np.array(history)
-        y = y - np.mean(y)
-        
-        window_size = 3
-        y_smooth = np.convolve(y, np.ones(window_size)/window_size, mode='same')
-        
-        n = len(y_smooth)
-        freqs = np.fft.fftfreq(n, d=1.0/fps)
-        fft_vals = np.abs(np.fft.fft(y_smooth))
-        
-        valid_idx = np.where((freqs >= 0.75) & (freqs <= 3.0))
-        valid_freqs = freqs[valid_idx]
-        valid_fft = fft_vals[valid_idx]
-        
-        if len(valid_fft) == 0:
+    def estimate_heart_rate(self, history, fps=20.0):
+        if len(history) < 60:
             return 0.0
-            
-        peak_idx = np.argmax(valid_fft)
-        peak_freq = valid_freqs[peak_idx]
-        
-        hr_bpm = peak_freq * 60.0
-        return float(np.round(hr_bpm, 1))
-    except Exception as e:
-        log.error(f"[rPPG_ERROR] Estimation failed: {e}")
-        return 0.0
-
-def blocking_vision_worker(loop):
-    """
-    Runs isolated in a ThreadPoolExecutor. Heavy CPU bound operations (OpenCV/MediaPipe)
-    will not block the FastAPI or MQTT async event loop.
-    """
-    mp_pose = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
-    
-    def safe_submit_event(event):
-        if loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
-            except Exception as e:
-                log.debug(f"[VISION_WORKER] Failed to submit event: {e}")
-        else:
-            log.debug(f"[VISION_WORKER] Loop not running, discarding event: {event}")
-            
-    log.info("[VISION_WORKER] Initializing OpenCV camera loop...")
-    
-    green_history = []
-    fps_history = []
-    last_frame_time = None
-    
-    while True:
-        if not loop.is_running():
-            log.info("[VISION_WORKER] Event loop is no longer running. Exiting worker thread.")
-            break
-            
         try:
-            current_url = CAMERA_URL
-            log.info(f"[VISION_WORKER] Connecting to video feed: {current_url}")
+            y = np.array(history)
+            y = y - np.mean(y)
+            y_smooth = np.convolve(y, np.ones(3)/3, mode='same')
+            n = len(y_smooth)
+            freqs = np.fft.fftfreq(n, d=1.0/fps)
+            fft_vals = np.abs(np.fft.fft(y_smooth))
+            
+            valid_idx = np.where((freqs >= 0.75) & (freqs <= 3.0))
+            valid_freqs = freqs[valid_idx]
+            valid_fft = fft_vals[valid_idx]
+            
+            if len(valid_fft) == 0:
+                return 0.0
+                
+            peak_idx = np.argmax(valid_fft)
+            peak_freq = valid_freqs[peak_idx]
+            return float(np.round(peak_freq * 60.0, 1))
+        except Exception:
+            return 0.0
+
+    def _blocking_vision_worker(self):
+        mp_pose = mp.solutions.pose
+        mp_drawing = mp.solutions.drawing_utils
+        
+        green_history = []
+        fps_history = []
+        last_frame_time = None
+        
+        reconnect_delay = 1.0
+        max_reconnect_delay = 16.0
+        
+        while rclpy.ok():
+            current_url = self.CAMERA_URL
+            self.get_logger().info(f"Connecting to IP webcam: {current_url}")
             cap = cv2.VideoCapture(current_url)
             
             if not cap.isOpened():
-                log.warning("[VISION_WORKER] Camera is OFFLINE.")
-                # Report degradation cleanly to the queue
-                safe_submit_event({"type": "VISION_TELEMETRY", "vision_fall": False, "online": False})
-                # Check for changes in URL while sleeping
-                for _ in range(50):
-                    if not loop.is_running() or CAMERA_URL != current_url:
-                        break
-                    time.sleep(0.1)
+                self.get_logger().warning(f"IP Webcam is offline. Retrying in {reconnect_delay:.1f}s...")
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2.0, max_reconnect_delay)
                 continue
                 
-            # Camera successfully online
+            reconnect_delay = 1.0
+            consecutive_drops = 0
+            
             with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
-                while cap.isOpened() and loop.is_running():
-                    if CAMERA_URL != current_url:
-                        log.info(f"[VISION_WORKER] CAMERA_URL updated to {CAMERA_URL}. Reconnecting...")
+                while cap.isOpened() and rclpy.ok():
+                    if self.CAMERA_URL != current_url:
                         break
+
                     ret, frame = cap.read()
-                    if not ret:
-                        log.warning("[VISION_WORKER] Video stream dropped.")
-                        break
+                    if not ret or frame is None or frame.size == 0:
+                        consecutive_drops += 1
+                        if consecutive_drops < 5:
+                            time.sleep(0.1)
+                            continue
+                        else:
+                            self.get_logger().warning(
+                                f"Vision worker: too many consecutive frame drops ({consecutive_drops}). "
+                                f"Disconnecting and applying back-off reconnect delay: {reconnect_delay:.1f}s..."
+                            )
+                            time.sleep(reconnect_delay)
+                            reconnect_delay = min(reconnect_delay * 2.0, max_reconnect_delay)
+                            break
                     
-                    # Store latest frame for the LLM Vision snapshot analyzer
-                    state.latest_frame = frame.copy()
+                    consecutive_drops = 0
                     
-                    # Save frame immediately to shared file buffer
+                    with self.state_lock:
+                        self.latest_frame = frame.copy()
+
+                    # Save latest frame on disk for agent consumption
                     try:
-                        cv2.imwrite("d:/Study/HK.Huang_Lab/hugo-sanitas-hk-07/hk-07/source/backend/hk07-agent/latest_frame.jpg", frame)
+                        save_dir = os.path.join(agent_dir, "latest_frame.jpg") if agent_dir else "latest_frame.jpg"
+                        cv2.imwrite(save_dir, frame)
                     except Exception as e:
-                        log.error(f"[VISION_WORKER] Failed to save frame: {e}")
-                    
-                    # Frame rate measurement
+                        self.get_logger().error(f"Failed to save latest frame: {e}")
+
+                    # FPS measurement
                     current_time = time.time()
                     if last_frame_time is not None:
                         dt = current_time - last_frame_time
@@ -540,321 +271,156 @@ def blocking_vision_worker(loop):
                     last_frame_time = current_time
                     fps = sum(fps_history) / len(fps_history) if fps_history else 20.0
                     
-                    # Resize frame to reduce CPU load and display a smaller window
                     h, w = frame.shape[:2]
                     scale = 0.5
-                    new_w = int(w * scale)
-                    new_h = int(h * scale)
-                    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                    frame_resized = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
                         
-                    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    image = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
                     image.flags.writeable = False
                     results = pose.process(image)
                     image.flags.writeable = True
                     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
                     
                     vision_fall = False
-                    tracker_box = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
                     rppg_hr = 0.0
                     
                     if results.pose_landmarks:
                         mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
                         landmarks = results.pose_landmarks.landmark
                         
-                        # 1. Pose Bounding Box (Percentage coordinates for frontend CSS)
                         xs = [lm.x for lm in landmarks]
                         ys = [lm.y for lm in landmarks]
                         min_x, max_x = min(xs), max(xs)
                         min_y, max_y = min(ys), max(ys)
                         
-                        padding = 0.05
-                        bbox_x = max(0.0, min_x - padding)
-                        bbox_y = max(0.0, min_y - padding)
-                        bbox_w = min(1.0, max_x + padding) - bbox_x
-                        bbox_h = min(1.0, max_y + padding) - bbox_y
+                        bbox_x = max(0.0, min_x - 0.05)
+                        bbox_y = max(0.0, min_y - 0.05)
+                        bbox_w = min(1.0, max_x + 0.05) - bbox_x
+                        bbox_h = min(1.0, max_y + 0.05) - bbox_y
                         
-                        tracker_box = {
-                            "x": float(np.round(bbox_x * 100, 1)),
-                            "y": float(np.round(bbox_y * 100, 1)),
-                            "width": float(np.round(bbox_w * 100, 1)),
-                            "height": float(np.round(bbox_h * 100, 1))
-                        }
+                        with self.state_lock:
+                            self.tracker_box = {
+                                "x": float(np.round(bbox_x * 100, 1)),
+                                "y": float(np.round(bbox_y * 100, 1)),
+                                "width": float(np.round(bbox_w * 100, 1)),
+                                "height": float(np.round(bbox_h * 100, 1))
+                            }
                         
-                        # 2. Forehead rPPG extraction
-                        roi = extract_forehead_roi(state.latest_frame, landmarks, mp_pose)
+                        roi = self.extract_forehead_roi(frame, landmarks, mp_pose)
                         if roi is not None:
                             mean_g = roi[:, :, 1].mean()
                             green_history.append(mean_g)
-                            if len(green_history) > MAX_HISTORY_LEN:
+                            if len(green_history) > 150:
                                 green_history.pop(0)
-                            rppg_hr = estimate_heart_rate(green_history, fps=fps)
+                            rppg_hr = self.estimate_heart_rate(green_history, fps=fps)
                         
                         try:
                             nose_y = landmarks[mp_pose.PoseLandmark.NOSE].y
                             left_hip_y = landmarks[mp_pose.PoseLandmark.LEFT_HIP].y
                             right_hip_y = landmarks[mp_pose.PoseLandmark.RIGHT_HIP].y
                             hip_y = (left_hip_y + right_hip_y) / 2.0
-                            
                             if nose_y > hip_y:
                                 vision_fall = True
-                                cv2.putText(
-                                    image, "VISION: FALL DETECTED", (15, 40),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA
-                                )
                         except IndexError:
                             pass
                             
-                    # Fire event safely back to the Asyncio loop
-                    safe_submit_event({
-                        "type": "VISION_TELEMETRY",
-                        "vision_fall": vision_fall,
-                        "online": True,
-                        "rppg_heart_rate": rppg_hr,
-                        "tracker": tracker_box
-                    })
-                    
-                    # Render UI safely
+                    with self.state_lock:
+                        self.vision_fall = vision_fall
+                        self.rppg_heart_rate = rppg_hr
+
+                    # GUI Window display if allowed
                     try:
-                        cv2.imshow("HK-07 Vision System", image)
-                    except Exception as e:
-                        log.error(f"[VISION_WORKER] cv2.imshow exception: {e}")
+                        cv2.imshow("HK-07 Direct Vision", image)
+                    except Exception:
+                        pass
                         
                     if cv2.waitKey(1) & 0xFF == ord('q'):
-                        log.info("[VISION_WORKER] Quit command.")
-                        cap.release()
-                        cv2.destroyAllWindows()
-                        os._exit(0)
-                        
+                        break
             cap.release()
-            safe_submit_event({"type": "VISION_TELEMETRY", "vision_fall": False, "online": False})
+            cv2.destroyAllWindows()
             time.sleep(2.0)
-            
-        except Exception as e:
-            if not loop.is_running():
-                log.info("[VISION_WORKER] Process exception handler caught closed loop. Exiting.")
-                break
-            log.error(f"[VISION_WORKER] Process failed: {e}")
-            safe_submit_event({"type": "VISION_TELEMETRY", "vision_fall": False, "online": False})
+
+    def _snapshot_analyzer_worker(self):
+        while rclpy.ok():
             time.sleep(5.0)
+            with self.state_lock:
+                if self.latest_frame is None:
+                    continue
+                frame_to_analyze = self.latest_frame.copy()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKGROUND TASK 3: CLINICAL LLM VISION SNAPSHOT ANALYZER (5s interval)
-# ─────────────────────────────────────────────────────────────────────────────
-async def analyze_frame_with_vision(frame):
-    if LLMClient is None:
-        log.warning("[VISION_LLM] LLMClient is not available. Skipping frame analysis.")
-        return
+            # Submit to async loop thread
+            asyncio.run_coroutine_threadsafe(
+                self.analyze_frame_with_vision(frame_to_analyze), 
+                self.async_loop
+            )
 
-    try:
-        # Encode image to base64 jpeg
-        _, buffer = cv2.imencode('.jpg', frame)
-        base64_image = base64.b64encode(buffer).decode('utf-8')
+    async def analyze_frame_with_vision(self, frame):
+        if LLMClient is None:
+            return
 
-        prompt = (
-            "Analyze the patient in the frame. "
-            "You must look for: \n"
-            "1. Visible injuries (e.g., cuts, bruises, bleeding, wounds).\n"
-            "2. Facial distress/pallor (e.g., pain expression, sweating, extreme paleness).\n"
-            "3. Environmental hazards (e.g., sharp objects nearby, wet floor, clutter, fall risks).\n\n"
-            "Return ONLY a pure JSON object conforming to this schema, with no markdown code block tags or extra explanation:\n"
-            "{\n"
-            '  "visible_injuries": {"detected": boolean, "details": "string or null"},\n'
-            '  "facial_distress": {"detected": boolean, "details": "string or null"},\n'
-            '  "environmental_hazards": {"detected": boolean, "details": "string or null"}\n'
-            "}"
-        )
-
-        log.info("[VISION_LLM] Submitting snapshot to LLM Vision API...")
-        result_str, provider = await LLMClient.generate_vision_completion(
-            prompt=prompt,
-            tiers=VISION_TIERS,
-            image_base64=base64_image,
-            system_prompt="You are a clinical assistant vision model. You must analyze the frame and return pure JSON.",
-            max_tokens=256,
-            temperature=0.1
-        )
-
-        if result_str:
-            cleaned_str = result_str.strip()
-            if cleaned_str.startswith("```"):
-                lines = cleaned_str.split("\n")
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned_str = "\n".join(lines).strip()
-            
-            try:
-                parsed_json = json.loads(cleaned_str)
-                log.info(f"[VISION_LLM] Received clinical result from {provider}: {parsed_json}")
-                await event_queue.put({
-                    "type": "CLINICAL_PERCEPTION",
-                    "payload": parsed_json
-                })
-            except json.JSONDecodeError as jde:
-                log.error(f"[VISION_LLM] JSON decode error: {jde}. Raw response was: {result_str}")
-        else:
-            log.warning("[VISION_LLM] Vision completion returned empty string or failed.")
-
-    except Exception as e:
-        log.error(f"[VISION_LLM] Exception in frame analysis: {e}")
-
-async def snapshot_analyzer_loop():
-    log.info("[VISION_LLM] Snapshot Analyzer loop active. Waiting for camera frames...")
-    while True:
         try:
-            await asyncio.sleep(5.0)
-            if state.latest_frame is not None:
-                # Capture frame copy to process in background
-                frame_to_analyze = state.latest_frame.copy()
-                # Run the async vision analysis
-                asyncio.create_task(analyze_frame_with_vision(frame_to_analyze))
-        except asyncio.CancelledError:
-            log.info("[VISION_LLM] Snapshot Analyzer task cancelled.")
-            break
-        except Exception as e:
-            log.error(f"[VISION_LLM] Error in snapshot loop: {e}")
-            await asyncio.sleep(2.0)
+            _, buffer = cv2.imencode('.jpg', frame)
+            base64_image = base64.b64encode(buffer).decode('utf-8')
 
-# FASTAPI APP (TELEMETRY SERVER)
-# ─────────────────────────────────────────────────────────────────────────────
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # App Startup
-    log.info("=== HK-07 ASYNC SENSOR FUSION BRIDGE ===")
-    log.info(f"Target phone IP: {IP_DIEN_THOAI}")
-    
-    # 1. Launch MQTT Task
-    app.state.mqtt_task = asyncio.create_task(mqtt_publisher_task())
-    
-    # 2. Launch LLM Vision Snapshot Analyzer Task
-    app.state.snapshot_task = asyncio.create_task(snapshot_analyzer_loop())
-    
-    # 3. Launch Vision Worker in ThreadPoolExecutor
-    loop = asyncio.get_running_loop()
-    app.state.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    app.state.vision_task = loop.run_in_executor(app.state.executor, blocking_vision_worker, loop)
-    
-    yield
-    
-    # App Shutdown
-    log.info("Shutting down fusion bridge...")
-    app.state.mqtt_task.cancel()
-    app.state.snapshot_task.cancel()
-    app.state.executor.shutdown(wait=False)
+            prompt = (
+                "Analyze the patient in the frame. "
+                "You must look for: \n"
+                "1. Visible injuries (e.g., cuts, bruises, bleeding, wounds).\n"
+                "2. Facial distress/pallor (e.g., pain expression, sweating, extreme paleness).\n"
+                "3. Environmental hazards (e.g., sharp objects nearby, wet floor, clutter, fall risks).\n\n"
+                "Return ONLY a pure JSON object conforming to this schema, with no markdown code block tags or extra explanation:\n"
+                "{\n"
+                '  "visible_injuries": {"detected": boolean, "details": "string or null"},\n'
+                '  "facial_distress": {"detected": boolean, "details": "string or null"},\n'
+                '  "environmental_hazards": {"detected": boolean, "details": "string or null"}\n'
+                "}"
+            )
 
-from fastapi.middleware.cors import CORSMiddleware
+            result_str, provider = await LLMClient.generate_vision_completion(
+                prompt=prompt,
+                tiers=VISION_TIERS,
+                image_base64=base64_image,
+                system_prompt="You are a clinical assistant vision model. You must analyze the frame and return pure JSON.",
+                max_tokens=256,
+                temperature=0.1
+            )
 
-app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/api/v1/config/device-ip")
-async def get_device_ip():
-    return {"phone_ip": IP_DIEN_THOAI}
-
-@app.post("/api/v1/config/device-ip")
-async def update_device_ip(request: Request):
-    global IP_DIEN_THOAI, CAMERA_URL
-    try:
-        data = await request.json()
-        ip = data.get("ip")
-        if ip:
-            IP_DIEN_THOAI = ip.strip()
-            CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
-            log.info(f"┌────────────────────────────────────────────────────────┐")
-            log.info(f"│ [IP_UPDATED_FROM_FRONTEND] Phone IP set to: {IP_DIEN_THOAI:<23} │")
-            log.info(f"│ Reconfigured CAMERA_URL -> {CAMERA_URL:<26} │")
-            log.info(f"└────────────────────────────────────────────────────────┘")
-            return {"status": "ok", "phone_ip": IP_DIEN_THOAI}
-        return {"status": "error", "message": "No IP provided"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.post("/data")
-@app.post("/")
-async def handle_telemetry_post(request: Request):
-    try:
-        client_host = request.client.host
-        global IP_DIEN_THOAI, CAMERA_URL
-        if client_host and client_host != IP_DIEN_THOAI and client_host not in ("127.0.0.1", "localhost"):
-            IP_DIEN_THOAI = client_host
-            CAMERA_URL = f"http://{IP_DIEN_THOAI}:8080/video"
-            log.info(f"┌────────────────────────────────────────────────────────┐")
-            log.info(f"│ [AUTO_DETECTED_IP] Telemetry from new client IP: {client_host:<21} │")
-            log.info(f"│ Reconfigured CAMERA_URL -> {CAMERA_URL:<26} │")
-            log.info(f"└────────────────────────────────────────────────────────┘")
-        
-        log.info(f"Received request from {request.client.host} to {request.url.path}")
-        data = await request.json()
-        log.info(f"Raw data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-        
-        if not data or "payload" not in data:
-            log.warning(f"Payload not found in incoming JSON! Keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-            return {"status": "error", "message": "No payload"}
-            
-        payload = data.get("payload", [])
-        
-        accel_x, accel_y, accel_z = state.accel_x, state.accel_y, state.accel_z
-        light_lux = state.light_lux
-        proximity = state.proximity
-        
-        for item in payload:
-            name = item.get("name")
-            values = item.get("values", {})
-            if name == "accelerometer":
-                accel_x = values.get("x", accel_x)
-                accel_y = values.get("y", accel_y)
-                accel_z = values.get("z", accel_z)
-            elif name == "light":
-                light_lux = values.get("lux", light_lux)
-            elif name == "proximity":
-                proximity = values.get("proximity", proximity)
+            if result_str:
+                cleaned_str = result_str.strip()
+                if cleaned_str.startswith("```"):
+                    lines = cleaned_str.split("\n")
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    cleaned_str = "\n".join(lines).strip()
                 
-        # Push event to queue for immediate handling
-        await event_queue.put({
-            "type": "IMU_TELEMETRY",
-            "accel_x": accel_x,
-            "accel_y": accel_y,
-            "accel_z": accel_z,
-            "light_lux": light_lux,
-            "proximity": proximity
-        })
-        
-        return {"status": "ok"}
-        
-    except Exception as e:
-        log.error(f"[TELEMETRY_ERROR] Error handling HTTP POST: {e}")
-        return {"status": "error", "message": str(e)}
+                # Verify JSON correctness before publishing
+                json.loads(cleaned_str)
+
+                str_msg = String()
+                str_msg.data = cleaned_str
+
+                try:
+                    if rclpy.ok():
+                        self.clinical_pub.publish(str_msg)
+                        self.get_logger().info(f"[LLM_VISION_PERCEPTION] Published clinical analysis")
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.get_logger().error(f"Error in snapshot clinical analysis: {e}")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = Hk07SensorFusionNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__":
-    import socket
-    
-    def is_port_in_use(port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("0.0.0.0", port))
-                return False
-            except OSError:
-                return True
-                
-    run_port = FUSION_PORT
-    app.state.use_mqtt_subscriber = False
-    if is_port_in_use(run_port):
-        log.warning(f"[SYSTEM] Port {run_port} is already occupied! Auto-activating Redundant MQTT Subscriber Mode for Sensor data...")
-        app.state.use_mqtt_subscriber = True
-        while is_port_in_use(run_port):
-            run_port += 1
-        log.info(f"[SYSTEM] Swapping Fusion Server API port to {run_port}")
-    else:
-        log.info(f"[SYSTEM] Port {run_port} is free. Operating in Direct HTTP Receiver mode.")
-        
-    # Start the robust Uvicorn server
-    uvicorn.run(app, host="0.0.0.0", port=run_port, log_level="warning")
+    main()

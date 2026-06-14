@@ -13,7 +13,7 @@ spring:
   # ─── Database ───
   datasource:
     # ─── MySQL 8.x (Official Connector/J) ─────────────────────────────────────────
-    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_DATABASE:hk07db}?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_DATABASE:hk07db}?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${DB_USERNAME:hk07user}
     # No real secret in source — provide DB_PASSWORD via env / .env (see source/backend/.env.example)
@@ -56,7 +56,7 @@ spring:
   # ─── Redis (Motion buffer + session cache) ───
   data:
     redis:
-      host: ${REDIS_HOST:127.0.0.1}
+      host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 2s
       lettuce:
@@ -74,13 +74,13 @@ server:
 # ─── HK-07 Custom Config ───
 hk07:
   mqtt:
-    broker-url: ${MQTT_BROKER_URL:tcp://127.0.0.1:1883}
+    broker-url: ${MQTT_BROKER_URL:tcp://localhost:1883}
     client-id: hk07-core-backend
     username: ${MQTT_USERNAME:hk07core}
     # No real secret in source — provide MQTT_PASSWORD via env / .env (see source/backend/.env.example)
     password: ${MQTT_PASSWORD:}
   ai:
-    agent-url: ${AGENT_ENGINE_URL:http://127.0.0.1:8000}
+    agent-url: ${AGENT_ENGINE_URL:http://localhost:8000}
     groq:
       api-key: ${GROQ_API_KEY:}     # Set via Docker env or .env file
     gemini:
@@ -88,7 +88,7 @@ hk07:
   security:
     jwt:
       secret: ${JWT_SECRET:hk07-dev-secret-change-in-production-min-32-chars}
-      access-token-expiry-ms: 900000    # 15 minutes
+      access-token-expiry-ms: 86400000    # 24 hours
       refresh-token-expiry-ms: 604800000 # 7 days
     internal-api-key: ${INTERNAL_API_KEY:hk07-internal-api-key-bypass}
   subsumption:

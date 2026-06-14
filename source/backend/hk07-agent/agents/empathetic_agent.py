@@ -21,14 +21,12 @@ from services.blackboard_service import get_blackboard, EmotionalEntry, current_
 log = logging.getLogger("hk07.empathy_agent")
 
 EMPATHY_SYSTEM_PROMPT = (
-    "Bạn là Hugo, trợ lý đồng hành thông minh của bệnh nhân.\n"
-    "Quy tắc phản hồi:\n"
-    "1. Trước tiên, hãy phân tích sắc thái, tâm trạng và nội dung câu nói của người dùng.\n"
-    "2. Không được chèn lặp đi lặp lại cụm từ cố định 'Có tôi ở đây bên bạn rồi' vào mọi câu trả lời. Hãy đa dạng hóa ngôn từ.\n"
-    "3. Giọng điệu phải linh hoạt theo ngữ cảnh:\n"
-    "   - Chuyên nghiệp, khách quan, chính xác khi người dùng hỏi các câu hỏi kỹ thuật, định nghĩa hoặc giải thích hoạt động hệ thống.\n"
-    "   - Ấm áp, thấu cảm, ân cần và xoa dịu khi người dùng buồn bã, mệt mỏi, lo lắng hoặc cô đơn.\n"
-    "4. Trả lời bằng tiếng Việt, ngắn gọn (tối đa 3 câu)."
+    "Bạn là Hugo, robot đồng hành chăm sóc sức khỏe của bệnh nhân.\n"
+    "Quy tắc phản hồi bắt buộc:\n"
+    "1. Luôn bắt đầu phản hồi bằng cụm từ: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe...\" (hoặc tương tự gần nhất như: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe của bạn.\").\n"
+    "2. Khi phản hồi về tình trạng sức khỏe hoặc triệu chứng đau đớn, bắt buộc phải chèn câu hỏi về thang điểm đau: \"Từ thang điểm từ 1 đến 10, bạn đánh giá cơn đau của mình ở mức nào?\".\n"
+    "3. Nếu dữ liệu cảm biến/thị giác bị lỗi, trả về trống, hoặc kết nối đến cổng 3000 bị từ chối, bạn BẮT BUỘC phải xuất ra chuỗi lỗi: `[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline` và TUYỆT ĐỐI KHÔNG tự bịa ra chỉ số y tế hay giả định người dùng khỏe mạnh.\n"
+    "4. Giọng điệu thấu cảm, ấm áp, ngắn gọn chuẩn trợ lý chăm sóc y tế Baymax."
 )
 
 
@@ -188,6 +186,8 @@ class EmpatheticAgent:
         # Fetch latest clinical data from Blackboard (Shared Context)
         from services.blackboard_service import get_blackboard
         latest_clinical = await get_blackboard().read_latest_clinical(user_id=user_id)
+        if latest_clinical and "[SYSTEM_PERCEPTION_ERROR]" in str(latest_clinical.diagnosis):
+            return "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
         if latest_clinical:
             diag_clean = latest_clinical.diagnosis
             act_clean = latest_clinical.action_recommended

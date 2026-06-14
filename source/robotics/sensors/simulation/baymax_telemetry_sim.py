@@ -58,8 +58,12 @@ class PhysicsEngineMock:
         self.qy = 0.0
         self.qz = 0.0
 
-    def update(self, is_cushioning: bool):
+    def update(self, is_cushioning: bool, cmd_vel=None):
         self.tick += 1
+        
+        is_moving = False
+        if cmd_vel is not None:
+            is_moving = (abs(float(cmd_vel.linear.x)) > 0.01 or abs(float(cmd_vel.linear.z)) > 0.01 or abs(float(cmd_vel.angular.z)) > 0.01)
         
         if is_cushioning:
             self.state = "DISTRESSED"
@@ -96,13 +100,14 @@ class PhysicsEngineMock:
             self.stress = random.randint(12, 18)
             self.resp_rate = random.randint(12, 15)
             
-            # Position at rest
-            self.x = 0.0
-            self.y = 0.0
-            self.z = 0.0
-            self.pitch = 0.0
-            self.yaw = 0.0
-            self.roll = 0.0
+            # Position at rest - only override if not actively controlled via cmd_vel
+            if not is_moving:
+                self.x = 0.0
+                self.y = 0.0
+                self.z = 0.0
+                self.pitch = 0.0
+                self.yaw = 0.0
+                self.roll = 0.0
             
         elif self.state == "WALKING":
             self.relief_active = False
@@ -120,13 +125,14 @@ class PhysicsEngineMock:
             self.stress = random.randint(22, 28)
             self.resp_rate = random.randint(16, 19)
             
-            # Humanoid coordinates (sine-wave patrol)
-            self.x = 1.2 * math.sin(self.tick * 0.25)
-            self.y = 0.02 * abs(math.sin(self.tick * 0.5))  # slight walk bob
-            self.z = 1.2 * math.cos(self.tick * 0.25)
-            self.pitch = 0.04 * math.sin(self.tick * 0.5)
-            self.yaw = -self.tick * 0.25 + math.pi / 2
-            self.roll = 0.04 * math.cos(self.tick * 0.5)
+            # Humanoid coordinates (sine-wave patrol) - only override if not actively controlled via cmd_vel
+            if not is_moving:
+                self.x = 1.2 * math.sin(self.tick * 0.25)
+                self.y = 0.02 * abs(math.sin(self.tick * 0.5))  # slight walk bob
+                self.z = 1.2 * math.cos(self.tick * 0.25)
+                self.pitch = 0.04 * math.sin(self.tick * 0.5)
+                self.yaw = -self.tick * 0.25 + math.pi / 2
+                self.roll = 0.04 * math.cos(self.tick * 0.5)
             
         elif self.state == "HUGGING":
             self.relief_active = False
@@ -145,12 +151,7 @@ class PhysicsEngineMock:
             self.stress = random.randint(14, 20)
             self.resp_rate = random.randint(13, 15)
             
-            # Sway at origin while hugging
-            self.x = 0.0
-            self.y = 0.0
-            self.z = 0.0
-            self.pitch = 0.0
-            self.yaw = 0.0
+            # Sway at origin while hugging - keep coordinates intact, do not hard reset
             self.roll = 0.03 * math.sin(self.tick * 0.3)
             
         elif self.state == "DISTRESSED":
@@ -275,10 +276,10 @@ class BaymaxTelemetrySim(Node):
             is_cushioning = (now - self.last_fall_trigger_time) < 8.0
             
             # Update physical engine model
-            self.physics_engine.update(is_cushioning)
+            self.physics_engine.update(is_cushioning, self.current_cmd_vel)
             
-            # If walking and received non-zero cmd_vel, integrate motion coordinates
-            if self.physics_engine.state == "WALKING" and (
+            # If walking or hugging and received non-zero cmd_vel, integrate motion coordinates
+            if (self.physics_engine.state in ("WALKING", "HUGGING")) and (
                 abs(self.current_cmd_vel.linear.x) > 0.01 or 
                 abs(self.current_cmd_vel.linear.z) > 0.01 or
                 abs(self.current_cmd_vel.angular.z) > 0.01

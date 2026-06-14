@@ -185,7 +185,10 @@ class AgentOrchestratorV2:
                 state["outputs"]["_error"] = str(e)
 
         # Step 5: Compose final output (aggregate medical + empathetic if both present)
-        if not state["outputs"] or all(v.startswith("[ERROR]") for v in state["outputs"].values()):
+        if any("[SYSTEM_PERCEPTION_ERROR]" in str(v) for v in state["outputs"].values()):
+            state["output"] = "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
+            state["alert_level"] = "CRITICAL"
+        elif not state["outputs"] or all(v.startswith("[ERROR]") for v in state["outputs"].values()):
             # Fallback
             state["outputs"]["fallback"] = "Hugo chưa thể xử lý yêu cầu này. Xin hãy thử lại sau."
             state["alert_level"] = "WARNING"
@@ -318,6 +321,16 @@ class AgentOrchestratorV2:
                     result = res
                 
                 return result
+
+            elif tool_name == "fetch_sensor_telemetry":
+                from services.telemetry_client import fetch_sensor_telemetry
+                res = await fetch_sensor_telemetry()
+                return json.dumps(res, ensure_ascii=False)
+
+            elif tool_name == "capture_vision_payload":
+                from services.telemetry_client import capture_vision_payload
+                res = await capture_vision_payload()
+                return json.dumps(res, ensure_ascii=False)
 
             elif tool_name == "execute_system_query":
                 device = parameters.get("device", "wristband")
@@ -459,6 +472,86 @@ class AgentOrchestratorV2:
                 # Execute
                 result = await self.action_agent.execute_plan(plan_entry)
                 return result
+
+            elif tool_name == "fetch_sensor_telemetry":
+                from services.telemetry_client import fetch_sensor_telemetry as fetch_telemetry
+                from services.sensor_fusion_buffer import get_fusion_buffer, VitalsSample
+                
+                res = await fetch_telemetry()
+                if res.get("status") == "ERROR" or "SYSTEM_PERCEPTION_ERROR" in str(res):
+                    try:
+                        await get_blackboard().write_clinical(ClinicalEntry(
+                            alert_level="CRITICAL",
+                            vitals={},
+                            diagnosis="[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline",
+                            action_recommended="Sensor connection offline",
+                            confidence_score=1.0
+                        ), user_id=user_id)
+                    except Exception as ex:
+                        log.error(f"Failed to write perception error to blackboard: {ex}")
+                    return "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
+                
+                # Push fetched telemetry into fusion buffer and update vitals
+                tele = res.get("telemetry", {})
+                if tele:
+                    heart_rate = tele.get("heartRate")
+                    spo2 = tele.get("bloodOxygen")
+                    # Update local vitals dict
+                    vitals.update({
+                        "heartRate": heart_rate,
+                        "spo2": spo2
+                    })
+                    # Add to SensorFusionBuffer
+                    buf = get_fusion_buffer()
+                    await buf.push_vitals(VitalsSample(
+                        heart_rate=heart_rate,
+                        spo2=spo2,
+                        systolic=vitals.get("systolic", 120),
+                        diastolic=vitals.get("diastolic", 80),
+                        body_temperature=vitals.get("bodyTemperature", 36.6),
+                        step_count=0
+                    ))
+                    # Also write clinical entry to blackboard so empathy/medical logic can read the latest values
+                    try:
+                        await get_blackboard().write_clinical(ClinicalEntry(
+                            alert_level="NORMAL",
+                            vitals=vitals,
+                            diagnosis=f"Nhịp tim: {heart_rate} bpm, SpO2: {spo2}%",
+                            action_recommended="Chỉ số bình thường.",
+                            confidence_score=1.0
+                        ), user_id=user_id)
+                    except Exception as ex:
+                        log.error(f"Failed to write vitals telemetry to blackboard: {ex}")
+                return json.dumps(res, ensure_ascii=False)
+
+            elif tool_name == "capture_vision_payload":
+                from services.telemetry_client import capture_vision_payload as capture_vision
+                res = await capture_vision()
+                if res.get("status") == "ERROR" or "SYSTEM_PERCEPTION_ERROR" in str(res):
+                    try:
+                        await get_blackboard().write_clinical(ClinicalEntry(
+                            alert_level="CRITICAL",
+                            vitals={},
+                            diagnosis="[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline",
+                            action_recommended="Sensor connection offline",
+                            confidence_score=1.0
+                        ), user_id=user_id)
+                    except Exception as ex:
+                        log.error(f"Failed to write vision perception error to blackboard: {ex}")
+                    return "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
+                
+                # Write a clinical entry with vision details to Blackboard so empathy logic can read it
+                try:
+                    await get_blackboard().write_clinical(ClinicalEntry(
+                        alert_level="NORMAL",
+                        vitals=vitals,
+                        diagnosis=f"Camera thấy: {res.get('objects', [])}",
+                        action_recommended="Hệ thống camera trực tuyến.",
+                        confidence_score=1.0
+                    ), user_id=user_id)
+                except Exception as ex:
+                    log.error(f"Failed to write vision telemetry to blackboard: {ex}")
+                return json.dumps(res, ensure_ascii=False)
 
             else:
                 return f"[Unknown tool: {tool_name}]"

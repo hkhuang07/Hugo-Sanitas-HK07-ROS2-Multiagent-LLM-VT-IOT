@@ -46,6 +46,34 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "fetch_sensor_telemetry",
+            "description": (
+                "Query simulated hardware gateway to fetch active sensor payloads (live heart rate and IMU metrics). "
+                "Use this whenever the user asks about their health, heart, vitals, or physical status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_vision_payload",
+            "description": (
+                "Query simulated vision gateway to retrieve structured object logs or trigger visual frame evaluation. "
+                "Use this whenever the user asks what the camera sees, what is in front of the robot, or about surroundings visual state."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "analyze_clinical_symptoms",
             "description": (
                 "Invoke Medical Agent to analyze vital signs, scan body health, and clinical symptoms. "
@@ -241,6 +269,10 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
     "Bạn là Router Agent v2 của robot đồng hành HK-07.\n"
     "Nhiệm vụ: Phân tích message từ user và quyết định gọi ĐỒNG THỜI các Tool phù hợp.\n"
     "Tư duy Mixture of Agents: 1 message có thể trigger 2-3 tools cùng lúc.\n"
+    "Quy tắc bắt buộc:\n"
+    "- Nếu người dùng hỏi về sức khỏe, tim mạch, nhịp tim, sinh hiệu (ví dụ: 'Nhịp tim tôi thế nào?', 'Sức khỏe tôi ra sao?'): BẮT BUỘC phải gọi tool fetch_sensor_telemetry đầu tiên. TUYỆT ĐỐI KHÔNG tự bịa ra câu trả lời hoặc sử dụng câu trả lời văn bản cứng.\n"
+    "- Nếu người dùng hỏi về camera, thị giác, những gì robot nhìn thấy (ví dụ: 'Camera thấy gì?', 'Bạn nhìn thấy gì?'): BẮT BUỘC phải gọi tool capture_vision_payload đầu tiên. TUYỆT ĐỐI KHÔNG tự bịa ra hoặc đoán.\n"
+    "- Nếu người dùng yêu cầu quét toàn thân hoặc phân tích triệu chứng chi tiết, có thể kết hợp cả hai hoặc các tool chuyên sâu như analyze_clinical_symptoms.\n"
     "Ví dụ:\n"
     "- User: 'Tôi ho ra máu và rất sợ' → gọi analyze_clinical_symptoms + speak_empathetic_response\n"
     "- User: 'Xin chào Hugo' → gọi speak_empathetic_response\n"
@@ -249,7 +281,7 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
     "- User: 'Xung quanh tôi có vật cản không?' → gọi execute_environment_scan\n"
     "\n"
     "Nguyên tắc (Subsumption):\n"
-    "1. Luôn ưu tiên Safety (Emergency) trước — TIER 0\n"
+    "1. Luôn ưu tiên Safety (Emergency) trước — TIER 0 (Ví dụ: đột quỵ, nhồi máu cơ tim, bất tỉnh → gọi trigger_sos_protocol)\n"
     "2. Nếu có triệu chứng y tế hoặc yêu cầu quét cơ thể chi tiết (analyze_clinical_symptoms) — TIER 1\n"
     "3. Nếu user yêu cầu quét toàn thân hình ảnh (camera), gọi execute_full_body_scan — TIER 0.5\n"
     "4. Nếu hỏi về vật cản / môi trường xung quanh, gọi execute_environment_scan\n"
@@ -358,16 +390,20 @@ class RouterAgentV2:
                 "raw_response": "[EMERGENCY ACTIVATED — LOCAL RULE]",
             }
 
-        # Tier 1 — Medical symptoms
+        # Tier 1 — Medical symptoms & health queries
         medical_kw = [
             "đau", "dau", "sốt", "sot", "ho", "mệt", "met",
             "bệnh", "benh", "chấn thương", "chan thuong",
             "buồn nôn", "buon non", "nôn", "non",
             "khó thở", "kho tho", "chest pain", "headache", "fever",
             "scan me", "scan my", "quét cơ thể", "quet co the", "quét sức khỏe", "quet suc khoe",
-            "vitals", "sinh tồn", "sinh ton"
+            "vitals", "sinh tồn", "sinh ton", "tim", "heart", "nhịp tim", "nhip tim"
         ]
         if any(w in msg for w in medical_kw):
+            tool_calls.append({
+                "tool_name": "fetch_sensor_telemetry",
+                "parameters": {},
+            })
             urgent = any(w in msg for w in ["cấp", "cap", "khẩn", "khan", "urgent", "severe"])
             tool_calls.append({
                 "tool_name": "analyze_clinical_symptoms",
@@ -387,6 +423,16 @@ class RouterAgentV2:
             tool_calls.append({
                 "tool_name": "execute_full_body_scan",
                 "parameters": {"scan_reason": user_message},
+            })
+
+        # Vision / Camera
+        vision_kw = [
+            "camera", "nhìn thấy", "nhin thay", "thấy gì", "thay gi", "webcam", "mắt", "mat", "clip", "stream", "vision"
+        ]
+        if any(w in msg for w in vision_kw):
+            tool_calls.append({
+                "tool_name": "capture_vision_payload",
+                "parameters": {},
             })
 
         # Environment / obstacle scan

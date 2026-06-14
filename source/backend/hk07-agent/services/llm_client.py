@@ -22,6 +22,31 @@ load_dotenv(dotenv_path=env_path)
 
 log = logging.getLogger("hk07.llm_client")
 
+from concurrent.futures import ThreadPoolExecutor
+
+class LLMClientCircuitBreaker:
+    def __init__(self, recovery_time=30.0):
+        self.recovery_time = float(recovery_time)
+        self.state = "CLOSED"  # CLOSED, OPEN
+        self.last_trip_time = 0.0
+
+    def trip(self):
+        self.state = "OPEN"
+        self.last_trip_time = float(time.time())
+        log.error(f"[LLM_CLIENT_CB] Circuit Breaker tripped to OPEN. Routing to LocalOfflineFallback for {self.recovery_time}s.")
+
+    def allow_request(self) -> bool:
+        if self.state == "OPEN":
+            if float(time.time()) - self.last_trip_time >= self.recovery_time:
+                self.state = "CLOSED"
+                log.warning("[LLM_CLIENT_CB] Circuit Breaker closed. Restoring API requests.")
+                return True
+            return False
+        return True
+
+_circuit_breaker = LLMClientCircuitBreaker()
+_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="llm_client_worker")
+
 # Import litellm
 try:
     import litellm
@@ -44,11 +69,48 @@ except ImportError:
 
 # ─── API keys from environment ────────────────────────────────────────────────
 _GROQ_KEY        = os.getenv("GROQ_API_KEY", "")
+_GROQ_KEY_ALT    = os.getenv("GROQ_API_KEY_ALT", os.getenv("GROQ_API_KEY_SECONDARY", ""))
 _OPENAI_KEY      = os.getenv("OPENAI_API_KEY", "")
+_OPENAI_KEY_ALT  = os.getenv("OPENAI_API_KEY_ALT", os.getenv("OPENAI_API_KEY_SECONDARY", ""))
 _OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 _COHERE_KEY      = os.getenv("COHERE_API_KEY", "")
 _MISTRAL_KEY     = os.getenv("MISTRAL_API_KEY", "")
 _GEMINI_KEY      = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", ""))
+
+def _get_execution_chain(is_vision=False) -> List[Dict[str, Any]]:
+    return [
+        {
+            "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct" if is_vision else "groq/llama-3.3-70b-versatile",
+            "api_key": _GROQ_KEY,
+            "label": "GROQ_PRIMARY",
+            "enabled": bool(_GROQ_KEY),
+        },
+        {
+            "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct" if is_vision else "groq/llama-3.3-70b-versatile",
+            "api_key": _GROQ_KEY_ALT,
+            "label": "GROQ_SECONDARY",
+            "enabled": bool(_GROQ_KEY_ALT),
+        },
+        {
+            "model": "openai/gpt-4o-mini",
+            "api_key": _OPENAI_KEY_ALT,
+            "label": "OPENAI_SECONDARY",
+            "enabled": bool(_OPENAI_KEY_ALT),
+        },
+        {
+            "model": "openrouter/openai/gpt-4o-mini",
+            "api_key": _OPENROUTER_KEY,
+            "label": "OPENROUTER_PRIMARY",
+            "enabled": bool(_OPENROUTER_KEY),
+            "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Core"},
+        },
+        {
+            "model": "gemini/gemini-2.0-flash",
+            "api_key": _GEMINI_KEY,
+            "label": "GEMINI_PRIMARY",
+            "enabled": bool(_GEMINI_KEY),
+        }
+    ]
 
 # ─── Standard Provider Tiers ──────────────────────────────────────────────────
 ROUTER_TIERS: List[Dict[str, Any]] = [
@@ -127,29 +189,11 @@ EMPATHY_TIERS: List[Dict[str, Any]] = [
 # Centralized Vision & Multimodal Tiers (Groq is primary, Gemini/OpenAI are fallbacks)
 VISION_TIERS: List[Dict[str, Any]] = [
     {
-        "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-        "api_key": _GROQ_KEY,
-        "label": "GROQ_LLAMA_4_SCOUT",
-        "enabled": bool(_GROQ_KEY),
-    },
-    {
         "model": "openrouter/openai/gpt-4o-mini",
         "api_key": _OPENROUTER_KEY,
         "label": "OPENROUTER_VISION_MINI",
         "enabled": bool(_OPENROUTER_KEY),
         "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Vision"},
-    },
-    {
-        "model": "openai/gpt-4o-mini",
-        "api_key": _OPENAI_KEY,
-        "label": "OPENAI_VISION_MINI",
-        "enabled": bool(_OPENAI_KEY),
-    },
-    {
-        "model": "gemini/gemini-1.5-flash",
-        "api_key": _GEMINI_KEY,
-        "label": "GEMINI_FLASH_VISION",
-        "enabled": bool(_GEMINI_KEY),
     },
     {
         "model": "gemini/gemini-2.0-flash",
@@ -210,6 +254,7 @@ class LocalOfflineFallback:
             
         try:
             log.info(f"[LOCAL_SLM] Loading quantized SLM model from: {model_path}")
+            import llama_cpp
             cls._model_instance = llama_cpp.Llama(
                 model_path=model_path,
                 n_ctx=2048,
@@ -549,6 +594,10 @@ class LLMClient:
         Standard text completion with fallback.
         Returns: (response_text, provider_label)
         """
+        if not _circuit_breaker.allow_request():
+            log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
+            return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+
         if not LITELLM_AVAILABLE:
             log.warning("[LLM_CLIENT] litellm not available. Activating LocalOfflineFallback.")
             return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
@@ -568,7 +617,8 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        for tier in tiers:
+        execution_chain = _get_execution_chain(is_vision=False)
+        for tier in execution_chain:
             if not tier.get("enabled", False):
                 continue
 
@@ -585,7 +635,8 @@ class LLMClient:
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
-                response = await asyncio.to_thread(litellm.completion, **kwargs)
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(_executor, lambda: litellm.completion(**kwargs))
                 if response.choices and response.choices[0].message:
                     content = response.choices[0].message.content
                     if content:
@@ -595,13 +646,18 @@ class LLMClient:
                         return result
 
             except Exception as e:
-                if isinstance(e, LiteLLMRateLimitError) or cls._is_rate_limit(e):
-                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating tier", tier["label"])
-                elif cls._is_permanent_error(e):
-                    log.error("[LLM_CLIENT] ❌ Permanent error on %s: %s. Disabling tier.", tier["label"], str(e)[:120])
-                    tier["enabled"] = False
+                err_str = str(e).lower()
+                is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
+                is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
+                is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+
+                if is_credit_issue or is_rate_limit:
+                    _circuit_breaker.trip()
+
+                if is_credit_issue or is_rate_limit or is_timeout:
+                    log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
                 else:
-                    log.warning("[LLM_CLIENT] ❌ %s text completion failed: %s", tier["label"], str(e)[:120])
+                    log.warning("[LLM_CLIENT] ❌ %s execution failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
                 continue
 
         log.warning("[LLM_CLIENT] All LLM tiers failed for text completion. Activating LocalOfflineFallback.")
@@ -627,6 +683,10 @@ class LLMClient:
             "raw_response": "..."
         }
         """
+        if not _circuit_breaker.allow_request():
+            log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
+            return LocalOfflineFallback.get_tool_call_fallback(prompt, tools), "LOCAL_FALLBACK"
+
         if not LITELLM_AVAILABLE:
             log.warning("[LLM_CLIENT] litellm not available for tool call. Activating LocalOfflineFallback.")
             return LocalOfflineFallback.get_tool_call_fallback(prompt, tools), "LOCAL_FALLBACK"
@@ -646,7 +706,8 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        for tier in tiers:
+        execution_chain = _get_execution_chain(is_vision=False)
+        for tier in execution_chain:
             if not tier.get("enabled", False):
                 continue
 
@@ -665,7 +726,8 @@ class LLMClient:
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
-                response = await asyncio.to_thread(litellm.completion, **kwargs)
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(_executor, lambda: litellm.completion(**kwargs))
                 
                 tool_calls = []
                 if response.choices and response.choices[0].message:
@@ -705,13 +767,18 @@ class LLMClient:
                     return result
 
             except Exception as e:
-                if isinstance(e, LiteLLMRateLimitError) or cls._is_rate_limit(e):
-                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating tier", tier["label"])
-                elif cls._is_permanent_error(e):
-                    log.error("[LLM_CLIENT] ❌ Permanent error on %s: %s. Disabling tier.", tier["label"], str(e)[:120])
-                    tier["enabled"] = False
+                err_str = str(e).lower()
+                is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
+                is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
+                is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+
+                if is_credit_issue or is_rate_limit:
+                    _circuit_breaker.trip()
+
+                if is_credit_issue or is_rate_limit or is_timeout:
+                    log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
                 else:
-                    log.warning("[LLM_CLIENT] ❌ %s tool call failed: %s", tier["label"], str(e)[:120])
+                    log.warning("[LLM_CLIENT] ❌ %s tool call failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
                 continue
 
         log.warning("[LLM_CLIENT] All LLM tiers failed for tool calling. Activating LocalOfflineFallback.")
@@ -732,6 +799,10 @@ class LLMClient:
         Vision / Multimodal image processing completion with fallback.
         Returns: (response_text, provider_label)
         """
+        if not _circuit_breaker.allow_request():
+            log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
+            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+
         if not LITELLM_AVAILABLE:
             log.warning("[LLM_CLIENT] litellm not available for vision. Activating LocalOfflineFallback.")
             return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
@@ -752,7 +823,8 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_content})
 
-        for tier in tiers:
+        execution_chain = _get_execution_chain(is_vision=True)
+        for tier in execution_chain:
             if not tier.get("enabled", False):
                 continue
 
@@ -769,7 +841,8 @@ class LLMClient:
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
-                response = await asyncio.to_thread(litellm.completion, **kwargs)
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(_executor, lambda: litellm.completion(**kwargs))
                 if response.choices and response.choices[0].message:
                     content = response.choices[0].message.content
                     if content:
@@ -777,13 +850,18 @@ class LLMClient:
                         return content.strip(), tier["label"]
 
             except Exception as e:
-                if isinstance(e, LiteLLMRateLimitError) or cls._is_rate_limit(e):
-                    log.warning("[LLM_CLIENT] ⚠️ 429 RateLimit on %s — rotating vision tier", tier["label"])
-                elif cls._is_permanent_error(e):
-                    log.error("[LLM_CLIENT] ❌ Permanent error on %s: %s. Disabling tier.", tier["label"], str(e)[:120])
-                    tier["enabled"] = False
+                err_str = str(e).lower()
+                is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
+                is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
+                is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+
+                if is_credit_issue or is_rate_limit:
+                    _circuit_breaker.trip()
+
+                if is_credit_issue or is_rate_limit or is_timeout:
+                    log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
                 else:
-                    log.warning("[LLM_CLIENT] ❌ %s vision completion failed: %s", tier["label"], str(e)[:120])
+                    log.warning("[LLM_CLIENT] ❌ %s vision completion failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
                 continue
 
         log.warning("[LLM_CLIENT] All LLM tiers failed for vision completion. Activating LocalOfflineFallback.")

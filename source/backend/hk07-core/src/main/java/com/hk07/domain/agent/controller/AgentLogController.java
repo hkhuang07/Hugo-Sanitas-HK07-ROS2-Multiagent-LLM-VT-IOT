@@ -70,7 +70,7 @@ public class AgentLogController {
     private final WebClient pythonAgentClient;
 
     public AgentLogController(AgentLogService agentLogService,
-                              @Value("${hk07.ai.agent-url:http://127.0.0.1:8000}") String agentUrl) {
+                              @Value("${hk07.ai.agent-url:http://localhost:8000}") String agentUrl) {
         this.agentLogService = agentLogService;
         this.pythonAgentClient = WebClient.builder()
                 .baseUrl(agentUrl)

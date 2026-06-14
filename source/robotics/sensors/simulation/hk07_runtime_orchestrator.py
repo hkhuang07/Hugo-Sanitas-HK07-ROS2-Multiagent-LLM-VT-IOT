@@ -11,9 +11,11 @@ from simulation.baymax_telemetry_sim import BaymaxTelemetrySim
 from simulation.hk07_physics_node import Hk07PhysicsNode
 from simulation.lidar_pointcloud_sim import LidarPointCloudSim
 from simulation.navigation_agent import NavigationAgent
-from simulation.ros2_mqtt_bridge_node import Ros2MqttBridge
+from simulation.hugo_action_controller_node import HugoActionControllerNode
 from simulation.rppg_thermal_node import RppgThermalNode
 from simulation.rtos_watchdog_simulator import RtosWatchdogSimulator
+from mobile_gateway.vivo_http_mqtt_bridge import HugoPerceptionBridgeNode
+from vision_sensor.hk07_sensor_fusion import Hk07SensorFusionNode
 
 # Setup logger
 logging.basicConfig(
@@ -32,32 +34,23 @@ def main(args=None):
     physics_node = None
     lidar_node = None
     nav_node = None
-    mqtt_node = None
     rppg_node = None
     watchdog_node = None
-    fusion_process = None
+    perception_bridge_node = None
+    sensor_fusion_node = None
+    action_controller_node = None
 
     try:
-        # Spawn hk07_sensor_fusion.py as a subprocess to run alongside other nodes
-        orchestrator_dir = os.path.dirname(os.path.abspath(__file__))
-        sensor_fusion_path = os.path.abspath(os.path.join(orchestrator_dir, "..", "vision_sensor", "hk07_sensor_fusion.py"))
-        log.info(f"=== Spawning Sensor Fusion subprocess from: {sensor_fusion_path} ===")
-        
-        # Spawn the subprocess inheriting standard streams (no redirection)
-        # to ensure X11/Wayland GUI window support
-        fusion_process = subprocess.Popen(
-            [sys.executable, "-u", sensor_fusion_path],
-            env=os.environ
-        )
-
         balance_node = BalanceController()
         baymax_node = BaymaxTelemetrySim()
         physics_node = Hk07PhysicsNode()
         lidar_node = LidarPointCloudSim()
         nav_node = NavigationAgent()
-        mqtt_node = Ros2MqttBridge()
         rppg_node = RppgThermalNode()
         watchdog_node = RtosWatchdogSimulator()
+        perception_bridge_node = HugoPerceptionBridgeNode()
+        sensor_fusion_node = Hk07SensorFusionNode()
+        action_controller_node = HugoActionControllerNode()
 
         executor = SingleThreadedExecutor()
         executor.add_node(balance_node)
@@ -65,9 +58,11 @@ def main(args=None):
         executor.add_node(physics_node)
         executor.add_node(lidar_node)
         executor.add_node(nav_node)
-        executor.add_node(mqtt_node)
         executor.add_node(rppg_node)
         executor.add_node(watchdog_node)
+        executor.add_node(perception_bridge_node)
+        executor.add_node(sensor_fusion_node)
+        executor.add_node(action_controller_node)
 
         log.info("=== SPINNING consolidated nodes in single thread process ===")
         executor.spin()
@@ -91,35 +86,26 @@ def main(args=None):
             except Exception:
                 pass
 
-        # Disconnect MQTT connection
-        if mqtt_node is not None:
-            if getattr(mqtt_node, 'mqtt_client', None) and mqtt_node.mqtt_client is not None:
-                try:
-                    mqtt_node.mqtt_client.disconnect()
-                    log.info("[MQTT_BRIDGE] MQTT client disconnected successfully.")
-                except Exception as ex:
-                    log.error(f"Failed to disconnect MQTT client: {ex}")
+        # Shutdown http server in bridge
+        if perception_bridge_node is not None and getattr(perception_bridge_node, 'server', None):
             try:
-                mqtt_node.destroy_node()
-            except Exception:
-                pass
+                perception_bridge_node.server.shutdown()
+                log.info("[PERCEPTION_BRIDGE] HTTP server shut down successfully.")
+            except Exception as ex:
+                log.error(f"Failed to shutdown HTTP server: {ex}")
 
         # Clean up remaining nodes
-        for node in [balance_node, baymax_node, physics_node, lidar_node, nav_node, watchdog_node]:
+        nodes_to_cleanup = [
+            balance_node, baymax_node, physics_node, lidar_node,
+            nav_node, watchdog_node, perception_bridge_node,
+            sensor_fusion_node, action_controller_node
+        ]
+        for node in nodes_to_cleanup:
             if node is not None:
                 try:
                     node.destroy_node()
                 except Exception:
                     pass
-
-        # Terminate fusion subprocess if spawned
-        if fusion_process is not None:
-            try:
-                log.info("=== Terminating Sensor Fusion subprocess ===")
-                fusion_process.terminate()
-                fusion_process.wait(timeout=5)
-            except Exception as pe:
-                log.error(f"Failed to cleanly terminate Sensor Fusion subprocess: {pe}")
 
         try:
             rclpy.shutdown()

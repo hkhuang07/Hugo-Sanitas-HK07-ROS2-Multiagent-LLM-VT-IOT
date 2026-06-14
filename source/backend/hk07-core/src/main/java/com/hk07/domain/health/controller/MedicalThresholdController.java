@@ -66,6 +66,15 @@ public class MedicalThresholdController {
                 ? thresholdRepository.findByDeviceId(deviceId)
                 : thresholdRepository.findByUser_IdAndDeviceId(userId, deviceId);
 
+        if (entityOpt.isEmpty() && "default".equals(deviceId)) {
+            List<MedicalThresholdEntity> all = thresholdRepository.findAllByUser_Id(userId);
+            if (!all.isEmpty()) {
+                entityOpt = java.util.Optional.of(all.get(0));
+            } else {
+                entityOpt = thresholdRepository.findByDeviceId("wristband-sim-001");
+            }
+        }
+
         return entityOpt
                 .map(e -> ResponseEntity.ok(ApiResponse.ok(toDto(e))))
                 .orElse(ResponseEntity.notFound().build());

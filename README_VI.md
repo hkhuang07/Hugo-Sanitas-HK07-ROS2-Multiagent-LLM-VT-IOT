@@ -117,8 +117,8 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 │                        HK-07 HUGO SANITAS — KIẾN TRÚC HỆ THỐNG                         │
 ├───────────────────────┬─────────────────────────┬──────────────────────────────────────┤
 │    [FRONTEND]         │     [BACKEND CORE]      │            [AGENT ENGINE]            │
-│    Vue 3 + Vite       │    Spring Boot 3.2      │            Python FastAPI            │
-│    Cổng: 5173         │     Java 21 VT          │            Cổng: 8889                │
+│    Vue 3 + Vite       │    Spring Boot 3.4      │            Python FastAPI            │
+│    Cổng: 5173         │     Java 21 VT          │            Cổng: 8000                │
 │    Three.js 3D Twin   │     Cổng: 8888          │            Vòng Lặp Đa Tác Nhân      │
 │    Giao diện Voice UI │     JWT Auth & RBAC     │            Redis Blackboard          │
 └──────────┬────────────┴──────────┬──────────────┴──────────────────┬───────────────────┘
@@ -192,19 +192,21 @@ Hệ thống hỗ trợ 2 chế độ vận hành: **Chạy Tích Hợp Bằng D
 
 ### 1. Vận Hành Qua Docker Compose
 
-```bash
-# 1. Di chuyển vào thư mục chứa cấu hình backend
-cd source/backend
-cp .env.example .env
-# Mở file .env và điền các khóa GROQ_API_KEY, GEMINI_API_KEY, hoặc OPENROUTER_API_KEY phù hợp
+Việc chạy lệnh `docker compose up -d` tiêu chuẩn tại thư mục gốc repository hiện chỉ khởi chạy các dịch vụ hạ tầng nền tảng (MariaDB trên cổng 3307, Redis trên cổng 6379, và Mosquitto Broker trên cổng 1883). Điều này giúp các cổng dịch vụ ứng dụng 8888 và 8000 trống để bạn có thể chạy `hk07-core` và `hk07-agent` cục bộ trên các cửa sổ terminal phục vụ quá trình phát triển và gỡ lỗi trực tiếp.
 
-# 2. Khởi động toàn bộ stack dịch vụ bằng container
-docker compose up -d --build
+Để chạy toàn bộ hệ thống khép kín đã được container hóa hoàn toàn trong môi trường production Docker, bạn cần truyền thêm cờ hiệu `--profile operation`:
+```bash
+# 1. Sao chép cấu hình môi trường template
+cp source/backend/.env.example source/backend/.env
+# Điền các khóa GROQ_API_KEY, GEMINI_API_KEY, hoặc OPENROUTER_API_KEY phù hợp vào file source/backend/.env
+
+# 2. Khởi động toàn bộ stack dịch vụ bao gồm các ứng dụng
+docker compose --profile operation up -d --build
 
 # 3. Các cổng kết nối
 # Dashboard Frontend:  http://localhost:4205 (Định tuyến qua Nginx)
 # Backend Swagger Docs: http://localhost:8888/swagger-ui.html
-# AI Agent API Docs:   http://localhost:8889/docs
+# AI Agent API Docs:   http://localhost:8000/docs
 ```
 
 Để chạy các tệp kịch bản giả lập thị giác máy tính và điều khiển robot hướng tới cụm Docker, thiết lập các biến môi trường và chạy:
@@ -222,69 +224,69 @@ python source/robotics/sensors/vision_sensor/hk07_sensor_fusion.py
 
 ### 2. Khởi Động Thủ Công Trong Phát Triển Cục Bộ (Local Dev)
 
-#### Bước 0: Khởi động các cơ sở dữ liệu và Broker nền
-Khởi động cụm dịch vụ MariaDB 3307, Redis 6379, và Mosquitto 1883 bằng file script PowerShell:
+Trước khi khởi động các dịch vụ cục bộ, hãy khởi chạy cụm cơ sở dữ liệu và broker trung gian:
 ```powershell
+# Chạy trong PowerShell (Windows Host) từ thư mục gốc repository:
 ./source/backend/run_backend.ps1
 ```
 
-#### Bước 1: Khởi động Backend Core (Spring Boot)
-```bash
-cd source/backend/hk07-core
-mvn clean install -DskipTests
-mvn spring-boot:run
-# Backend lắng nghe tại: http://localhost:8888
-```
+Sau khi hạ tầng đã hoạt động, khởi động từng phân hệ trên một cửa sổ terminal riêng biệt bằng các đường dẫn tương đối tính từ thư mục gốc (`hk-07/`):
 
-#### Bước 2: Khởi động Python AI Multi-Agent API
-```bash
-cd source/backend/hk07-agent
-pip install -r requirements.txt
-python -m uvicorn main:app --reload --port 8889
-# Đặc vụ AI lắng nghe tại: http://localhost:8889
-```
+* **[TERMINAL 1]: ROS2 Server Bridge (Môi trường WSL2 Ubuntu)**
+  * **Mục đích**: Thiết lập cổng kết nối mạng truyền thông WebSocket chính hoạt động trên Cổng 9090. Node này đóng vai trò là tầng dịch nền tảng cho phép đồng bộ hóa dữ liệu sinh trắc thời gian thực hai chiều giữa vùng lõi robot ROS2, hệ thống AI Multi-Agent và giao diện điều khiển dashboard người dùng.
+  * **Đường dẫn thực thi**: `source/robotics`
+  * **Các lệnh thực hiện từng bước**:
+    ```bash
+    cd source/robotics
+    source /opt/ros/humble/setup.bash
+    ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+    ```
 
-#### Bước 3: Khởi động Giao diện Frontend (Vue 3)
-```bash
-cd source/frontend/hk07-dashboard
-npm install
-npm run dev
-# Giao diện hoạt động tại: http://localhost:5173
-```
+* **[TERMINAL 2]: hk07-core Middleware Backend (Windows Host CMD / PowerShell)**
+  * **Mục đích**: Khởi chạy động cơ hạ tầng doanh nghiệp Java core chạy bằng Spring Boot 3.4 hoạt động trên Cổng 8888. Phân hệ này quản lý xác thực hệ thống, ghi nhật ký quan hệ nhất quán qua MariaDB ledger, xử lý ánh xạ ngưỡng sinh tồn lâm sàng động và đồng bộ hóa cấu hình thiết bị thời gian thực.
+  * **Đường dẫn thực thi**: `source/backend/hk07-core`
+  * **Các lệnh thực hiện từng bước**:
+    ```bash
+    cd source/backend/hk07-core
+    ./mvnw spring-boot:run
+    ```
 
-#### Bước 4: Khởi chạy Lõi Robot ROS 2
-Để chạy vòng lặp xử lý robot hiệu năng cao, mở một **WSL2 Ubuntu Terminal** chuyên biệt:
+* **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (Windows Host CMD)**
+  * **Mục đích**: Kích hoạt động cơ AI đưa ra quyết định nhận thức chính chạy trên FastAPI hoạt động trên Cổng 8000. Thành phần này triển khai kiến trúc phân tầng Subsumption (Tầng 0-2), khởi chạy các luồng kiểm soát heartbeat bất đồng bộ biệt lập, định tuyến truy vấn và quản lý bảng nhớ chia sẻ Redis blackboard.
+  * **Đường dẫn thực thi**: `source/backend/hk07-agent`
+  * **Các lệnh thực hiện từng bước**:
+    ```bash
+    cd source/backend/hk07-agent
+    python main.py
+    ```
 
-```bash
-# 1. Di chuyển vào không gian làm việc robotics
-cd source/robotics
+* **[TERMINAL 4]: ROS2 Sensors Orchestrator Node (Môi trường WSL2 Ubuntu)**
+  * **Mục đích**: Khởi chạy vòng lặp hấp thụ dữ liệu cảm biến robot hợp nhất. Node Python hiệu năng cao này tiếp nhận các dữ liệu cảm biến di động thô tần số cao từ cổng mạng hotspot gateway, giải mã các quaternion IMU, xử lý các chỉ số sinh hiệu video khuôn mặt không tiếp xúc rPPG và tính toán các vector lực đẩy né tránh APF.
+  * **Đường dẫn thực thi**: `source/robotics`
+  * **Các lệnh thực hiện từng bước**:
+    ```bash
+    cd source/robotics
+    source /opt/ros/humble/setup.bash
+    source install/setup.bash
+    ros2 run sensors hk07_runtime_orchestrator
+    ```
 
-# 2. Source môi trường ROS 2 Humble hệ thống
-source /opt/ros/humble/setup.bash
+* **[TERMINAL 5]: hk07-dashboard Operator Interface Frontend (Windows Host CMD)**
+  * **Mục đích**: Khởi động máy chủ phát triển ứng dụng trang đơn chạy bằng Vite trên Cổng 5173. Thành phần này kết xuất giao diện điều khiển tác vụ y tế, trực quan hóa sóng điện tâm đồ ECG 60Hz trực tiếp bằng canvas, mô phỏng radar không gian 3D Holographic Twin bằng Three.js và triển khai mô-đun Voice UI tương tác.
+  * **Đường dẫn thực thi**: `source/frontend/hk07-dashboard`
+  * **Các lệnh thực hiện từng bước**:
+    ```bash
+    cd source/frontend/hk07-dashboard
+    npm run dev
+    ```
 
-# 3. Dọn dẹp và biên dịch sensors package
-rm -rf build log install
-colcon build --packages-select sensors
+---
 
-# 4. Source setup biến môi trường local
-source install/setup.bash
+### 3. Hợp Đồng Điểm Cuối Kết Nối Động (Endpoint Contracts)
 
-# 5. Khởi chạy 5 Node ROS 2 chính thức & MQTT Dual Bridge
-ros2 run sensors ros2_mqtt_bridge_node
-ros2 run sensors hk07_physics_node
-ros2 run sensors balance_controller
-ros2 run sensors navigation_agent
-ros2 run sensors rtos_watchdog_simulator
-```
-
-#### Bước 5: Khởi chạy Cầu Nối Cảm Biến Điện Thoại (HTTP-to-MQTT Bridge)
-Định tuyến ứng dụng ghi nhật ký cảm biến (Sensor Logs) trên điện thoại để truyền phát trực tiếp dữ liệu vào máy tính thông qua cầu nối này:
-```bash
-cd source/robotics/sensors/mobile_gateway
-pip install Flask paho-mqtt
-python vivo_http_mqtt_bridge.py --port 5005
-```
-*(Cầu nối sẽ tự động nhận diện địa chỉ IP Wi-Fi của máy tính và in ra URL cấu hình tương ứng trên điện thoại, ví dụ: `http://<WIFI_IP>:<PORT>/data`).*
+Hãy cấu hình các thiết bị cảm biến và camera ngoại vi của bạn trỏ tới các địa chỉ tương ứng được cấp bởi các script thiết lập mạng tự động:
+* **Địa chỉ đích của Thiết Bị Di Động (Ứng dụng SensorLogs)**: `http://<LAPTOP_WIFI_IP>:5005/data`
+* **Địa chỉ nguồn luồng Video Biên (Ứng dụng IPWebCam)**: `http://<PHONE_HOTSPOT_IP>:8080/video`
 
 ---
 

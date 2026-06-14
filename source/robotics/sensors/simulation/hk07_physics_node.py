@@ -81,6 +81,14 @@ class Hk07PhysicsNode(Node):
             }
 
     def lidar_callback(self, msg):
+        # LiDAR hardware absent short-circuit
+        lidar_absent = os.environ.get("LIDAR_HARDWARE_ABSENT", "False").lower() in ("true", "1", "yes") or \
+                       os.environ.get("LIDAR_ABSENT", "False").lower() in ("true", "1", "yes")
+        if lidar_absent:
+            with self.state_lock:
+                self.lidar_points = []
+            return
+
         pts = []
         point_step = msg.point_step
         data = msg.data

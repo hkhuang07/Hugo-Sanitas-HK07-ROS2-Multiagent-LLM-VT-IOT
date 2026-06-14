@@ -27,7 +27,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     ports:
-      - "127.0.0.1:3306:3306"
+      - "3306:3306"
     # [P0-2] Healthcheck: hk07-core will not start until DB is truly ready
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -114,6 +114,8 @@ services:
       context: ./hk07-core
       dockerfile: Dockerfile
     container_name: hk07-core
+    profiles:
+      - operation
     restart: unless-stopped
     networks: [hk07-net]
     ports:
@@ -154,6 +156,8 @@ services:
       context: ./hk07-agent
       dockerfile: Dockerfile
     container_name: hk07-agent
+    profiles:
+      - operation
     restart: unless-stopped
     networks: [hk07-net]
     ports:

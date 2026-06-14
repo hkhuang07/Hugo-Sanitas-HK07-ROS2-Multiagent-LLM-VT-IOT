@@ -33,7 +33,7 @@ public class AgentDebugController {
     private final WebClient agentClient;
 
     public AgentDebugController(
-            @Value("${hk07.ai.agent-url:http://127.0.0.1:8000}") String agentUrl) {
+            @Value("${hk07.ai.agent-url:http://localhost:8000}") String agentUrl) {
         this.agentClient = WebClient.builder()
                 .baseUrl(agentUrl)
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024)) // 2MB buffer

@@ -58,9 +58,13 @@ class RppgThermalNode(Node):
         param = self.get_parameter('video_source')
         
         if param.value is None:
-            video_src_str = os.getenv('RTSP_CAMERA_URL', '0')
+            video_src_str = os.getenv('RTSP_CAMERA_URL', 'http://192.168.133.228:8080/video')
         else:
             video_src_str = str(param.value)
+            
+        # Completely bypass physical camera index 0 and redirect to network stream
+        if video_src_str == '0':
+            video_src_str = "http://192.168.133.228:8080/video"
             
         try:
             self.video_source = int(video_src_str)

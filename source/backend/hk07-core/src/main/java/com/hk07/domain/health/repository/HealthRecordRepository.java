@@ -27,23 +27,42 @@ public interface HealthRecordRepository extends JpaRepository<HealthRecordEntity
     List<HealthRecordEntity> findActiveAlerts(UUID userId, List<AlertLevel> levels);
 
     @Query(value = 
-        "SELECT bucket_hour, avg_hr, max_hr, min_hr, avg_systolic, avg_spo2, avg_temp, sample_count, worst_alert " +
-        "FROM v_health_hourly_summary " +
+        "SELECT FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(recorded_at)/3600)*3600) AS bucket_hour, " +
+        "CAST(ROUND(AVG(heart_rate)) AS SIGNED) AS avg_hr, " +
+        "CAST(MAX(heart_rate) AS SIGNED) AS max_hr, " +
+        "CAST(MIN(heart_rate) AS SIGNED) AS min_hr, " +
+        "ROUND(AVG(systolic), 1) AS avg_systolic, " +
+        "ROUND(AVG(spo2), 1) AS avg_spo2, " +
+        "ROUND(AVG(body_temperature), 1) AS avg_temp, " +
+        "COUNT(*) AS sample_count, " +
+        "MAX(alert_level) AS worst_alert " +
+        "FROM health_records " +
         "WHERE user_id = :userId " +
-        "AND bucket_hour >= NOW() - INTERVAL :hours HOUR " +
+        "AND recorded_at >= NOW() - INTERVAL :hours HOUR " +
+        "GROUP BY bucket_hour " +
         "ORDER BY bucket_hour ASC", 
         nativeQuery = true)
     List<Object[]> findHourlySummaryRaw(
-        @org.springframework.data.repository.query.Param("userId") UUID userId, 
-        @org.springframework.data.repository.query.Param("hours") int hours
+        @Param("userId") UUID userId, 
+        @Param("hours") int hours
     );
+
     /** Hourly bucket summary within an explicit date-time range */
     @Query(value =
-        "SELECT bucket_hour, avg_hr, max_hr, min_hr, avg_systolic, avg_spo2, avg_temp, sample_count, worst_alert " +
-        "FROM v_health_hourly_summary " +
+        "SELECT FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(recorded_at)/3600)*3600) AS bucket_hour, " +
+        "CAST(ROUND(AVG(heart_rate)) AS SIGNED) AS avg_hr, " +
+        "CAST(MAX(heart_rate) AS SIGNED) AS max_hr, " +
+        "CAST(MIN(heart_rate) AS SIGNED) AS min_hr, " +
+        "ROUND(AVG(systolic), 1) AS avg_systolic, " +
+        "ROUND(AVG(spo2), 1) AS avg_spo2, " +
+        "ROUND(AVG(body_temperature), 1) AS avg_temp, " +
+        "COUNT(*) AS sample_count, " +
+        "MAX(alert_level) AS worst_alert " +
+        "FROM health_records " +
         "WHERE user_id = :userId " +
-        "AND bucket_hour >= :fromDate " +
-        "AND bucket_hour <= :toDate " +
+        "AND recorded_at >= :fromDate " +
+        "AND recorded_at <= :toDate " +
+        "GROUP BY bucket_hour " +
         "ORDER BY bucket_hour ASC",
         nativeQuery = true)
     List<Object[]> findHourlySummaryByRangeRaw(

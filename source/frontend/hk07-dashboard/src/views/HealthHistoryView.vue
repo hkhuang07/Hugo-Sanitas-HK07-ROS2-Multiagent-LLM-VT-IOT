@@ -3,27 +3,29 @@
 
     <!-- ── Control Bar ──────────────────────────────────────────────────── -->
     <div class="history-controls-bar terminal-card">
-      <span class="hud text-dim">[ HISTORY_QUERY_PARAMETERS ]</span>
+      <div class="controls-left">
+        <span class="hud text-dim">[ HISTORY_QUERY_PARAMETERS ]</span>
 
-      <div class="time-controls">
-        <!-- Preset range buttons -->
-        <button
-          v-for="range in timeRanges"
-          :key="range.label"
-          :class="['cmd-btn range-btn', activeMode === 'preset' && activeHours === range.value ? 'range-active' : '']"
-          @click="selectPreset(range.value)"
-        >{{ range.label }}</button>
+        <div class="time-controls">
+          <!-- Preset range buttons -->
+          <button
+            v-for="range in timeRanges"
+            :key="range.label"
+            :class="['cmd-btn range-btn', activeMode === 'preset' && activeHours === range.value ? 'range-active' : '']"
+            @click="selectPreset(range.value)"
+          >{{ range.label }}</button>
 
-        <!-- Custom range toggle -->
-        <button
-          :class="['cmd-btn range-btn', activeMode === 'custom' ? 'range-active' : '']"
-          @click="toggleCustomMode"
-        >[ CUSTOM ]</button>
+          <!-- Custom range toggle -->
+          <button
+            :class="['cmd-btn range-btn', activeMode === 'custom' ? 'range-active' : '']"
+            @click="toggleCustomMode"
+          >[ CUSTOM ]</button>
+        </div>
       </div>
 
-      <!-- Custom date range picker (slides in) -->
-      <transition name="slide-down">
-        <div v-if="showCustomPicker" class="custom-range-picker mono">
+      <!-- Custom date range picker (inline on the right) -->
+      <transition name="fade-in">
+        <div v-if="showCustomPicker" class="controls-right custom-range-picker mono">
           <div class="picker-row">
             <label class="text-dim">FROM:</label>
             <input
@@ -40,14 +42,13 @@
               :min="customFrom || undefined"
             />
             <button
-              class="cmd-btn"
+              class="cmd-btn execute-btn"
               :disabled="!customFrom || !customTo || loading"
               @click="fetchCustomRange"
-              style="font-size:9px;padding:3px 12px;"
             >
               &gt;&gt; EXECUTE_QUERY
             </button>
-            <span v-if="customRangeLabel" class="text-cyan" style="font-size:9px;">{{ customRangeLabel }}</span>
+            <span v-if="customRangeLabel" class="text-cyan range-label-text">{{ customRangeLabel }}</span>
           </div>
         </div>
       </transition>
@@ -250,7 +251,18 @@ async function fetchHistory() {
     const resp = await api.get('/health/history/hourly', {
       params: { hours: activeHours.value }
     })
-    const data: HourlyBucket[] = resp.data?.data ?? []
+    const rawData = resp.data?.data ?? []
+    const data: HourlyBucket[] = rawData.map((b: any) => ({
+      bucket_hour: b.bucketHour ?? b.bucket_hour,
+      avg_hr: b.avgHr ?? b.avg_hr,
+      max_hr: b.maxHr ?? b.max_hr,
+      min_hr: b.minHr ?? b.min_hr,
+      avg_systolic: b.avgSystolic ?? b.avg_systolic,
+      avg_spo2: b.avgSpo2 ?? b.avg_spo2,
+      avg_temp: b.avgTemp ?? b.avg_temp,
+      sample_count: b.sampleCount ?? b.sample_count,
+      worst_alert: b.worstAlert ?? b.worst_alert
+    }))
     hourlyBuckets.value = data
     dataSource.value = data.length > 0 ? 'LIVE_DB' : 'LIVE_DB (EMPTY)'
     loadingProgress.value = 20
@@ -291,7 +303,18 @@ async function fetchCustomRange() {
         toDate:   to.toISOString().slice(0, 19),
       }
     })
-    const data: HourlyBucket[] = resp.data?.data ?? []
+    const rawData = resp.data?.data ?? []
+    const data: HourlyBucket[] = rawData.map((b: any) => ({
+      bucket_hour: b.bucketHour ?? b.bucket_hour,
+      avg_hr: b.avgHr ?? b.avg_hr,
+      max_hr: b.maxHr ?? b.max_hr,
+      min_hr: b.minHr ?? b.min_hr,
+      avg_systolic: b.avgSystolic ?? b.avg_systolic,
+      avg_spo2: b.avgSpo2 ?? b.avg_spo2,
+      avg_temp: b.avgTemp ?? b.avg_temp,
+      sample_count: b.sampleCount ?? b.sample_count,
+      worst_alert: b.worstAlert ?? b.worst_alert
+    }))
     hourlyBuckets.value = data
     dataSource.value = data.length > 0 ? 'LIVE_DB' : 'LIVE_DB (EMPTY)'
     loadingProgress.value = 20
@@ -325,12 +348,17 @@ function selectPreset(hours: number) {
 
 function toggleCustomMode() {
   showCustomPicker.value = !showCustomPicker.value
-  if (showCustomPicker.value && !customTo.value) {
-    // Pre-fill: last 24h
-    const now = new Date()
-    const yesterday = new Date(now.getTime() - 24 * 3600_000)
-    customTo.value   = toLocalDateTimeInput(now)
-    customFrom.value = toLocalDateTimeInput(yesterday)
+  if (showCustomPicker.value) {
+    activeMode.value = 'custom'
+    if (!customTo.value) {
+      // Pre-fill: last 24h
+      const now = new Date()
+      const yesterday = new Date(now.getTime() - 24 * 3600_000)
+      customTo.value   = toLocalDateTimeInput(now)
+      customFrom.value = toLocalDateTimeInput(yesterday)
+    }
+  } else {
+    activeMode.value = 'preset'
   }
 }
 
@@ -556,16 +584,23 @@ watch(() => vitalsStore.hourlyBuckets, async () => {
 /* ── Control bar ──────────────────────────────────────────────────── */
 .history-controls-bar {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   margin: 8px 8px 0;
-  padding: 8px 16px;
+  padding: 6px 16px;
+}
+
+.controls-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .time-controls {
   display: flex;
   gap: 4px;
-  flex-wrap: wrap;
   align-items: center;
 }
 
@@ -582,20 +617,28 @@ watch(() => vitalsStore.hourlyBuckets, async () => {
 
 /* ── Custom date picker ───────────────────────────────────────────── */
 .custom-range-picker {
-  border-top: 1px solid var(--color-border-dim);
-  padding-top: 8px;
+  border-top: none;
+  padding-top: 0;
 }
 
 .picker-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .picker-row label {
   font-size: 9px;
   white-space: nowrap;
+}
+
+.execute-btn {
+  font-size: 9px;
+  padding: 3px 12px;
+}
+
+.range-label-text {
+  font-size: 9px;
 }
 
 .datetime-input {
@@ -613,16 +656,13 @@ watch(() => vitalsStore.hourlyBuckets, async () => {
   box-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
 }
 
-/* Slide transition */
-.slide-down-enter-active,
-.slide-down-leave-active {
-  transition: max-height 0.25s ease, opacity 0.2s ease;
-  max-height: 80px;
-  overflow: hidden;
+/* Fade transition */
+.fade-in-enter-active,
+.fade-in-leave-active {
+  transition: opacity 0.2s ease;
 }
-.slide-down-enter-from,
-.slide-down-leave-to {
-  max-height: 0;
+.fade-in-enter-from,
+.fade-in-leave-to {
   opacity: 0;
 }
 

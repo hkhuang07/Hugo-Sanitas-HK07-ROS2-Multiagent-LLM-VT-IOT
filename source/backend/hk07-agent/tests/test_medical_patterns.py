@@ -112,7 +112,7 @@ async def test_patterns():
     print("Processing vitals. Expected: state transitions to CRITICAL.")
     # Mock _call_llm_with_fallback to verify it gets called
     call_count = 0
-    async def mock_call_llm(vitals):
+    async def mock_call_llm(vitals, **kwargs):
         nonlocal call_count
         call_count += 1
         return {"alert_level": "CRITICAL", "summary": "Alert", "action": "None"}
