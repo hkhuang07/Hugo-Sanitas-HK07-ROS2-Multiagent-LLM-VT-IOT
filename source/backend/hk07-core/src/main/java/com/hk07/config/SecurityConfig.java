@@ -47,7 +47,7 @@ public class SecurityConfig {
                 // on any exception. Without this, the error endpoint itself triggers a new 401
                 // which creates an Infinite Request Loop, saturating Tomcat handler threads.
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/v1/auth/**", "/ws", "/ws/**", "/health", "/error", "/actuator/health").permitAll()
+                .requestMatchers("/api/v1/auth/**", "/ws", "/ws/**", "/health", "/error", "/actuator/health", "/").permitAll()
                 // ── Internal service endpoints (Python hk07-agent → hk07-core) ──
                 // Agent log POST uses internal JWT — already protected by JWT filter
                 // ── Role-Based Access Control ────────────────────────────────────

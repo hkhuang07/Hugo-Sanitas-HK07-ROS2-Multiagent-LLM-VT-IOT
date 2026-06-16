@@ -79,11 +79,11 @@
 
           <!-- Sensor Calibration Controls -->
           <div class="terminal-card">
-            <div class="terminal-card-header">[ RADAR_CALIBRATION ]</div>
+            <div class="terminal-card-header">[ VISION_CALIBRATION ]</div>
             <div class="calibration-controls">
               <div class="control-row">
-                <span class="label text-[8px]">LiDAR RATE:</span>
-                <span class="value text-green text-[9px]">10Hz</span>
+                <span class="label text-[8px]">VISION RATE:</span>
+                <span class="value text-green text-[9px]">30 FPS</span>
               </div>
               <div class="control-row">
                 <span class="label text-[8px]">STATUS:</span>

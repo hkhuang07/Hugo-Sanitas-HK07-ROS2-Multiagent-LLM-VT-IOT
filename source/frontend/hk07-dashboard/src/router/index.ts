@@ -67,7 +67,13 @@ export const router = createRouter({
     {
       path: '/vision',
       name: 'Vision',
-      component: () => import('../views/BaymaxVisionView.vue'),
+      component: () => import('../views/HugoVisionView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/system-observer',
+      name: 'SystemObserver',
+      component: () => import('../views/SystemObserverView.vue'),
       meta: { requiresAuth: true }
     },
     {

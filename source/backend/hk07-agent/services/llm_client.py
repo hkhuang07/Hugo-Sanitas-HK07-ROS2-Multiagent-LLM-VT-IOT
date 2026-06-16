@@ -69,168 +69,131 @@ except ImportError:
 
 # ─── API keys from environment ────────────────────────────────────────────────
 _GROQ_KEY        = os.getenv("GROQ_API_KEY", "")
-_GROQ_KEY_ALT    = os.getenv("GROQ_API_KEY_ALT", os.getenv("GROQ_API_KEY_SECONDARY", ""))
 _OPENAI_KEY      = os.getenv("OPENAI_API_KEY", "")
-_OPENAI_KEY_ALT  = os.getenv("OPENAI_API_KEY_ALT", os.getenv("OPENAI_API_KEY_SECONDARY", ""))
-_OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
-_COHERE_KEY      = os.getenv("COHERE_API_KEY", "")
-_MISTRAL_KEY     = os.getenv("MISTRAL_API_KEY", "")
 _GEMINI_KEY      = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", ""))
+_MISTRAL_KEY     = os.getenv("MISTRAL_API_KEY", "")
+_COHERE_KEY      = os.getenv("COHERE_API_KEY", "")
+_OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
+_HF_KEY          = os.getenv("HUGGINGFACE_API_KEY", "")
+
+class ProviderCircuitBreaker:
+    def __init__(self, recovery_time=30.0):
+        self.recovery_time = float(recovery_time)
+        self._tripped_providers = {}
+
+    def trip(self, provider: str):
+        p = provider.lower()
+        self._tripped_providers[p] = time.time()
+        log.error(f"[PROVIDER_CB] Tripped {p.upper()} due to 429/401/503. Offline for {self.recovery_time}s.")
+
+    def is_tripped(self, provider: str) -> bool:
+        p = provider.lower()
+        if p in self._tripped_providers:
+            if time.time() - self._tripped_providers[p] >= self.recovery_time:
+                del self._tripped_providers[p]
+                log.warning(f"[PROVIDER_CB] Restored connection to {p.upper()}.")
+                return False
+            return True
+        return False
+
+_provider_breaker = ProviderCircuitBreaker()
+_rolling_start_index = 0
+
+def _increment_rolling_index():
+    global _rolling_start_index
+    _rolling_start_index += 1
 
 def _get_execution_chain(is_vision=False) -> List[Dict[str, Any]]:
-    return [
+    # Load all keys dynamically to allow hot-reloading if env changes
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    gemini_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", ""))
+    mistral_key = os.getenv("MISTRAL_API_KEY", "")
+    cohere_key = os.getenv("COHERE_API_KEY", "")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+    hf_key = os.getenv("HUGGINGFACE_API_KEY", "")
+
+    # Define the 7 Tiers Failover & Specialization Graph
+    chain = [
         {
-            "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct" if is_vision else "groq/llama-3.3-70b-versatile",
-            "api_key": _GROQ_KEY,
-            "label": "GROQ_PRIMARY",
-            "enabled": bool(_GROQ_KEY),
+            "provider": "groq",
+            "model": "groq/llama-3.3-70b-versatile",
+            "api_key": groq_key,
+            "label": "GROQ_TIER_1",
+            "enabled": bool(groq_key) and not is_vision,
         },
         {
-            "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct" if is_vision else "groq/llama-3.3-70b-versatile",
-            "api_key": _GROQ_KEY_ALT,
-            "label": "GROQ_SECONDARY",
-            "enabled": bool(_GROQ_KEY_ALT),
-        },
-        {
+            "provider": "openai",
             "model": "openai/gpt-4o-mini",
-            "api_key": _OPENAI_KEY_ALT,
-            "label": "OPENAI_SECONDARY",
-            "enabled": bool(_OPENAI_KEY_ALT),
+            "api_key": openai_key,
+            "label": "OPENAI_TIER_2",
+            "enabled": bool(openai_key),
         },
         {
-            "model": "openrouter/openai/gpt-4o-mini",
-            "api_key": _OPENROUTER_KEY,
-            "label": "OPENROUTER_PRIMARY",
-            "enabled": bool(_OPENROUTER_KEY),
+            "provider": "gemini",
+            "model": "gemini/gemini-2.0-flash",
+            "api_key": gemini_key,
+            "label": "GEMINI_TIER_3",
+            "enabled": bool(gemini_key),
+        },
+        {
+            "provider": "mistral",
+            "model": "mistral/mistral-large-latest",
+            "api_key": mistral_key,
+            "label": "MISTRAL_TIER_4",
+            "enabled": bool(mistral_key) and not is_vision,
+        },
+        {
+            "provider": "cohere",
+            "model": "cohere/command-r-plus",
+            "api_key": cohere_key,
+            "label": "COHERE_TIER_5",
+            "enabled": bool(cohere_key) and not is_vision,
+        },
+        {
+            "provider": "openrouter",
+            "model": "openrouter/google/gemini-2.0-flash-exp:free",
+            "api_key": openrouter_key,
+            "label": "OPENROUTER_TIER_6",
+            "enabled": bool(openrouter_key),
             "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Core"},
         },
         {
-            "model": "gemini/gemini-2.0-flash",
-            "api_key": _GEMINI_KEY,
-            "label": "GEMINI_PRIMARY",
-            "enabled": bool(_GEMINI_KEY),
+            "provider": "openrouter",
+            "model": "openrouter/google/gemini-2.0-flash-exp:free",
+            "api_key": openrouter_key,
+            "label": "OPENROUTER_TIER_6_ALT",
+            "enabled": bool(openrouter_key),
+            "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Core"},
+        },
+        {
+            "provider": "huggingface",
+            "model": "huggingface/meta-llama/Llama-3.2-11B-Vision-Instruct" if is_vision else "huggingface/meta-llama/Llama-3-8B-Instruct",
+            "api_key": hf_key,
+            "label": "HUGGINGFACE_TIER_7",
+            "enabled": bool(hf_key),
         }
     ]
 
+    active_chain = []
+    for tier in chain:
+        if tier["enabled"] and not _provider_breaker.is_tripped(tier["provider"]):
+            active_chain.append(tier)
+
+    # Roll/rotate active chain based on the centralized rolling tracking index
+    if active_chain:
+        global _rolling_start_index
+        shift = _rolling_start_index % len(active_chain)
+        active_chain = active_chain[shift:] + active_chain[:shift]
+
+    return active_chain
+
 # ─── Standard Provider Tiers ──────────────────────────────────────────────────
-ROUTER_TIERS: List[Dict[str, Any]] = [
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "api_key": _GROQ_KEY,
-        "label": "GROQ_LLAMA_70B",
-        "enabled": bool(_GROQ_KEY),
-    },
-    {
-        "model": "openrouter/openai/gpt-4o-mini",
-        "api_key": _OPENROUTER_KEY,
-        "label": "OPENROUTER_GPT4O_MINI",
-        "enabled": bool(_OPENROUTER_KEY),
-        "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Router"},
-    },
-]
-
-MEDICAL_TIERS: List[Dict[str, Any]] = [
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "api_key": _GROQ_KEY,
-        "label": "GROQ_LLAMA_70B",
-        "enabled": bool(_GROQ_KEY),
-    },
-    {
-        "model": "openrouter/openai/gpt-4o-mini",
-        "api_key": _OPENROUTER_KEY,
-        "label": "OPENROUTER_GPT4O_MINI",
-        "enabled": bool(_OPENROUTER_KEY),
-        "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Medical"},
-    },
-    {
-        "model": "openai/gpt-4o",
-        "api_key": _OPENAI_KEY,
-        "label": "OPENAI_GPT4O",
-        "enabled": bool(_OPENAI_KEY),
-    },
-    {
-        "model": "openrouter/anthropic/claude-3-haiku",
-        "api_key": _OPENROUTER_KEY,
-        "label": "OPENROUTER_CLAUDE_HAIKU",
-        "enabled": bool(_OPENROUTER_KEY),
-        "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Medical"},
-    },
-]
-
-EMPATHY_TIERS: List[Dict[str, Any]] = [
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "api_key": _GROQ_KEY,
-        "label": "GROQ_LLAMA_70B",
-        "enabled": bool(_GROQ_KEY),
-    },
-    {
-        "model": "openrouter/openai/gpt-4o-mini",
-        "api_key": _OPENROUTER_KEY,
-        "label": "OPENROUTER_GPT4O_MINI",
-        "enabled": bool(_OPENROUTER_KEY),
-        "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Empathy"},
-    },
-    {
-        "model": "openai/gpt-4o-mini",
-        "api_key": _OPENAI_KEY,
-        "label": "OPENAI_GPT4O_MINI",
-        "enabled": bool(_OPENAI_KEY),
-    },
-    {
-        "model": "cohere/command-r",
-        "api_key": _COHERE_KEY,
-        "label": "COHERE_COMMAND_R",
-        "enabled": bool(_COHERE_KEY),
-    },
-]
-
-# Centralized Vision & Multimodal Tiers (Groq is primary, Gemini/OpenAI are fallbacks)
-VISION_TIERS: List[Dict[str, Any]] = [
-    {
-        "model": "openrouter/openai/gpt-4o-mini",
-        "api_key": _OPENROUTER_KEY,
-        "label": "OPENROUTER_VISION_MINI",
-        "enabled": bool(_OPENROUTER_KEY),
-        "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Vision"},
-    },
-    {
-        "model": "gemini/gemini-2.0-flash",
-        "api_key": _GEMINI_KEY,
-        "label": "GEMINI_2_0_FLASH_VISION",
-        "enabled": bool(_GEMINI_KEY),
-    },
-]
-
-# Centralized System Queries Tiers (Tool Calling enabled)
-SYSTEM_QUERY_TIERS: List[Dict[str, Any]] = [
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "api_key": _GROQ_KEY,
-        "label": "GROQ_LLAMA_70B",
-        "enabled": bool(_GROQ_KEY),
-    },
-    {
-        "model": "openrouter/openai/gpt-4o-mini",
-        "api_key": _OPENROUTER_KEY,
-        "label": "OPENROUTER_GPT4O_MINI",
-        "enabled": bool(_OPENROUTER_KEY),
-        "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 System Query"},
-    },
-    {
-        "model": "openai/gpt-4o-mini",
-        "api_key": _OPENAI_KEY,
-        "label": "OPENAI_GPT4O_MINI",
-        "enabled": bool(_OPENAI_KEY),
-    },
-    {
-        "model": "gemini/gemini-2.0-flash",
-        "api_key": _GEMINI_KEY,
-        "label": "GEMINI_2_0_FLASH",
-        "enabled": bool(_GEMINI_KEY),
-    },
-]
+ROUTER_TIERS: List[Dict[str, Any]] = []
+MEDICAL_TIERS: List[Dict[str, Any]] = []
+EMPATHY_TIERS: List[Dict[str, Any]] = []
+VISION_TIERS: List[Dict[str, Any]] = []
+SYSTEM_QUERY_TIERS: List[Dict[str, Any]] = []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -555,6 +518,38 @@ class LLMClient:
     def _set_cached_value(cls, cache_key: str, val: Any, ttl: float = 5.0):
         cls._cache[cache_key] = (time.time() + ttl, val)
 
+    @classmethod
+    async def safe_execute_7_tier_chain(cls, tier_config: Dict[str, Any], payload: List[Dict[str, Any]], timeout_limit: float, **kwargs) -> Any:
+        """
+        Production-grade async LLM dispatch with explicit task lifecycle management.
+        Prevents orphaned coroutine leaks by creating an explicit asyncio.Task
+        and properly cancelling + awaiting it on timeout.
+        """
+        task = asyncio.ensure_future(
+            litellm.acompletion(model=tier_config["model"], messages=payload, timeout=timeout_limit, **kwargs)
+        )
+        try:
+            response = await asyncio.wait_for(task, timeout=timeout_limit)
+            return response
+        except asyncio.TimeoutError:
+            # Explicitly cancel the task and await it to drain any internal coroutines
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            log.error(f"Tier {tier_config['label']} hit hard budget timeout. Rotating...")
+            raise asyncio.TimeoutError(f"Tier {tier_config['label']} timed out.") from None
+        except Exception:
+            # On non-timeout errors, ensure task is cleaned up if still running
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise
+
     @staticmethod
     def _is_rate_limit(exc: Exception) -> bool:
         err_str = str(exc).lower()
@@ -580,6 +575,8 @@ class LLMClient:
         )
         return any(kw in err_msg for kw in perm_keywords)
 
+    _last_groq_completion_times: Dict[str, float] = {}
+
     @classmethod
     async def generate_completion(
         cls,
@@ -588,12 +585,20 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.3,
         max_tokens: int = 1024,
-        timeout: int = 12
+        timeout: int = 12,
+        patient_id: Optional[str] = None
     ) -> Tuple[Optional[str], str]:
         """
         Standard text completion with fallback.
         Returns: (response_text, provider_label)
         """
+        if patient_id:
+            last_time = cls._last_groq_completion_times.get(patient_id, 0.0)
+            elapsed = time.time() - last_time
+            if elapsed < 15.0:
+                log.warning(f"[LLM_CLIENT_LIMITER] Patient {patient_id} LLM query debounced (last was {elapsed:.2f}s ago). Routing immediately to LocalOfflineFallback.")
+                return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+
         if not _circuit_breaker.allow_request():
             log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
             return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
@@ -617,26 +622,37 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        global_start = time.time()
         execution_chain = _get_execution_chain(is_vision=False)
         for tier in execution_chain:
             if not tier.get("enabled", False):
                 continue
 
+            elapsed = time.time() - global_start
+            remaining = 5.0 - elapsed
+            if remaining <= 0.2:
+                log.warning("[LLM_CLIENT] Global 5.0s timeout reached. Aborting completion fallback chain.")
+                break
+
             try:
                 kwargs = {
-                    "model": tier["model"],
-                    "messages": messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
-                    "timeout": timeout,
                 }
                 if tier.get("api_key"):
                     kwargs["api_key"] = tier["api_key"]
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(_executor, lambda: litellm.completion(**kwargs))
+                if "groq" in tier["model"].lower() and patient_id:
+                    cls._last_groq_completion_times[patient_id] = time.time()
+
+                response = await cls.safe_execute_7_tier_chain(
+                    tier_config=tier,
+                    payload=messages,
+                    timeout_limit=min(1.5, remaining),
+                    **kwargs
+                )
                 if response.choices and response.choices[0].message:
                     content = response.choices[0].message.content
                     if content:
@@ -644,17 +660,19 @@ class LLMClient:
                         result = (content.strip(), tier["label"])
                         cls._set_cached_value(cache_key, result, ttl=5.0)
                         return result
-
             except Exception as e:
                 err_str = str(e).lower()
                 is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
                 is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
                 is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
+                is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
 
-                if is_credit_issue or is_rate_limit:
-                    _circuit_breaker.trip()
+                if is_auth_error or is_provider_down or is_credit_issue or is_timeout:
+                    _provider_breaker.trip(tier["provider"])
+                _increment_rolling_index()
 
-                if is_credit_issue or is_rate_limit or is_timeout:
+                if is_credit_issue or is_rate_limit or is_timeout or is_auth_error or is_provider_down:
                     log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
                 else:
                     log.warning("[LLM_CLIENT] ❌ %s execution failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
@@ -706,28 +724,36 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        global_start = time.time()
         execution_chain = _get_execution_chain(is_vision=False)
         for tier in execution_chain:
             if not tier.get("enabled", False):
                 continue
 
+            elapsed = time.time() - global_start
+            remaining = 5.0 - elapsed
+            if remaining <= 0.2:
+                log.warning("[LLM_CLIENT] Global 5.0s timeout reached. Aborting tool call fallback chain.")
+                break
+
             try:
                 kwargs = {
-                    "model": tier["model"],
-                    "messages": messages,
                     "tools": tools,
                     "tool_choice": "auto",
                     "temperature": temperature,
                     "max_tokens": max_tokens,
-                    "timeout": timeout,
                 }
                 if tier.get("api_key"):
                     kwargs["api_key"] = tier["api_key"]
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(_executor, lambda: litellm.completion(**kwargs))
+                response = await cls.safe_execute_7_tier_chain(
+                    tier_config=tier,
+                    payload=messages,
+                    timeout_limit=min(1.5, remaining),
+                    **kwargs
+                )
                 
                 tool_calls = []
                 if response.choices and response.choices[0].message:
@@ -771,11 +797,14 @@ class LLMClient:
                 is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
                 is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
                 is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
+                is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
 
-                if is_credit_issue or is_rate_limit:
-                    _circuit_breaker.trip()
+                if is_auth_error or is_provider_down or is_credit_issue or is_timeout:
+                    _provider_breaker.trip(tier["provider"])
+                _increment_rolling_index()
 
-                if is_credit_issue or is_rate_limit or is_timeout:
+                if is_credit_issue or is_rate_limit or is_timeout or is_auth_error or is_provider_down:
                     log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
                 else:
                     log.warning("[LLM_CLIENT] ❌ %s tool call failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
@@ -807,42 +836,55 @@ class LLMClient:
             log.warning("[LLM_CLIENT] litellm not available for vision. Activating LocalOfflineFallback.")
             return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
 
-        # Build multimodal messages
-        user_content = [
-            {"type": "text", "text": prompt},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{image_base64}"
-                }
-            }
-        ]
-
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": user_content})
-
+        global_start = time.time()
         execution_chain = _get_execution_chain(is_vision=True)
         for tier in execution_chain:
             if not tier.get("enabled", False):
                 continue
 
+            elapsed = time.time() - global_start
+            remaining = 5.0 - elapsed
+            if remaining <= 0.2:
+                log.warning("[LLM_CLIENT] Global 5.0s timeout reached. Aborting vision fallback chain.")
+                break
+
+            # Clean base64 payload to ensure perfect encapsulation
+            clean_base64 = image_base64.strip()
+            if "," in clean_base64:
+                clean_base64 = clean_base64.split(",")[-1].strip()
+            clean_base64 = "".join(clean_base64.split())
+
+            image_url_payload = f"data:image/jpeg;base64,{clean_base64}"
+            
+            # Combine system prompt with prompt if available to keep a single user message role for all vision specs
+            combined_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+
+            tier_messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": combined_prompt},
+                        {"type": "image_url", "image_url": {"url": image_url_payload}}
+                    ]
+                }
+            ]
+
             try:
                 kwargs = {
-                    "model": tier["model"],
-                    "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
-                    "timeout": timeout,
                 }
                 if tier.get("api_key"):
                     kwargs["api_key"] = tier["api_key"]
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(_executor, lambda: litellm.completion(**kwargs))
+                response = await cls.safe_execute_7_tier_chain(
+                    tier_config=tier,
+                    payload=tier_messages,
+                    timeout_limit=min(1.5, remaining),
+                    **kwargs
+                )
                 if response.choices and response.choices[0].message:
                     content = response.choices[0].message.content
                     if content:
@@ -854,11 +896,14 @@ class LLMClient:
                 is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
                 is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
                 is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
+                is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
 
-                if is_credit_issue or is_rate_limit:
-                    _circuit_breaker.trip()
+                if is_auth_error or is_provider_down or is_credit_issue or is_timeout:
+                    _provider_breaker.trip(tier["provider"])
+                _increment_rolling_index()
 
-                if is_credit_issue or is_rate_limit or is_timeout:
+                if is_credit_issue or is_rate_limit or is_timeout or is_auth_error or is_provider_down:
                     log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
                 else:
                     log.warning("[LLM_CLIENT] ❌ %s vision completion failed: %s. Rotating in chain.", tier["label"], str(e)[:120])

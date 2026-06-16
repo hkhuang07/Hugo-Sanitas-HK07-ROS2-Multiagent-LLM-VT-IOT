@@ -92,6 +92,28 @@ class ActionAgent:
                 plan.status = "EXECUTING"
                 await bb.write_action_plan(plan)
 
+            # Audit kinematic safety for pump / hug steps
+            step_type = step.get("type", "")
+            is_pump_hug_step = step_type in ("PUMP", "HUG") or "pump" in str(step).lower() or "hug" in str(step).lower()
+            if is_pump_hug_step:
+                try:
+                    from agents.safety_agent import SafetyAgent
+                    from services.telemetry_client import fetch_sensor_telemetry
+                    
+                    # Fetch telemetry
+                    tele_res = await fetch_sensor_telemetry()
+                    telemetry_data = tele_res.get("telemetry", {})
+                    
+                    safety_eval = await SafetyAgent(self.arbitrator).evaluate_actuation_safety(telemetry_data, bb)
+                    if safety_eval.get("action") == "FORCE_DISARM_PUMP":
+                        if "payload" in step and isinstance(step["payload"], dict):
+                            step["payload"]["Pump"] = False
+                            step["payload"]["Hug"] = 0.0
+                            step["payload"]["hug_force_newtons"] = 0.0
+                        log.warning("[KINEMATIC_INHIBIT_ENGAGED] Forcefully disarming pump step due to safety agent disarm.")
+                except Exception as ex:
+                    log.error("[ACTION_AGENT_SAFETY_AUDIT_ERROR] Failed to run safety disarm check: %s", ex)
+
             # Execute step
             try:
                 log.info("[ACTION_AGENT] Executing step %d: %s", i, step.get("type"))

@@ -132,10 +132,10 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
   const stepsHistory = ref<TimestampedValue[]>([])
   const wristMagHistory = ref<TimestampedValue[]>([])
 
-  // ── Stale watchdog — marks isLive=false after 5 seconds of no IMU data ──────
+  // ── Stale watchdog — marks isLive=false after 60 seconds of no IMU data ──────
   setInterval(() => {
     const now = Date.now()
-    if (isLive.value && now - lastImuMs.value > 5000 && now - lastEnvMs.value > 5000) {
+    if (isLive.value && now - lastImuMs.value > 60000 && now - lastEnvMs.value > 60000) {
       isLive.value = false
     }
   }, 1000)
@@ -144,25 +144,25 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
   const imuStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastImuMs.value
     if (lastImuMs.value === 0) return 'OFFLINE'
-    if (age < 3000) return 'LIVE'
+    if (age < 60000) return 'LIVE'
     return 'STALE'
   })
   const envStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastEnvMs.value
     if (lastEnvMs.value === 0) return 'OFFLINE'
-    if (age < 3000) return 'LIVE'
+    if (age < 60000) return 'LIVE'
     return 'STALE'
   })
   const locStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastLocMs.value
     if (lastLocMs.value === 0) return 'OFFLINE'
-    if (age < 10000) return 'LIVE'
+    if (age < 60000) return 'LIVE'
     return 'STALE'
   })
   const actStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastActMs.value
     if (lastActMs.value === 0) return 'OFFLINE'
-    if (age < 5000) return 'LIVE'
+    if (age < 60000) return 'LIVE'
     return 'STALE'
   })
 

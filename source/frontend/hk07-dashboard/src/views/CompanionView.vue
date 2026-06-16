@@ -430,7 +430,7 @@ const chatLog = computed(() => agentsStore.chatLog)
 const suggestionChips = [
   { label: 'ANALYZE_VITALS', prompt: 'Hãy phân tích chỉ số sinh tồn (vitals) hiện tại của tôi.' },
   { label: 'HEALTH_ADVICE', prompt: 'Cho tôi lời khuyên bảo vệ sức khỏe tim mạch.' },
-  { label: 'EXPLAIN_SUBSUMPTION', prompt: 'Làm thế nào để hệ thống an toàn Lidar và Subsumption ngăn chặn va chạm?' },
+  { label: 'EXPLAIN_SUBSUMPTION', prompt: 'Làm thế nào để hệ thống an toàn thị giác IPWebcam và Subsumption ngăn chặn va chạm?' },
   { label: 'SYSTEM_STATUS', prompt: 'Kiểm tra trạng thái liên kết dữ liệu thiết bị đeo tay (Wristband).' }
 ]
 

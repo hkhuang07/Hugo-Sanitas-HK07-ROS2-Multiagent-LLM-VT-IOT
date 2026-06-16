@@ -174,16 +174,51 @@ class MedicalAgent:
         payload = msg.payload.decode("utf-8", errors="replace")
         try:
             data = json.loads(payload)
-            self._buffer.append(data)
-            # Instantly update latest_vitals for live dashboard
-            self.latest_vitals.update(data)
             
             # Extract deviceId from topic: hk07/sensors/wristband/<device_id>/vitals
+            device_id = "default"
             parts = msg.topic.split('/')
             if len(parts) >= 4:
                 device_id = parts[3]
                 self._volatile_context["device_id"] = device_id
+            
+            # Sliding window median filter (size = 5) for Heart Rate and SpO2
+            if not hasattr(self, "_raw_hr_windows"):
+                self._raw_hr_windows = {}
+            if not hasattr(self, "_raw_spo2_windows"):
+                self._raw_spo2_windows = {}
                 
+            if device_id not in self._raw_hr_windows:
+                self._raw_hr_windows[device_id] = collections.deque(maxlen=5)
+            if device_id not in self._raw_spo2_windows:
+                self._raw_spo2_windows[device_id] = collections.deque(maxlen=5)
+                
+            if "heartRate" in data:
+                self._raw_hr_windows[device_id].append(data["heartRate"])
+            elif "heart_rate" in data:
+                self._raw_hr_windows[device_id].append(data["heart_rate"])
+                
+            if "spo2" in data:
+                self._raw_spo2_windows[device_id].append(data["spo2"])
+                
+            if self._raw_hr_windows[device_id]:
+                hr_list = sorted(list(self._raw_hr_windows[device_id]))
+                median_hr = hr_list[len(hr_list) // 2]
+                if "heartRate" in data:
+                    data["heartRate"] = median_hr
+                if "heart_rate" in data:
+                    data["heart_rate"] = median_hr
+                    
+            if self._raw_spo2_windows[device_id]:
+                spo2_list = sorted(list(self._raw_spo2_windows[device_id]))
+                median_spo2 = spo2_list[len(spo2_list) // 2]
+                data["spo2"] = median_spo2
+
+            self._buffer.append(data)
+            # Instantly update latest_vitals for live dashboard
+            self.latest_vitals.update(data)
+            
+            if len(parts) >= 4:
                 if not hasattr(self, "_buffers"):
                     self._buffers = {}
                 if device_id not in self._buffers:
@@ -373,11 +408,49 @@ class MedicalAgent:
         is_falling = any(item.get("is_falling") in (True, 1, 1.0, "true", "True") for item in buf)
         emergency_pressed = any(item.get("emergency_button_pressed") in (True, 1, 1.0, "true", "True") for item in buf)
 
+        # Consistency check over sliding window (size = 5)
+        hr_window = list(self._raw_hr_windows.get(device_id, []))
+        spo2_window = list(self._raw_spo2_windows.get(device_id, []))
+        
+        hr_consistent_violation = False
+        if len(hr_window) >= 5:
+            hr_consistent_violation = all(x < hr_min or x > hr_max for x in hr_window)
+            
+        spo2_consistent_violation = False
+        if len(spo2_window) >= 5:
+            spo2_consistent_violation = all(x < spo2_min for x in spo2_window)
+
         is_critical = (
-            hr < hr_min or hr > hr_max or
-            spo2 < spo2_min or temp > temp_max or
+            hr_consistent_violation or
+            spo2_consistent_violation or
+            temp > temp_max or
             is_falling or emergency_pressed
         )
+
+        # Cross-Modal Consensus Matrix validation gate
+        is_vital_drop = hr_consistent_violation or spo2_consistent_violation
+        consensus_suppressed = False
+        if is_critical and is_vital_drop and not is_falling and not emergency_pressed:
+            clinical = await bb.read_value("sensor:perception:clinical")
+            imu_data = await bb.read_value("sensor:imu:latest")
+            
+            vision_normal = False
+            if clinical:
+                fd = clinical.get("facial_distress", {}).get("detected", False)
+                vi = clinical.get("visible_injuries", {}).get("detected", False)
+                if not fd and not vi:
+                    vision_normal = True
+            
+            accel_normal = False
+            if imu_data:
+                g_mag = imu_data.get("g_magnitude", 1.0)
+                if 0.85 <= g_mag <= 1.15:
+                    accel_normal = True
+                    
+            if vision_normal and accel_normal:
+                log.info("[MEDICAL_CONSENSUS] Vital drop detected, but Vision is normal and IMU is at resting baseline. Suppressing AI_EMERGENCY_WAKEUP, lowering weight to WARNING.")
+                is_critical = False
+                consensus_suppressed = True
 
         current_state = "CRITICAL" if is_critical else "NORMAL"
         
@@ -398,6 +471,33 @@ class MedicalAgent:
         last_analyzed_hr = self._last_device_analyzed_hr.get(device_id, 0.0)
         
         state_changed = (current_state != last_state)
+        
+        if consensus_suppressed:
+            triggered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            trigger_reasons = []
+            if hr < hr_min or hr > hr_max:
+                trigger_reasons.append(f"nhịp tim ({hr:.1f} bpm) ngoài ngưỡng")
+            if spo2 < spo2_min:
+                trigger_reasons.append(f"nồng độ oxy SpO2 ({spo2:.1f}%) tụt thấp")
+            reasons_desc = " và ".join(trigger_reasons) if trigger_reasons else "chỉ số sinh hiệu vượt ngưỡng nguy hiểm"
+            
+            payload = {
+                "id": f"evt-{int(time.time())}",
+                "eventType": "AGENT_DECISION",
+                "agentType": "MEDICAL",
+                "alertLevel": "WARNING",
+                "inputContext": f"Vitals: HR={hr:.1f}bpm SpO2={spo2:.1f}% Temp={temp:.1f}°C Fall={is_falling} SOS={emergency_pressed}",
+                "outputDecision": f"[CẢNH BÁO] Phát hiện {reasons_desc}. Tuy nhiên, kết quả phân tích hình ảnh và gia tốc bình thường. Vui lòng kiểm tra lại thiết bị hoặc nghỉ ngơi.",
+                "llmProvider": "LOCAL_RULE",
+                "latencyMs": 0,
+                "triggeredAt": triggered_at,
+                "userId": user_id
+            }
+            try:
+                self._mqtt.publish("hk07/agents/medical/output", json.dumps(payload), qos=1)
+                log.info("[MEDICAL_CONSENSUS] Published WARNING alert instead of emergency wakeup.")
+            except Exception as e:
+                log.error("[MEDICAL_CONSENSUS_ERROR] Failed to publish warning: %s", e)
         
         if current_state == "CRITICAL" and last_state != "CRITICAL":
             # State transitioned to CRITICAL - publish immediate WAKEUP event to MQTT
@@ -458,10 +558,15 @@ class MedicalAgent:
                     self._last_analyzed_hr = 0.0
 
             # Trigger LLM in background task (Non-blocking)
-            async def run_bg_analysis(vitals_data, vitals_summary, target_user_id):
+            async def run_bg_analysis(vitals_data, vitals_summary, target_user_id, is_suppressed):
                 try:
                     start_time = time.time()
                     analysis = await self._call_llm_with_fallback(vitals_data, user_id=target_user_id)
+                    
+                    if is_suppressed:
+                        analysis["alert_level"] = "WARNING"
+                        analysis["summary"] = f"[Consensus Downgraded] {analysis.get('summary', '')}"
+                        
                     self._last_analysis = analysis
                     latency = int((time.time() - start_time) * 1000)
 
@@ -506,7 +611,7 @@ class MedicalAgent:
                 except Exception as ex:
                     log.error("[MEDICAL_BG_ANALYSIS_ERROR] Exception: %s", ex)
 
-            asyncio.create_task(run_bg_analysis(agg, summary, user_id))
+            asyncio.create_task(run_bg_analysis(agg, summary, user_id, consensus_suppressed))
 
     async def run_loop(self):
         self._status = "ACTIVE"
@@ -613,7 +718,8 @@ class MedicalAgent:
                 system_prompt=system_prompt,
                 temperature=0.1,
                 max_tokens=1024,
-                timeout=12
+                timeout=12,
+                patient_id=user_id
             )
             if provider_label != "LOCAL_FALLBACK" and res_content:
                 extracted = safe_extract_json(res_content)
@@ -735,7 +841,8 @@ class MedicalAgent:
                 system_prompt=system_prompt,
                 temperature=0.1,
                 max_tokens=512,
-                timeout=12
+                timeout=12,
+                patient_id=user_id
             )
             if provider_label != "LOCAL_FALLBACK" and res_content:
                 extracted = safe_extract_json(res_content)

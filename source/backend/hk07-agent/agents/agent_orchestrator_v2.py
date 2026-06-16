@@ -185,7 +185,7 @@ class AgentOrchestratorV2:
                 state["outputs"]["_error"] = str(e)
 
         # Step 5: Compose final output (aggregate medical + empathetic if both present)
-        if any("[SYSTEM_PERCEPTION_ERROR]" in str(v) for v in state["outputs"].values()):
+        if any("[SYSTEM_PERCEPTION_ERROR]" in str(v) for v in state["outputs"].values()) or any("SYSTEM_ERROR_BLIND" in str(v) for v in state["outputs"].values()):
             state["output"] = "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
             state["alert_level"] = "CRITICAL"
         elif not state["outputs"] or all(v.startswith("[ERROR]") for v in state["outputs"].values()):
@@ -421,6 +421,12 @@ class AgentOrchestratorV2:
                 # Silent — writes to Blackboard, returns brief summary for orchestrator
                 log.info("[ORCHESTRATOR_V2] Triggering PerceptionAgent full-body scan")
                 scan = await self.perception_agent.execute_full_body_scan()
+                if getattr(scan, "status", "NOMINAL") == "SYSTEM_ERROR_BLIND":
+                    return json.dumps({
+                        "status": "SYSTEM_ERROR_BLIND",
+                        "alertLevel": "CRITICAL",
+                        "message": "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
+                    })
                 risk = scan.overall_risk
                 notes = scan.notes or ""
                 conf = f"{scan.confidence:.0%}"
@@ -434,17 +440,26 @@ class AgentOrchestratorV2:
                 return summary
 
             elif tool_name == "execute_environment_scan":
-                # LiDAR snapshot from Fusion Buffer
-                from services.sensor_fusion_buffer import get_fusion_buffer
-                fusion_buf = get_fusion_buffer()
-                lidar = await fusion_buf.latest_lidar()
-                if lidar:
-                    return (
-                        f"[ENVIRONMENT_SCAN] Nearest obstacle: {lidar.min_distance_m:.2f}m | "
-                        f"Threat: {lidar.threat_level} | Obstacles: {lidar.obstacle_count}"
-                    )
+                # Camera Vision analysis from Blackboard
+                bb = get_blackboard()
+                clinical = await bb.read_value("sensor:perception:clinical")
+                if clinical:
+                    facial_distress = clinical.get("facial_distress", {})
+                    env_hazards = clinical.get("environmental_hazards", {})
+                    visible_injuries = clinical.get("visible_injuries", {})
+                    
+                    parts = []
+                    if facial_distress.get("detected"):
+                        parts.append(f"Facial distress: {facial_distress.get('details')}")
+                    if env_hazards.get("detected"):
+                        parts.append(f"Hazard: {env_hazards.get('details')}")
+                    if visible_injuries.get("detected"):
+                        parts.append(f"Injury: {visible_injuries.get('details')}")
+                        
+                    threats = ", ".join(parts) if parts else "Clear"
+                    return f"[ENVIRONMENT_SCAN] Camera vision: {threats}"
                 else:
-                    return "[ENVIRONMENT_SCAN] No LiDAR data in buffer."
+                    return "[ENVIRONMENT_SCAN] No Camera vision data in Blackboard."
 
             elif tool_name == "execute_action_plan":
                 plan_id = parameters.get("plan_id", f"plan-{int(__import__('time').time())}")

@@ -80,7 +80,6 @@ public class MqttConfig {
                 mqttClientFactory(),
                 // Subscribe to all sensor and agent output topics
                 "hk07/sensors/wristband/+/vitals",
-                "hk07/sensors/lidar/scan",
                 "hk07/sensors/imu/state",
                 "hk07/control/subsumption/inhibit",
                 "hk07/agents/+/output",
@@ -91,7 +90,6 @@ public class MqttConfig {
                 "hk07/telemetry/actuators/joints",
                 "hk07/telemetry/pmu",
                 "hk07/perception/clinical",
-                "hk07/telemetry/lidar/points",
                 "hk07/telemetry/avoidance",
                 "hk07/telemetry/joint_states",
                 "hk07/sensors/camera/thermal_rppg",
@@ -103,7 +101,9 @@ public class MqttConfig {
             );
 
         adapter.setCompletionTimeout(5000);
-        adapter.setConverter(new DefaultPahoMessageConverter());
+        DefaultPahoMessageConverter converter = new DefaultPahoMessageConverter();
+        converter.setPayloadAsBytes(true);
+        adapter.setConverter(converter);
         adapter.setQos(1);  // At-Least-Once for agent outputs; vital signs use QoS 0
         adapter.setOutputChannel(mqttInboundChannel());
         return adapter;

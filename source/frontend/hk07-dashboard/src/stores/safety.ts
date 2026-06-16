@@ -12,7 +12,7 @@ export const useSafetyStore = defineStore('safety', () => {
   const closestAngleDeg = ref(0)
   const scanHz = ref(0)
   const threatLevel = ref<LidarScanSnapshot['threatLevel']>('UNKNOWN')
-  const baymaxHint = ref('Đang chờ luồng LiDAR từ robot HK-07...')
+  const baymaxHint = ref('Đang chờ dữ liệu thị giác IPWebcam từ robot HK-07...')
   const lastScanMs = ref(0)
   const sectorCount = ref(0)
   const activeTriggers = ref<ActiveSafetyTrigger[]>([])

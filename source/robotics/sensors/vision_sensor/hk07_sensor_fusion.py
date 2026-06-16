@@ -1,5 +1,13 @@
 import os
 import sys
+
+# Ensure package root is in sys.path
+package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if package_root not in sys.path:
+    sys.path.append(package_root)
+
+from utils.network_helper import load_env_file, get_default_gateway_ip
+
 import cv2
 import json
 import time
@@ -54,13 +62,21 @@ except ImportError:
     LLMClient = None
     VISION_TIERS = []
 
+
+class PrematureCloseException(Exception):
+    """Custom exception raised when the video stream closes prematurely."""
+    pass
+
+
 class Hk07SensorFusionNode(Node):
     def __init__(self):
         super().__init__('hk07_sensor_fusion_node')
 
         # Environment & Config Loading
-        self.load_env_file()
-        self.phone_ip = os.getenv("PHONE_IP", "192.168.133.228")
+        load_env_file()
+        self.phone_ip = os.getenv("PHONE_IP")
+        if not self.phone_ip:
+            self.phone_ip = get_default_gateway_ip()
         self.CAMERA_URL = f"http://{self.phone_ip}:8080/video"
 
         # Publishers
@@ -91,36 +107,6 @@ class Hk07SensorFusionNode(Node):
         self.timer = self.create_timer(0.1, self.publish_telemetry)
 
         self.get_logger().info("=== HK07 SENSOR FUSION ROS2 NODE INITIALIZED ===")
-
-    def load_env_file(self):
-        curr_dir = os.path.dirname(os.path.abspath(__file__))
-        for _ in range(10):
-            checks = [
-                os.path.join(curr_dir, "backend", ".env"),
-                os.path.join(curr_dir, "source", "backend", ".env"),
-                os.path.join(curr_dir, ".env"),
-            ]
-            for path in checks:
-                if os.path.exists(path):
-                    try:
-                        with open(path, "r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line or line.startswith("#"):
-                                    continue
-                                if "=" in line:
-                                    key, val = line.split("=", 1)
-                                    key = key.strip()
-                                    val = val.strip().strip('"').strip("'")
-                                    if key and key not in os.environ:
-                                        os.environ[key] = val
-                        return
-                    except Exception:
-                        pass
-            parent = os.path.dirname(curr_dir)
-            if parent == curr_dir:
-                break
-            curr_dir = parent
 
     def _run_async_loop(self):
         asyncio.set_event_loop(self.async_loop)
@@ -211,8 +197,8 @@ class Hk07SensorFusionNode(Node):
         fps_history = []
         last_frame_time = None
         
-        reconnect_delay = 1.0
-        max_reconnect_delay = 16.0
+        reconnect_delay = 2.0
+        max_reconnect_delay = 30.0
         
         while rclpy.ok():
             current_url = self.CAMERA_URL
@@ -225,120 +211,127 @@ class Hk07SensorFusionNode(Node):
                 reconnect_delay = min(reconnect_delay * 2.0, max_reconnect_delay)
                 continue
                 
-            reconnect_delay = 1.0
             consecutive_drops = 0
             
-            with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
-                while cap.isOpened() and rclpy.ok():
-                    if self.CAMERA_URL != current_url:
-                        break
+            try:
+                with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+                    while cap.isOpened() and rclpy.ok():
+                        if self.CAMERA_URL != current_url:
+                            break
 
-                    ret, frame = cap.read()
-                    if not ret or frame is None or frame.size == 0:
-                        consecutive_drops += 1
-                        if consecutive_drops < 5:
+                        ret, frame = cap.read()
+                        if not ret or frame is None or frame.size == 0:
+                            consecutive_drops += 1
+                            if consecutive_drops >= 5:
+                                raise PrematureCloseException(f"Too many consecutive frame drops ({consecutive_drops})")
                             time.sleep(0.1)
                             continue
-                        else:
-                            self.get_logger().warning(
-                                f"Vision worker: too many consecutive frame drops ({consecutive_drops}). "
-                                f"Disconnecting and applying back-off reconnect delay: {reconnect_delay:.1f}s..."
-                            )
-                            time.sleep(reconnect_delay)
-                            reconnect_delay = min(reconnect_delay * 2.0, max_reconnect_delay)
-                            break
-                    
-                    consecutive_drops = 0
-                    
-                    with self.state_lock:
-                        self.latest_frame = frame.copy()
-
-                    # Save latest frame on disk for agent consumption
-                    try:
-                        save_dir = os.path.join(agent_dir, "latest_frame.jpg") if agent_dir else "latest_frame.jpg"
-                        cv2.imwrite(save_dir, frame)
-                    except Exception as e:
-                        self.get_logger().error(f"Failed to save latest frame: {e}")
-
-                    # FPS measurement
-                    current_time = time.time()
-                    if last_frame_time is not None:
-                        dt = current_time - last_frame_time
-                        if dt > 0:
-                            fps_history.append(1.0 / dt)
-                            if len(fps_history) > 30:
-                                fps_history.pop(0)
-                    last_frame_time = current_time
-                    fps = sum(fps_history) / len(fps_history) if fps_history else 20.0
-                    
-                    h, w = frame.shape[:2]
-                    scale = 0.5
-                    frame_resized = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
                         
-                    image = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-                    image.flags.writeable = False
-                    results = pose.process(image)
-                    image.flags.writeable = True
-                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                    
-                    vision_fall = False
-                    rppg_hr = 0.0
-                    
-                    if results.pose_landmarks:
-                        mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-                        landmarks = results.pose_landmarks.landmark
-                        
-                        xs = [lm.x for lm in landmarks]
-                        ys = [lm.y for lm in landmarks]
-                        min_x, max_x = min(xs), max(xs)
-                        min_y, max_y = min(ys), max(ys)
-                        
-                        bbox_x = max(0.0, min_x - 0.05)
-                        bbox_y = max(0.0, min_y - 0.05)
-                        bbox_w = min(1.0, max_x + 0.05) - bbox_x
-                        bbox_h = min(1.0, max_y + 0.05) - bbox_y
+                        consecutive_drops = 0
+                        reconnect_delay = 2.0  # Reset backoff on successful frame read
                         
                         with self.state_lock:
-                            self.tracker_box = {
-                                "x": float(np.round(bbox_x * 100, 1)),
-                                "y": float(np.round(bbox_y * 100, 1)),
-                                "width": float(np.round(bbox_w * 100, 1)),
-                                "height": float(np.round(bbox_h * 100, 1))
-                            }
-                        
-                        roi = self.extract_forehead_roi(frame, landmarks, mp_pose)
-                        if roi is not None:
-                            mean_g = roi[:, :, 1].mean()
-                            green_history.append(mean_g)
-                            if len(green_history) > 150:
-                                green_history.pop(0)
-                            rppg_hr = self.estimate_heart_rate(green_history, fps=fps)
-                        
+                            self.latest_frame = frame.copy()
+
+                        # Save latest frame on disk for agent consumption
                         try:
-                            nose_y = landmarks[mp_pose.PoseLandmark.NOSE].y
-                            left_hip_y = landmarks[mp_pose.PoseLandmark.LEFT_HIP].y
-                            right_hip_y = landmarks[mp_pose.PoseLandmark.RIGHT_HIP].y
-                            hip_y = (left_hip_y + right_hip_y) / 2.0
-                            if nose_y > hip_y:
-                                vision_fall = True
-                        except IndexError:
+                            save_dir = os.path.join(agent_dir, "latest_frame.jpg") if agent_dir else "latest_frame.jpg"
+                            cv2.imwrite(save_dir, frame)
+                        except Exception as e:
+                            self.get_logger().error(f"Failed to save latest frame: {e}")
+
+                        # FPS measurement
+                        current_time = time.time()
+                        if last_frame_time is not None:
+                            dt = current_time - last_frame_time
+                            if dt > 0:
+                                fps_history.append(1.0 / dt)
+                                if len(fps_history) > 30:
+                                    fps_history.pop(0)
+                        last_frame_time = current_time
+                        fps = sum(fps_history) / len(fps_history) if fps_history else 20.0
+                        
+                        h, w = frame.shape[:2]
+                        scale = 0.5
+                        frame_resized = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+                            
+                        image = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+                        image.flags.writeable = False
+                        results = pose.process(image)
+                        image.flags.writeable = True
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                        
+                        vision_fall = False
+                        rppg_hr = 0.0
+                        
+                        if results.pose_landmarks:
+                            mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+                            landmarks = results.pose_landmarks.landmark
+                            
+                            xs = [lm.x for lm in landmarks]
+                            ys = [lm.y for lm in landmarks]
+                            min_x, max_x = min(xs), max(xs)
+                            min_y, max_y = min(ys), max(ys)
+                            
+                            bbox_x = max(0.0, min_x - 0.05)
+                            bbox_y = max(0.0, min_y - 0.05)
+                            bbox_w = min(1.0, max_x + 0.05) - bbox_x
+                            bbox_h = min(1.0, max_y + 0.05) - bbox_y
+                            
+                            with self.state_lock:
+                                self.tracker_box = {
+                                    "x": float(np.round(bbox_x * 100, 1)),
+                                    "y": float(np.round(bbox_y * 100, 1)),
+                                    "width": float(np.round(bbox_w * 100, 1)),
+                                    "height": float(np.round(bbox_h * 100, 1))
+                                }
+                            
+                            roi = self.extract_forehead_roi(frame, landmarks, mp_pose)
+                            if roi is not None:
+                                mean_g = roi[:, :, 1].mean()
+                                green_history.append(mean_g)
+                                if len(green_history) > 150:
+                                    green_history.pop(0)
+                                rppg_hr = self.estimate_heart_rate(green_history, fps=fps)
+                            
+                            try:
+                                nose_y = landmarks[mp_pose.PoseLandmark.NOSE].y
+                                left_hip_y = landmarks[mp_pose.PoseLandmark.LEFT_HIP].y
+                                right_hip_y = landmarks[mp_pose.PoseLandmark.RIGHT_HIP].y
+                                hip_y = (left_hip_y + right_hip_y) / 2.0
+                                if nose_y > hip_y:
+                                    vision_fall = True
+                            except IndexError:
+                                pass
+                                
+                        with self.state_lock:
+                            self.vision_fall = vision_fall
+                            self.rppg_heart_rate = rppg_hr
+
+                        # GUI Window display if allowed
+                        try:
+                            cv2.imshow("HK-07 Direct Vision", image)
+                        except Exception:
                             pass
                             
-                    with self.state_lock:
-                        self.vision_fall = vision_fall
-                        self.rppg_heart_rate = rppg_hr
-
-                    # GUI Window display if allowed
-                    try:
-                        cv2.imshow("HK-07 Direct Vision", image)
-                    except Exception:
-                        pass
-                        
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-            cap.release()
-            cv2.destroyAllWindows()
-            time.sleep(2.0)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            break
+            except (PrematureCloseException, Exception) as e:
+                self.get_logger().warning(
+                    f"Vision worker encountered error/disconnection: {e}. "
+                    f"Releasing active resource cleanly and applying back-off..."
+                )
+            finally:
+                cap.release()
+                try:
+                    cv2.destroyAllWindows()
+                except Exception:
+                    pass
+            
+            # Apply reconnect delay
+            self.get_logger().info(f"Backing off for {reconnect_delay:.1f}s before reconnecting...")
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2.0, max_reconnect_delay)
 
     def _snapshot_analyzer_worker(self):
         while rclpy.ok():

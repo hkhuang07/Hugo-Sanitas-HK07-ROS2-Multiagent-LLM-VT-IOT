@@ -21,7 +21,6 @@ log = logging.getLogger("hk07.sensor_fusion")
 
 MAX_FRAMES = 10          # camera frames to keep
 MAX_VITALS  = 60         # vitals samples to keep (1 second @ 60Hz)
-MAX_LIDAR   = 5          # lidar snapshots to keep
 
 
 # ─── Data Classes ──────────────────────────────────────────────────────────────
@@ -48,27 +47,16 @@ class VitalsSample:
 
 
 @dataclass
-class LidarSnapshot:
-    timestamp: float = field(default_factory=time.time)
-    min_distance_m: float = 999.0   # nearest obstacle
-    obstacle_count: int   = 0
-    sector_data: Dict[str, float] = field(default_factory=dict)   # {N, NE, E, SE, S, SW, W, NW}
-    threat_level: str = "CLEAR"     # CLEAR / WARNING / CRITICAL
-
-
-@dataclass
 class FusedContext:
     """Snapshot of all sensor streams at a point in time — fed to PerceptionAgent"""
     camera: Optional[CameraFrame]   = None
     vitals: Optional[VitalsSample]  = None
-    lidar:  Optional[LidarSnapshot] = None
     fusion_ts: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "camera": asdict(self.camera) if self.camera else None,
             "vitals": asdict(self.vitals) if self.vitals else None,
-            "lidar":  asdict(self.lidar)  if self.lidar  else None,
             "fusion_ts": self.fusion_ts,
         }
 
@@ -98,10 +86,9 @@ class SensorFusionBuffer:
         self._lock = asyncio.Lock()
         self._camera_buf: Deque[CameraFrame]  = deque(maxlen=MAX_FRAMES)
         self._vitals_buf: Deque[VitalsSample] = deque(maxlen=MAX_VITALS)
-        self._lidar_buf:  Deque[LidarSnapshot]= deque(maxlen=MAX_LIDAR)
 
-        log.info("[FUSION_BUFFER] Initialized (cam=%d, vitals=%d, lidar=%d)",
-                 MAX_FRAMES, MAX_VITALS, MAX_LIDAR)
+        log.info("[FUSION_BUFFER] Initialized (cam=%d, vitals=%d)",
+                 MAX_FRAMES, MAX_VITALS)
 
     # ── Write methods ────────────────────────────────────────────────────────
 
@@ -114,12 +101,6 @@ class SensorFusionBuffer:
         async with self._lock:
             self._vitals_buf.append(sample)
 
-    async def push_lidar(self, snapshot: LidarSnapshot) -> None:
-        async with self._lock:
-            self._lidar_buf.append(snapshot)
-            log.debug("[FUSION_BUFFER] LiDAR snapshot: min=%.2fm threat=%s",
-                      snapshot.min_distance_m, snapshot.threat_level)
-
     # ── Read methods ─────────────────────────────────────────────────────────
 
     async def latest_camera(self) -> Optional[CameraFrame]:
@@ -129,10 +110,6 @@ class SensorFusionBuffer:
     async def latest_vitals(self) -> Optional[VitalsSample]:
         async with self._lock:
             return self._vitals_buf[-1] if self._vitals_buf else None
-
-    async def latest_lidar(self) -> Optional[LidarSnapshot]:
-        async with self._lock:
-            return self._lidar_buf[-1] if self._lidar_buf else None
 
     async def vitals_window(self, n: int = MAX_VITALS) -> List[VitalsSample]:
         """Return last n vitals samples for HRV / trend analysis"""
@@ -145,15 +122,13 @@ class SensorFusionBuffer:
         async with self._lock:
             cam   = self._camera_buf[-1] if self._camera_buf else None
             vit   = self._vitals_buf[-1] if self._vitals_buf else None
-            lidar = self._lidar_buf[-1]  if self._lidar_buf  else None
-            return FusedContext(camera=cam, vitals=vit, lidar=lidar)
+            return FusedContext(camera=cam, vitals=vit)
 
     async def stats(self) -> Dict[str, int]:
         async with self._lock:
             return {
                 "camera_frames": len(self._camera_buf),
                 "vitals_samples": len(self._vitals_buf),
-                "lidar_snapshots": len(self._lidar_buf),
             }
 
 

@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hk07.domain.health.dto.VitalSignDto;
 import com.hk07.domain.health.service.HealthService;
 import com.hk07.domain.robot.service.RobotCommandService;
-import com.hk07.domain.safety.dto.LidarScanSnapshotDto;
-import com.hk07.domain.safety.service.SafetyTelemetryService;
 import com.hk07.common.enums.SystemState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,14 +34,23 @@ public class MqttInboundProcessor {
 
     private final ObjectMapper objectMapper;
     private final HealthService healthService;
-    private final SafetyTelemetryService safetyTelemetryService;
     private final RobotCommandService robotCommandService;
     private final SimpMessagingTemplate wsTemplate;
 
     @ServiceActivator(inputChannel = "mqttInboundChannel")
     public void processInbound(Message<?> message) {
         String topic   = (String) message.getHeaders().get("mqtt_receivedTopic");
-        String payload = message.getPayload().toString();
+        Object rawPayload = message.getPayload();
+        String payload;
+        if (rawPayload instanceof byte[]) {
+            payload = new String((byte[]) rawPayload, java.nio.charset.StandardCharsets.UTF_8);
+        } else {
+            try {
+                payload = new String(rawPayload.toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                payload = rawPayload.toString();
+            }
+        }
 
         if (topic == null) {
             log.warn("[MQTT_INBOUND] Received message with null topic");
@@ -55,8 +62,6 @@ public class MqttInboundProcessor {
         try {
             if (topic.startsWith("hk07/sensors/wristband/")) {
                 handleVitalSign(topic, payload);
-            } else if (topic.equals("hk07/sensors/lidar/scan")) {
-                handleLidarScan(payload);
             } else if (topic.equals("hk07/sensors/imu/state")) {
                 handleImuState(payload);
             // ── Mobile Phone Sensor Bridge Topics (vivo_http_mqtt_bridge.py) ──
@@ -79,8 +84,6 @@ public class MqttInboundProcessor {
                 handleTelemetryJoints(payload);
             } else if (topic.equals("hk07/telemetry/pmu")) {
                 handleTelemetryPmu(payload);
-            } else if (topic.equals("hk07/telemetry/lidar/points")) {
-                handleTelemetryLidarPoints(payload);
             } else if (topic.equals("hk07/telemetry/avoidance")) {
                 handleTelemetryAvoidance(payload);
             } else if (topic.equals("hk07/telemetry/joint_states")) {
@@ -120,19 +123,19 @@ public class MqttInboundProcessor {
         log.debug("[VITAL_SIGN] Device: {} | HR: {}bpm | SpO2: {}%",
                  deviceId, vital.getHeartRate(), vital.getSpo2());
 
+        // Audit for FallState
+        if (payload.contains("\"is_falling\":true") || payload.contains("\"is_falling\": true")
+                || payload.contains("\"is_falling\":1") || payload.contains("\"is_falling\": 1")
+                || payload.contains("\"vision_fall_detected\":true") || payload.contains("\"vision_fall_detected\": true")) {
+            log.warn("[FALL_DETECTED] FallState active. Instantly setting bypass aggregation for device={}", deviceId);
+            healthService.setBypassAggregationForDevice(deviceId, true);
+        }
+
         // Fire-and-forget on Virtual Thread — listener never blocks
         healthService.processVitalSign(vital);
     }
 
-    private void handleLidarScan(String payload) {
-        LidarScanSnapshotDto snap = safetyTelemetryService.ingestScan(payload);
-        log.debug("[LIDAR_SCAN] min={}m threat={} live={}", snap.getMinDistanceM(), snap.getThreatLevel(), snap.isLive());
-        try {
-            wsTemplate.convertAndSend("/topic/safety-scan", objectMapper.writeValueAsString(snap));
-        } catch (JsonProcessingException e) {
-            wsTemplate.convertAndSend("/topic/safety-scan", payload);
-        }
-    }
+
 
     private void handleImuState(String payload) {
         log.debug("[IMU_STATE] {}", payload);
@@ -149,6 +152,9 @@ public class MqttInboundProcessor {
 
         if (active) {
             robotCommandService.updateFromSubsumption(SystemState.SAFE_HOLD);
+            healthService.setBypassAggregationForAll(true);
+        } else {
+            healthService.setBypassAggregationForAll(false);
         }
 
         var alert = new java.util.LinkedHashMap<String, Object>();
@@ -169,6 +175,22 @@ public class MqttInboundProcessor {
                 payload.length() > 100 ? payload.substring(0, 100) + "..." : payload);
         // Broadcast agent decision to dashboard
         wsTemplate.convertAndSend("/topic/agent-events", payload);
+
+        // Audit for AI_EMERGENCY_WAKEUP
+        if (payload.contains("AI_EMERGENCY_WAKEUP")) {
+            log.warn("[EMERGENCY_WAKEUP] AI_EMERGENCY_WAKEUP triggered. Instantly setting bypass aggregation.");
+            try {
+                JsonNode node = objectMapper.readTree(payload);
+                if (node.has("userId")) {
+                    java.util.UUID userUuid = java.util.UUID.fromString(node.get("userId").asText());
+                    healthService.setBypassAggregation(userUuid, true);
+                } else {
+                    healthService.setBypassAggregationForAll(true);
+                }
+            } catch (Exception e) {
+                healthService.setBypassAggregationForAll(true);
+            }
+        }
     }
 
     private void handleTelemetryImu(String payload) {
@@ -195,9 +217,7 @@ public class MqttInboundProcessor {
         wsTemplate.convertAndSend("/topic/hk07/perception/clinical", payload);
     }
 
-    private void handleTelemetryLidarPoints(String payload) {
-        wsTemplate.convertAndSend("/topic/hk07/telemetry/lidar/points", payload);
-    }
+
 
     private void handleTelemetryAvoidance(String payload) {
         wsTemplate.convertAndSend("/topic/hk07/telemetry/avoidance", payload);

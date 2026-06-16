@@ -5,54 +5,61 @@
     <div class="history-controls-bar terminal-card">
       <div class="controls-left">
         <span class="hud text-dim">[ HISTORY_QUERY_PARAMETERS ]</span>
-
-        <div class="time-controls">
-          <!-- Preset range buttons -->
-          <button
-            v-for="range in timeRanges"
-            :key="range.label"
-            :class="['cmd-btn range-btn', activeMode === 'preset' && activeHours === range.value ? 'range-active' : '']"
-            @click="selectPreset(range.value)"
-          >{{ range.label }}</button>
-
-          <!-- Custom range toggle -->
-          <button
-            :class="['cmd-btn range-btn', activeMode === 'custom' ? 'range-active' : '']"
-            @click="toggleCustomMode"
-          >[ CUSTOM ]</button>
-        </div>
       </div>
 
-      <!-- Custom date range picker (inline on the right) -->
-      <transition name="fade-in">
-        <div v-if="showCustomPicker" class="controls-right custom-range-picker mono">
-          <div class="picker-row">
-            <label class="text-dim">FROM:</label>
+      <div class="controls-right">
+        <!-- Combobox dropdown select (Cyber-Cinematic style) -->
+        <div class="cyber-combobox-wrapper">
+          <select 
+            v-model="selectedRange" 
+            class="cyber-select mono" 
+            @change="handleRangeChange"
+          >
+            <option value="6">6H</option>
+            <option value="12">12H</option>
+            <option value="24">24H</option>
+            <option value="48">48H</option>
+            <option value="72">72H</option>
+            <option value="custom">[ CUSTOM ]</option>
+          </select>
+          <div class="select-arrow">//</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom date range picker panel (shows below the combobox) -->
+    <transition name="slide-down">
+      <div v-if="selectedRange === 'custom'" class="custom-datepicker-panel terminal-card mono">
+        <div class="picker-fields">
+          <div class="picker-group">
+            <span class="text-dim text-prefix">&gt;&gt; FROM:</span>
             <input
               type="datetime-local"
               v-model="customFrom"
               class="tactical-input datetime-input"
               :max="customTo || undefined"
             />
-            <label class="text-dim">TO:</label>
+          </div>
+          <div class="picker-group">
+            <span class="text-dim text-prefix">&gt;&gt; TO:</span>
             <input
               type="datetime-local"
               v-model="customTo"
               class="tactical-input datetime-input"
               :min="customFrom || undefined"
             />
-            <button
-              class="cmd-btn execute-btn"
-              :disabled="!customFrom || !customTo || loading"
-              @click="fetchCustomRange"
-            >
-              &gt;&gt; EXECUTE_QUERY
-            </button>
-            <span v-if="customRangeLabel" class="text-cyan range-label-text">{{ customRangeLabel }}</span>
           </div>
+          <span v-if="customRangeLabel" class="text-cyan range-label-text">{{ customRangeLabel }}</span>
         </div>
-      </transition>
-    </div>
+        <button
+          class="cmd-btn execute-btn"
+          :disabled="!customFrom || !customTo || loading"
+          @click="fetchCustomRange"
+        >
+          &gt;&gt; EXECUTE_QUERY
+        </button>
+      </div>
+    </transition>
 
     <!-- ── Loading ──────────────────────────────────────────────────────── -->
     <div v-if="loading" class="loading-state terminal-card">
@@ -124,7 +131,7 @@
           NO_RECORDS_IN_RANGE — START WEARING WRISTBAND TO SEE VITALS HISTORY
         </div>
 
-        <div v-else class="alert-dist-grid">
+        <div class="alert-dist-grid">
           <div
             v-for="bucket in hourlyBuckets"
             :key="bucket.bucket_hour"
@@ -188,6 +195,7 @@ const showCustomPicker = ref(false)
 const customFrom     = ref('')       // datetime-local string
 const customTo       = ref('')
 const customRangeLabel = ref('')
+const selectedRange  = ref<string>('24')
 
 const vitalsStore = useVitalsStore()
 const hourlyBuckets = computed({
@@ -200,14 +208,6 @@ const spo2ChartCanvas = ref<HTMLCanvasElement | null>(null)
 let hrChart: Chart | null = null
 let spo2Chart: Chart | null = null
 let progressTimer: number | null = null
-
-const timeRanges = [
-  { label: '6H',  value: 6  },
-  { label: '12H', value: 12 },
-  { label: '24H', value: 24 },
-  { label: '48H', value: 48 },
-  { label: '7D',  value: 168 },
-]
 
 // ─── Computed Stats ─────────────────────────────────────────────────────────
 const stats = computed(() => {
@@ -236,8 +236,7 @@ const totalSamples = computed(() =>
 
 const rangeLabel = computed(() => {
   if (activeMode.value === 'custom' && customRangeLabel.value) return customRangeLabel.value
-  const r = timeRanges.find(r => r.value === activeHours.value)
-  return r ? r.label : `${activeHours.value}H`
+  return `${activeHours.value}H`
 })
 
 // ─── Fetch: Preset range ────────────────────────────────────────────────────
@@ -339,17 +338,10 @@ function retryFetch() {
 }
 
 // ─── UI Controls ────────────────────────────────────────────────────────────
-function selectPreset(hours: number) {
-  activeMode.value  = 'preset'
-  activeHours.value = hours
-  showCustomPicker.value = false
-  fetchHistory()
-}
-
-function toggleCustomMode() {
-  showCustomPicker.value = !showCustomPicker.value
-  if (showCustomPicker.value) {
+function handleRangeChange() {
+  if (selectedRange.value === 'custom') {
     activeMode.value = 'custom'
+    showCustomPicker.value = true
     if (!customTo.value) {
       // Pre-fill: last 24h
       const now = new Date()
@@ -359,6 +351,9 @@ function toggleCustomMode() {
     }
   } else {
     activeMode.value = 'preset'
+    showCustomPicker.value = false
+    activeHours.value = parseInt(selectedRange.value, 10)
+    fetchHistory()
   }
 }
 
@@ -598,47 +593,112 @@ watch(() => vitalsStore.hourlyBuckets, async () => {
   gap: 16px;
 }
 
-.time-controls {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.range-btn {
-  font-size: 9px;
-  padding: 3px 10px;
-}
-
-.range-active {
-  background: var(--color-accent-green) !important;
-  color: var(--color-bg-void) !important;
-  box-shadow: 0 0 8px rgba(0, 255, 102, 0.4);
-}
-
-/* ── Custom date picker ───────────────────────────────────────────── */
-.custom-range-picker {
-  border-top: none;
-  padding-top: 0;
-}
-
-.picker-row {
+.controls-right {
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
-.picker-row label {
-  font-size: 9px;
-  white-space: nowrap;
+/* ── Cyber-Cinematic Select/Combobox ────────────────────────────────── */
+.cyber-combobox-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.cyber-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background: #000000;
+  border: 1px solid var(--color-accent-cyan, #00e5ff);
+  color: var(--color-accent-cyan, #00e5ff);
+  font-family: var(--font-data, 'Roboto Mono');
+  font-size: 10px;
+  padding: 4px 28px 4px 10px;
+  outline: none;
+  cursor: pointer;
+  border-radius: 0;
+  min-width: 120px;
+  transition: all 0.2s ease;
+}
+
+.cyber-select:focus, .cyber-select:hover {
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+  border-color: var(--color-accent-cyan, #00e5ff);
+}
+
+.select-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-accent-cyan, #00e5ff);
+  font-size: 8px;
+  pointer-events: none;
+  font-family: var(--font-data, 'Roboto Mono');
+  letter-spacing: -1px;
+}
+
+/* ── Custom date picker panel ─────────────────────────────────────── */
+.custom-datepicker-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 4px 8px 0;
+  padding: 6px 16px;
+  background: rgba(10, 10, 10, 0.85);
+  border: 1px solid var(--color-accent-cyan, #00e5ff);
+  backdrop-filter: blur(12px);
+}
+
+.picker-fields {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.picker-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.text-prefix {
+  font-size: 10px;
+  color: var(--color-accent-cyan, #00e5ff);
+  letter-spacing: 0.1em;
 }
 
 .execute-btn {
   font-size: 9px;
-  padding: 3px 12px;
+  padding: 4px 16px;
+  background: #000;
+  border: 1px solid var(--color-accent-cyan, #00e5ff);
+  color: var(--color-accent-cyan, #00e5ff);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.execute-btn:hover {
+  background: var(--color-accent-cyan, #00e5ff);
+  color: #000;
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.5);
+}
+
+.execute-btn:disabled {
+  border-color: var(--color-border-dim);
+  color: var(--color-text-dim);
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .range-label-text {
   font-size: 9px;
+  color: var(--color-accent-cyan, #00e5ff);
 }
 
 .datetime-input {
@@ -656,13 +716,14 @@ watch(() => vitalsStore.hourlyBuckets, async () => {
   box-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
 }
 
-/* Fade transition */
-.fade-in-enter-active,
-.fade-in-leave-active {
-  transition: opacity 0.2s ease;
+/* Slide down transition */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.25s ease-out;
 }
-.fade-in-enter-from,
-.fade-in-leave-to {
+.slide-down-enter-from,
+.slide-down-leave-to {
+  transform: translateY(-10px);
   opacity: 0;
 }
 

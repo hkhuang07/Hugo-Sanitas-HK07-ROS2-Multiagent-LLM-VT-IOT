@@ -24,6 +24,9 @@ for /f "usebackq tokens=*" %%p in (`powershell -NoProfile -Command "(Get-NetIPAd
 :: Extract Phone Hotspot Gateway IP dynamically
 for /f "usebackq tokens=*" %%g in (`powershell -NoProfile -Command "(Get-NetRoute -InterfaceAlias 'Wi-Fi' -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue).NextHop"`) do set "PHONE_IP=%%g"
 
+:: Dynamically resolve the absolute path to the central .env relative to this batch script location
+powershell -NoProfile -Command "if (Test-Path '%~dp0..\backend\.env') { $content = Get-Content '%~dp0..\backend\.env'; if ($content -match 'PHONE_IP=') { $content = $content -replace 'PHONE_IP=.*', 'PHONE_IP=%PHONE_IP%' } else { $content = $content + 'PHONE_IP=%PHONE_IP%' }; if ($content -match 'WIFI_IP=') { $content = $content -replace 'WIFI_IP=.*', 'WIFI_IP=%WIFI_IP%' } else { $content = $content + 'WIFI_IP=%WIFI_IP%' }; $content | Set-Content '%~dp0..\backend\.env' }"
+
 if "%WIFI_IP%"=="" (
     echo [CRITICAL ERROR] Failed to extract physical Wi-Fi IPv4 lease.
     echo Ensure your workstation is actively associated with the mobile hotspot.

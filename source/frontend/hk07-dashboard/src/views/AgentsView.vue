@@ -106,7 +106,7 @@ onMounted(() => {
 const agentPanels = [
   {
     type: 'SAFETY' as AgentType, tier: 0, tierClass: 'tier-0',
-    description: 'LiDAR/IMU deterministic. No LLM. < 5ms response. Highest Subsumption priority.',
+    description: 'IPWebcam/IMU deterministic. No LLM. < 5ms response. Highest Subsumption priority.',
     llm: 'THRESHOLD'
   },
   {

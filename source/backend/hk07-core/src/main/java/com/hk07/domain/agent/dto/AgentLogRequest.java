@@ -22,7 +22,7 @@ public class AgentLogRequest {
     private AgentType agentType;
 
     private String inputContext;     // Sensor payload or user message (truncated at 1000 chars)
-
+    
     @NotBlank
     private String outputDecision;   // Agent's decision or response (truncated at 2000 chars)
 

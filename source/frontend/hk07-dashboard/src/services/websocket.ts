@@ -129,11 +129,7 @@ export function initWebSocket(onReady?: () => void): void {
         agentsStore.addEvent(ev)
       })
 
-      // ── Subscribe: LiDAR scan (MQTT → Core → enriched snapshot)
-      _client!.subscribe('/topic/safety-scan', (msg: IMessage) => {
-        const data = JSON.parse(msg.body)
-        safetyStore.applyScan(data)
-      })
+
 
       // ── Subscribe: IMU / fall-risk telemetry
       _client!.subscribe('/topic/safety-imu', (msg: IMessage) => {
@@ -176,12 +172,7 @@ export function initWebSocket(onReady?: () => void): void {
         kinematicsStore.updateJoints(data)
       })
 
-      // ── Subscribe: LiDAR Point Cloud (Spatial Perception)
-      _client!.subscribe('/topic/hk07/telemetry/lidar/points', (msg: IMessage) => {
-        const data = JSON.parse(msg.body)
-        const kinematicsStore = useKinematicsStore()
-        kinematicsStore.updateLidarPoints(data)
-      })
+
 
        // ── Subscribe: Obstacle Avoidance Vector
       _client!.subscribe('/topic/hk07/telemetry/avoidance', (msg: IMessage) => {

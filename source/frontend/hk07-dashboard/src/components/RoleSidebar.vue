@@ -3,7 +3,7 @@
 
     <!-- ─── SIDEBAR HEADER (always visible) ──────────────────────────── -->
     <div class="sidebar-header">
-      <span class="text-cyan font-bold text-xs">[ TACTICAL_CONSOLE ]</span>
+      <span class="text-green font-bold text-xs">[ TACTICAL_CONSOLE ]</span>
       <span v-if="authStore.isAuthenticated" class="role-badge">{{ authStore.user?.role }}</span>
       <span v-else class="role-badge role-badge--locked">LOCKED</span>
     </div>
@@ -61,6 +61,9 @@
           </router-link>
           <router-link to="/profile" class="sidebar-nav-item" active-class="active">
             <span class="index text-dim">[09]</span> PROFILE_SETTINGS
+          </router-link>
+          <router-link to="/system-observer" class="sidebar-nav-item observer-nav-item" active-class="active">
+            <span class="index text-dim">[10]</span> SYSTEM_OBSERVER_HUD
           </router-link>
           
         </div>
@@ -264,15 +267,27 @@ const vitalsStore = useVitalsStore()
   color: #00FF66 !important;
 }
 
-/* Vision Console nav item — holographic cyan / bio-emerald dual hover */
+/* Vision Console nav item — bio-emerald glow */
 .vision-nav-item {
-  border-color: rgba(0, 229, 255, 0.12) !important;
-  background: rgba(0, 229, 255, 0.02);
+  border-color: rgba(0, 255, 102, 0.12) !important;
+  background: rgba(0, 255, 102, 0.02);
 }
 .vision-nav-item:hover,
 .vision-nav-item.active {
-  background: rgba(0, 229, 255, 0.08) !important;
-  box-shadow: 0 0 8px rgba(0, 229, 255, 0.15) inset;
-  color: #00E5FF !important;
+  background: rgba(0, 255, 102, 0.08) !important;
+  box-shadow: 0 0 8px rgba(0, 255, 102, 0.15) inset;
+  color: #00FF66 !important;
+}
+
+/* System Observer nav item — bio-emerald glow */
+.observer-nav-item {
+  border-color: rgba(0, 255, 102, 0.12) !important;
+  background: rgba(0, 255, 102, 0.02);
+}
+.observer-nav-item:hover,
+.observer-nav-item.active {
+  background: rgba(0, 255, 102, 0.08) !important;
+  box-shadow: 0 0 8px rgba(0, 255, 102, 0.15) inset;
+  color: #00FF66 !important;
 }
 </style>

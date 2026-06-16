@@ -16,11 +16,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 /**
  * Health Service — Phase 04 (Timeline)
@@ -56,11 +58,67 @@ public class HealthService {
     // ── Throttle: Max 60Hz per device ───────────────────────────────────────
     private final ConcurrentHashMap<String, Long> lastProcessedTime = new ConcurrentHashMap<>();
 
-    // ── [HẠNCHẾ-#8] Batch Insert Queue: accumulates NORMAL records ──────────
-    // ConcurrentLinkedQueue: thread-safe for high-frequency concurrent adds + atomic drain
-    private final ConcurrentLinkedQueue<HealthRecordEntity> normalBatchQueue = new ConcurrentLinkedQueue<>();
+    // ── Sliding windows for SpO2 and Heart Rate (size = 5) ──────────────────
+    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<Integer>> hrWindows = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<Float>> spo2Windows = new ConcurrentHashMap<>();
+
+    // ── Thread-Safe Memory Cache & Bypass Map ────────────────────────────────
+    @lombok.Data
+    @lombok.AllArgsConstructor
+    public static class IngestedVital {
+        private final VitalSignDto vital;
+        private final UUID userId;
+        private final AlertLevel alertLevel;
+    }
+
+    private final ConcurrentLinkedQueue<IngestedVital> vitalsBuffer = new ConcurrentLinkedQueue<>();
+    private final ConcurrentHashMap<UUID, Boolean> bypassAggregationMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Long> bypassActivationTime = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicBoolean globalBypass = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private long globalBypassActivationTime = 0;
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
-    private static final int BATCH_MAX_SIZE = 500; // Safety cap: flush if too large regardless of timer
+
+    public void setBypassAggregation(UUID userId, boolean bypass) {
+        long now = System.currentTimeMillis();
+        if (bypass) {
+            bypassAggregationMap.put(userId, true);
+            bypassActivationTime.put(userId, now);
+            log.warn("[BYPASS_AGGREGATION] Activated for patient={}", userId);
+        } else {
+            Long activatedAt = bypassActivationTime.get(userId);
+            if (activatedAt != null && (now - activatedAt < 30000)) {
+                log.debug("[BYPASS_AGGREGATION] Deactivation request deferred for patient={}. Remaining time: {}ms",
+                          userId, 30000 - (now - activatedAt));
+                return;
+            }
+            bypassAggregationMap.put(userId, false);
+            log.info("[BYPASS_AGGREGATION] Deactivated for patient={}", userId);
+        }
+    }
+
+    public void setBypassAggregationForAll(boolean bypass) {
+        long now = System.currentTimeMillis();
+        if (bypass) {
+            globalBypass.set(true);
+            globalBypassActivationTime = now;
+            log.warn("[BYPASS_AGGREGATION] Activated globally");
+        } else {
+            if (globalBypassActivationTime != 0 && (now - globalBypassActivationTime < 30000)) {
+                log.debug("[BYPASS_AGGREGATION] Global deactivation request deferred. Remaining time: {}ms",
+                          30000 - (now - globalBypassActivationTime));
+                return;
+            }
+            globalBypass.set(false);
+            log.info("[BYPASS_AGGREGATION] Deactivated globally");
+        }
+    }
+
+    public void setBypassAggregationForDevice(String deviceId, boolean bypass) {
+        String topic = "hk07/sensors/wristband/" + deviceId + "/vitals";
+        wristbandConfigRepository.findByMqttTopic(topic).ifPresent(config -> {
+            setBypassAggregation(config.getUser().getId(), bypass);
+        });
+    }
 
     /**
      * Primary pipeline — runs on Virtual Thread (via @Async).
@@ -92,27 +150,39 @@ public class HealthService {
         WristbandConfigEntity config = configOpt.get();
         UUID userId = config.getUser().getId();
 
-        // ─── [HẠNCHẾ-#9] Dynamic threshold check ───────────────────────────
-        AlertLevel level = computeAlertLevel(vital, config);
-
-        // ─── [HẠNCHẾ-#8] Tiered persistence strategy ───────────────────────
-        if (level == AlertLevel.NORMAL) {
-            // Buffer NORMAL vitals into batch queue — flushed every 5s
-            HealthRecordEntity record = buildRecord(vital, userId, level);
-            normalBatchQueue.add(record);
-
-            // Safety overflow flush: if queue grows too large, flush immediately
-            if (normalBatchQueue.size() >= BATCH_MAX_SIZE) {
-                log.warn("[HEALTH_SERVICE] Batch overflow — flushing {} records immediately", normalBatchQueue.size());
-                flushNormalBatch();
-            }
-        } else {
-            // WARNING / CRITICAL / STROKE: persist immediately, no batching
-            HealthRecordEntity record = buildRecord(vital, userId, level);
-            healthRepository.save(record);
-            log.warn("[HEALTH_ALERT] userId={} level={} HR={} SpO2={}",
-                    userId, level, vital.getHeartRate(), vital.getSpo2());
+        // Smooth SpO2 and Heart Rate using median filter of size 5
+        ConcurrentLinkedQueue<Integer> hrWindow = hrWindows.computeIfAbsent(deviceId, k -> new ConcurrentLinkedQueue<>());
+        ConcurrentLinkedQueue<Float> spo2Window = spo2Windows.computeIfAbsent(deviceId, k -> new ConcurrentLinkedQueue<>());
+        
+        hrWindow.add(vital.getHeartRate());
+        if (hrWindow.size() > 5) {
+            hrWindow.poll();
         }
+        
+        spo2Window.add(vital.getSpo2());
+        if (spo2Window.size() > 5) {
+            spo2Window.poll();
+        }
+        
+        List<Integer> hrList = new ArrayList<>(hrWindow);
+        List<Float> spo2List = new ArrayList<>(spo2Window);
+        
+        int medianHr = computeMedianInt(hrList);
+        float medianSpo2 = computeMedianFloat(spo2List);
+        
+        vital.setHeartRate(medianHr);
+        vital.setSpo2(medianSpo2);
+
+        // ─── [HẠNCHẾ-#9] Dynamic threshold check ───────────────────────────
+        AlertLevel level = computeAlertLevel(vital, config, hrList, spo2List);
+
+        // Confirmed critical warning (CRITICAL or STROKE level) or Fever Alert triggers bypass instantly
+        if (vital.getBodyTemperature() >= 38.5f || level == AlertLevel.CRITICAL || level == AlertLevel.STROKE) {
+            setBypassAggregation(userId, true);
+        }
+
+        // Add to sliding memory cache
+        vitalsBuffer.add(new IngestedVital(vital, userId, level));
 
         // ─── WebSocket broadcast (60Hz stream to dashboard) ─────────────────
         var payload = new VitalSignWithAlertDto(vital, level.name(), userId.toString());
@@ -120,24 +190,93 @@ public class HealthService {
     }
 
     /**
-     * [HẠNCHẾ-#8] Scheduled batch flush: every 5 seconds, drain the normalBatchQueue
-     * into a single saveAll() call. This collapses up to 300 individual SQL INSERTs
-     * (10Hz × 30s) into 1 batch JDBC call, reducing database I/O by ~98%.
+     * Scheduled batch flush: every 5 seconds, drains the memory cache
+     * and performs downsampling (averaging) under normal conditions,
+     * or bypasses and persists high-resolution raw data under emergency/anomaly states.
      */
     @Scheduled(fixedDelay = 5000)
     @Transactional
-    public void flushNormalBatch() {
-        if (normalBatchQueue.isEmpty()) return;
+    public void flushVitalsPipeline() {
+        if (vitalsBuffer.isEmpty()) return;
         if (!isFlushing.compareAndSet(false, true)) return;
         try {
-            List<HealthRecordEntity> batch = new ArrayList<>();
-            HealthRecordEntity record;
-            while ((record = normalBatchQueue.poll()) != null) {
-                batch.add(record);
+            // Lock-free pipeline: drain all elements atomically
+            List<IngestedVital> drained = new java.util.ArrayList<>();
+            IngestedVital item;
+            while ((item = vitalsBuffer.poll()) != null) {
+                drained.add(item);
             }
-            if (!batch.isEmpty()) {
-                healthRepository.saveAll(batch);
-                log.info("[HEALTH_BATCH] Flushed {} NORMAL vitals records to DB (batch mode)", batch.size());
+
+            if (drained.isEmpty()) return;
+
+            // Group by patient userId
+            Map<UUID, List<IngestedVital>> grouped = drained.stream()
+                    .collect(Collectors.groupingBy(IngestedVital::getUserId));
+
+            for (Map.Entry<UUID, List<IngestedVital>> entry : grouped.entrySet()) {
+                UUID userId = entry.getKey();
+                List<IngestedVital> userGroup = entry.getValue();
+
+                boolean isBypass = globalBypass.get() || bypassAggregationMap.getOrDefault(userId, false);
+
+                // Audit group for anomaly signals to auto-trigger bypass if missed
+                boolean hasAnomalyInBatch = userGroup.stream().anyMatch(v -> 
+                        v.getAlertLevel() != AlertLevel.NORMAL || 
+                        v.getVital().getBodyTemperature() >= 38.5f);
+
+                if (hasAnomalyInBatch) {
+                    isBypass = true;
+                    setBypassAggregation(userId, true);
+                }
+
+                if (isBypass) {
+                    // Bypass downsampling: save all raw high-res records
+                    List<HealthRecordEntity> rawRecords = userGroup.stream()
+                            .map(v -> buildRecord(v.getVital(), userId, v.getAlertLevel()))
+                            .toList();
+                    healthRepository.saveAll(rawRecords);
+                    log.warn("[HEALTH_BATCH] Bypass active. Flushed {} raw records for user {}", rawRecords.size(), userId);
+                    
+                    // If no anomaly remains in current batch, reset bypass for next cycle
+                    if (!hasAnomalyInBatch && !globalBypass.get()) {
+                        setBypassAggregation(userId, false);
+                    }
+                } else {
+                    // Normal conditions: compute arithmetic mean
+                    double avgHr = 0;
+                    double avgSpo2 = 0;
+                    double avgTemp = 0;
+                    double avgSys = 0;
+                    double avgDias = 0;
+                    for (IngestedVital v : userGroup) {
+                        avgHr += v.getVital().getHeartRate();
+                        avgSpo2 += v.getVital().getSpo2();
+                        avgTemp += v.getVital().getBodyTemperature();
+                        avgSys += v.getVital().getSystolic();
+                        avgDias += v.getVital().getDiastolic();
+                    }
+                    int count = userGroup.size();
+                    avgHr /= count;
+                    avgSpo2 /= count;
+                    avgTemp /= count;
+                    avgSys /= count;
+                    avgDias /= count;
+
+                    VitalSignDto lastVital = userGroup.get(count - 1).getVital();
+                    VitalSignDto avgVital = VitalSignDto.builder()
+                            .deviceId(lastVital.getDeviceId())
+                            .heartRate((int) Math.round(avgHr))
+                            .spo2((float) avgSpo2)
+                            .bodyTemperature((float) avgTemp)
+                            .systolic((float) avgSys)
+                            .diastolic((float) avgDias)
+                            .epochTimestampMs(lastVital.getEpochTimestampMs())
+                            .build();
+
+                    HealthRecordEntity record = buildRecord(avgVital, userId, AlertLevel.NORMAL);
+                    healthRepository.save(record);
+                    log.info("[HEALTH_BATCH] Downsampled {} normal records into 1 consolidated row for user {}", count, userId);
+                }
             }
         } finally {
             isFlushing.set(false);
@@ -150,30 +289,58 @@ public class HealthService {
      * Absolute STROKE ceiling is hardcoded as a medical safety net only.
      * All WARNING/CRITICAL thresholds come from the user's device configuration.
      */
-    private AlertLevel computeAlertLevel(VitalSignDto v, WristbandConfigEntity cfg) {
+    private AlertLevel computeAlertLevel(VitalSignDto v, WristbandConfigEntity cfg, List<Integer> hrWin, List<Float> spo2Win) {
         int hr       = v.getHeartRate();
         float spo2   = v.getSpo2();
         float sys    = v.getSystolic();
         float temp   = v.getBodyTemperature();
 
+        // Stroke consistency check
+        boolean hrConsistentStroke = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > 150 || x < 40);
+        boolean spo2ConsistentStroke = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x < 85.0f);
+
         // STROKE: Absolute medical ceiling — cannot be overridden by user config
-        if (hr > 150 || hr < 40 || spo2 < 85.0f) return AlertLevel.STROKE;
+        if (hrConsistentStroke || spo2ConsistentStroke) return AlertLevel.STROKE;
 
         // CRITICAL: Dynamic thresholds from DB + critical margin
         int hrMaxCrit  = cfg.getHeartRateThresholdMax() + 20;
         float sysCrit  = cfg.getBloodPressureSystolicMax() + 20;
-        if (hr > hrMaxCrit || sys > sysCrit || spo2 < 90.0f || temp > 39.5f)
+        
+        boolean hrConsistentCrit = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > hrMaxCrit);
+        boolean spo2ConsistentCrit = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x < 90.0f);
+        
+        if (hrConsistentCrit || sys > sysCrit || spo2ConsistentCrit || temp > 39.5f)
             return AlertLevel.CRITICAL;
 
         // WARNING: Dynamic thresholds from DB
-        if (hr > cfg.getHeartRateThresholdMax()
-                || hr < cfg.getHeartRateThresholdMin()
+        int hrMinWarn = cfg.getHeartRateThresholdMin();
+        int hrMaxWarn = cfg.getHeartRateThresholdMax();
+        float spo2MinWarn = cfg.getSpo2Min();
+        
+        boolean hrConsistentWarn = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > hrMaxWarn || x < hrMinWarn);
+        boolean spo2ConsistentWarn = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x < spo2MinWarn);
+
+        if (hrConsistentWarn
                 || sys > cfg.getBloodPressureSystolicMax()
-                || spo2 < cfg.getSpo2Min()
+                || spo2ConsistentWarn
                 || temp > 38.5f)
             return AlertLevel.WARNING;
 
         return AlertLevel.NORMAL;
+    }
+
+    private int computeMedianInt(List<Integer> list) {
+        if (list == null || list.isEmpty()) return 72;
+        List<Integer> sorted = new ArrayList<>(list);
+        java.util.Collections.sort(sorted);
+        return sorted.get(sorted.size() / 2);
+    }
+
+    private float computeMedianFloat(List<Float> list) {
+        if (list == null || list.isEmpty()) return 98.0f;
+        List<Float> sorted = new ArrayList<>(list);
+        java.util.Collections.sort(sorted);
+        return sorted.get(sorted.size() / 2);
     }
 
     private HealthRecordEntity buildRecord(VitalSignDto vital, UUID userId, AlertLevel level) {

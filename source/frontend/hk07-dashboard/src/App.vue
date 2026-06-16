@@ -24,6 +24,22 @@
     <!-- Standardized Footer -->
     <CommonFooter />
 
+    <!-- Connection Error Recovery Overlay -->
+    <div v-if="deviceConfigStore.isConfigError" class="config-error-overlay mono">
+      <div class="terminal-card border-red glow-red p-6 max-w-md text-center bg-black">
+        <h2 class="text-red font-bold mb-2">&gt;&gt;&gt; [SYSTEM CONFIGURATION FAILURE] &lt;&lt;&lt;</h2>
+        <div class="terminal-log text-dim text-xs my-4 p-3 bg-void text-left border-dim" style="border: 1px solid var(--color-accent-red); background: #0A0A0A;">
+          <p class="text-red">[ERROR] Unable to fetch backend network configurations.</p>
+          <p>[STATUS] Max retry budget (5 attempts) exhausted.</p>
+          <p>[ACTION] Verify Spring Boot backend (port 8888) is online.</p>
+          <p>[REF] Check local .env alignment or device settings.</p>
+        </div>
+        <button @click="retryConfigFetch" class="cmd-btn red-btn px-6 py-2" style="background: rgba(255, 51, 51, 0.15); border: 1px solid var(--color-accent-red); color: var(--color-accent-red); cursor: pointer; font-family: var(--font-hud);">
+          [ RE-EVALUATE CONNECTION ]
+        </button>
+      </div>
+    </div>
+
     <!-- SOS Overlay Modal -->
     <div v-if="sosCountdownActive" class="sos-overlay-modal mono">
       <div class="sos-modal-content terminal-card glow-red border-red p-5 text-center">
@@ -59,10 +75,18 @@ import HeaderStatusStrip from './components/HeaderStatusStrip.vue'
 import RoleSidebar from './components/RoleSidebar.vue'
 import CommonFooter from './components/CommonFooter.vue'
 
+import { useDeviceConfigStore } from './stores/deviceConfig'
+
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
+const deviceConfigStore = useDeviceConfigStore()
+
+function retryConfigFetch() {
+  deviceConfigStore.isConfigError = false
+  deviceConfigStore.fetchBackendConfig()
+}
 
 // ── Sidebar Toggle State ───────────────────────────────────────────────────
 const sidebarOpen = ref(true)   // default open
@@ -254,5 +278,27 @@ onUnmounted(() => {
 .sidebar-slide-enter-to,
 .sidebar-slide-leave-from {
   opacity: 1;
+}
+/* Connection Error Overlay */
+.config-error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(10, 10, 10, 0.95);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 99999;
+}
+.config-error-overlay .terminal-card {
+  border: 1px solid var(--color-accent-red);
+  box-shadow: 0 0 30px rgba(255, 51, 51, 0.3);
+}
+.red-btn:hover {
+  background: var(--color-accent-red) !important;
+  color: #000 !important;
+  box-shadow: 0 0 15px rgba(255, 51, 51, 0.6);
 }
 </style>

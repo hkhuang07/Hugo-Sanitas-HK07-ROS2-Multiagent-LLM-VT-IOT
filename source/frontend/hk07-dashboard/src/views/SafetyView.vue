@@ -4,13 +4,13 @@
       <!-- ── LEFT: Radar Canvas ─────────────────────────────────────────────── -->
       <div class="radar-panel terminal-card corner-reticle" :class="radarPanelClass">
         <div class="terminal-card-header radar-header-row">
-          <span>[ LIDAR_360_RADAR // {{ displayHz }}Hz ]</span>
+          <span>[ IPWEBCAM_VISION_HUD ]</span>
           <span :class="['data-link hud', safetyStore.dataLive ? 'text-green' : 'text-orange']">
             {{ safetyStore.dataLinkLabel }}
           </span>
         </div>
         <div class="radar-meta mono text-dim">
-          <span>MIN {{ safetyStore.minDistanceM.toFixed(2) }}m @ {{ safetyStore.closestAngleDeg }}°</span>
+          <span>MODE: CLINICAL_VISION_AI</span>
           <span :class="threatClass">[ {{ safetyStore.threatLevel }} ]</span>
         </div>
         <div class="radar-container">
@@ -22,8 +22,8 @@
           {{ safetyStore.baymaxHint }}
         </div>
         <div class="radar-legend mono text-dim">
-          <span>0.5m ● 1.0m ● 2.0m ● 3.0m</span>
-          <span class="legend-bubble">◎ vùng an toàn cá nhân</span>
+          <span>VISION TARGET TRACKER ACTIVE</span>
+          <span class="legend-bubble">◎ Vùng quan sát thị giác lâm sàng</span>
         </div>
       </div>
 
@@ -102,9 +102,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAgentsStore } from '../stores/agents'
 import { useSafetyStore } from '../stores/safety'
-import { triggerRobotSosTrigger, fetchLidarSnapshot } from '../services/api'
+import { triggerRobotSosTrigger } from '../services/api'
 import { useLidarRadar } from '../composables/useLidarRadar'
-import type { LidarScanSnapshot } from '../types/safety'
 
 const agentsStore = useAgentsStore()
 const safetyStore = useSafetyStore()
@@ -189,20 +188,7 @@ async function triggerEstop() {
 
 let pruneInterval: ReturnType<typeof setInterval>
 
-async function loadInitialLidarSnapshot() {
-  try {
-    const resp = await fetchLidarSnapshot()
-    const snap = resp.data?.data as LidarScanSnapshot | undefined
-    if (snap?.ranges360?.length) {
-      safetyStore.loadSnapshot(snap)
-    }
-  } catch {
-    /* WS stream will populate when broker is live */
-  }
-}
-
 onMounted(() => {
-  loadInitialLidarSnapshot()
   pruneInterval = setInterval(() => safetyStore.pruneStaleTriggers(), 2000)
 })
 
@@ -210,18 +196,22 @@ onUnmounted(() => {
   clearInterval(pruneInterval)
 })
 
-watch(() => safetyStore.threatLevel, (level, prev) => {
-  if (level === 'CRITICAL' && prev !== 'CRITICAL' && safetyStore.dataLive) {
-    alertHistory.value.unshift({
-      time: new Date().toTimeString().slice(0, 8),
-      trigger: 'LIDAR_PROXIMITY',
-      responseMs: 0,
-      message: `Vật cản ${safetyStore.minDistanceM.toFixed(2)}m — góc ${safetyStore.closestAngleDeg}°`,
-      severity: 'critical'
-    })
-    if (alertHistory.value.length > 50) alertHistory.value.pop()
+watch(() => safetyStore.activeTriggers, (triggers) => {
+  const visionTrigger = triggers.find(t => t.type === 'FACIAL_DISTRESS' || t.type === 'FALL_RISK' || t.type === 'VISIBLE_INJURIES')
+  if (visionTrigger) {
+    const exists = alertHistory.value.some(h => h.trigger === visionTrigger.type && h.message === visionTrigger.message)
+    if (!exists) {
+      alertHistory.value.unshift({
+        time: new Date().toTimeString().slice(0, 8),
+        trigger: visionTrigger.type,
+        responseMs: 0,
+        message: visionTrigger.message,
+        severity: 'critical'
+      })
+      if (alertHistory.value.length > 50) alertHistory.value.pop()
+    }
   }
-})
+}, { deep: true })
 
 // Watch subsumption events to update trigger log
 watch(() => agentsStore.subsumptionActive, (active) => {

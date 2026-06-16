@@ -16,7 +16,7 @@ except ImportError:
     print("=================================================================================")
     sys.exit(1)
 
-from sensor_msgs.msg import Imu, PointCloud2
+from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 
@@ -41,7 +41,6 @@ class NavigationAgent(Node):
         # Robot States
         self.current_pos = {"x": 0.0, "y": 0.0, "z": 0.0}
         self.target_pos = {"x": 0.0, "y": 0.0, "z": 0.0}
-        self.lidar_points = []
         self.inhibit_state = "CLEAR"
         
         # Subscriptions
@@ -55,12 +54,6 @@ class NavigationAgent(Node):
             Imu,
             '/telemetry/imu',
             self.telemetry_imu_callback,
-            10
-        )
-        self.lidar_sub = self.create_subscription(
-            PointCloud2,
-            '/telemetry/lidar/points',
-            self.lidar_callback,
             10
         )
         self.inhibit_sub = self.create_subscription(
@@ -103,27 +96,7 @@ class NavigationAgent(Node):
     def inhibit_callback(self, msg):
         self.inhibit_state = msg.data
 
-    def lidar_callback(self, msg):
-        # LiDAR hardware absent short-circuit
-        lidar_absent = os.environ.get("LIDAR_HARDWARE_ABSENT", "False").lower() in ("true", "1", "yes") or \
-                       os.environ.get("LIDAR_ABSENT", "False").lower() in ("true", "1", "yes")
-        if lidar_absent:
-            self.lidar_points = []
-            return
 
-        pts = []
-        point_step = msg.point_step
-        data = msg.data
-        num_points = msg.width * msg.height
-        for i in range(num_points):
-            offset = i * point_step
-            if offset + 12 <= len(data):
-                x, y, z = struct.unpack_from('<fff', data, offset)
-                # Ignore self-collision points near the origin of robot coordinate frame
-                dist_from_origin = math.sqrt(x**2 + y**2 + z**2)
-                if dist_from_origin > 0.15:
-                    pts.append({'x': x, 'y': y, 'z': z})
-        self.lidar_points = pts
 
     def control_loop(self):
         now = time.time()
@@ -141,31 +114,9 @@ class NavigationAgent(Node):
         f_att_x = k_att * dx
         f_att_z = k_att * dz
         
-        # 2. Calculate Repulsive Forces from PointCloud2 obstacles
-        f_rep_x = 0.0
-        f_rep_z = 0.0
-        
-        # The Point Cloud points are relative to the robot.
-        # However, to be general, we evaluate distance using relative X and Z coordinates.
-        for pt in self.lidar_points:
-            # Lidar points are already relative to robot (e.g. current position acts as origin)
-            # If coordinates are global, we subtract. If local, pt['x'] is directly the offset.
-            # Assuming points are global (standard PointCloud from simulator node is global reference).
-            rx = self.current_pos["x"] - pt["x"]
-            rz = self.current_pos["z"] - pt["z"]
-            dist = math.sqrt(rx**2 + rz**2)
-            
-            if dist < safety_rad:
-                if dist > 0.01:
-                    f_rep = k_rep * (1.0 / dist - 1.0 / safety_rad) * (1.0 / (dist**2))
-                    ux = rx / dist
-                    uz = rz / dist
-                    f_rep_x += ux * f_rep
-                    f_rep_z += uz * f_rep
-                    
         # 3. Combine Forces
-        f_tot_x = f_att_x + f_rep_x
-        f_tot_z = f_att_z + f_rep_z
+        f_tot_x = f_att_x
+        f_tot_z = f_att_z
         
         # 4. Generate Corrective Twist Velocities
         cmd = Twist()
@@ -199,7 +150,7 @@ class NavigationAgent(Node):
                 f"[NAV] Current=({self.current_pos['x']:.2f}, {self.current_pos['z']:.2f}) | "
                 f"Target=({self.target_pos['x']:.2f}, {self.target_pos['z']:.2f}) | "
                 f"CmdLinearX={cmd.linear.x:.3f} m/s, CmdLinearZ={cmd.linear.z:.3f} m/s | "
-                f"LidarPoints={len(self.lidar_points)} | Inhibit={self.inhibit_state}"
+                f"Inhibit={self.inhibit_state}"
             )
             self.last_log_time = now
 

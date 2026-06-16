@@ -1,5 +1,10 @@
 <template>
   <div class="sensor-view">
+    <!-- Cinematic HUD Terminal Loader -->
+    <div v-if="cfg.isConfigLoading" class="hud-terminal-loader">
+      <span class="loader-text font-mono">[ CRITICAL_SYSTEM_UPLINK: FETCHING_ENV_METRICS... ]</span>
+    </div>
+
     <!-- ═══ RETICLE CORNERS ═══ -->
     <span class="corner tl">+</span>
     <span class="corner tr">+</span>
@@ -650,6 +655,9 @@ let _clockInterval: number | null = null
 let _chartInterval: number | null = null
 
 onMounted(async () => {
+  // Try to load dynamic IP configuration from backend first
+  await cfg.fetchBackendConfig();
+
   updateClock()
   _clockInterval = window.setInterval(updateClock, 1000)
 
@@ -702,6 +710,28 @@ onUnmounted(() => {
     rgba(0,255,102,0.015) 2px,
     rgba(0,255,102,0.015) 4px
   );
+}
+
+/* ── CINEMATIC HUD TERMINAL LOADER ───────────────────────────────────────── */
+.hud-terminal-loader {
+  position: absolute;
+  inset: 0;
+  background: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.loader-text {
+  font-family: 'Roboto Mono', monospace;
+  color: #00FF66;
+  font-size: 14px;
+  letter-spacing: 2px;
+  animation: scanning-glow 1.5s ease-in-out infinite;
+}
+@keyframes scanning-glow {
+  0%, 100% { opacity: 0.3; text-shadow: 0 0 2px rgba(0, 255, 102, 0.2); }
+  50% { opacity: 1; text-shadow: 0 0 10px rgba(0, 255, 102, 0.8); }
 }
 
 /* Corner reticles */

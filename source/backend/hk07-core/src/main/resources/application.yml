@@ -3,7 +3,7 @@ spring:
     name: hk07-core
   mvc:
     async:
-      request-timeout: 30000
+      request-timeout: 35000
   threads:
     virtual:
       enabled: true
@@ -21,8 +21,8 @@ spring:
     hikari:
       # Virtual Thread tuning: VT blocks OS thread on I/O — need more connections
       # than traditional thread pool. Rule: (vCPU * 2) + spindle count, min 10.
-      maximum-pool-size: 10
-      minimum-idle: 2
+      maximum-pool-size: 30
+      minimum-idle: 10
       connection-timeout: 20000
       idle-timeout: 300000
       keepalive-time: 60000         # Prevent idle connection drops
@@ -36,12 +36,11 @@ spring:
     open-in-view: false             # Disable OSIV — incompatible with Virtual Threads
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect  # Explicit MySQL dialect
         type:
           preferred_uuid_jdbc_type: VARCHAR               # Globally map Java UUID to VARCHAR(36) to match database VARCHAR(36)
         format_sql: false
         jdbc:
-          batch_size: 50            # Increased batch size for 10Hz vitals bursts
+          batch_size: 500            # Increased batch size for 10Hz vitals bursts
           order_inserts: true       # Sort inserts by entity type to maximize batch grouping
           order_updates: true       # Same for updates
   # ─── Flyway (Database Migration Manager) ───
@@ -91,6 +90,7 @@ hk07:
       access-token-expiry-ms: 86400000    # 24 hours
       refresh-token-expiry-ms: 604800000 # 7 days
     internal-api-key: ${INTERNAL_API_KEY:hk07-internal-api-key-bypass}
+    system-agent-id: ${SYSTEM_AGENT_ID:00000000-0000-0000-0000-000000000000}
   subsumption:
     safety-override-timeout-ms: 5      # HARD LIMIT: 5ms max response time
 
@@ -100,6 +100,7 @@ logging:
     com.hk07: INFO
     org.springframework.integration.mqtt: DEBUG
     org.hibernate: WARN
+    org.hibernate.orm.incubating: ERROR  # Suppress incubating setting warnings (HHH90006001)
     com.mysql: ERROR                # mysql-connector-j driver
     org.flywaydb.core.internal.database.base.Database: ERROR
   pattern:

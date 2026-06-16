@@ -44,6 +44,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Value("${hk07.security.internal-api-key:hk07-internal-api-key-bypass}")
     private String internalApiKey;
 
+    @Value("${hk07.security.system-agent-id:00000000-0000-0000-0000-000000000000}")
+    private String systemAgentId;
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
@@ -52,7 +55,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String apiKeyHeader = request.getHeader("X-Internal-API-Key");
         if (StringUtils.hasText(apiKeyHeader) && apiKeyHeader.equals(internalApiKey)) {
             var auth = new UsernamePasswordAuthenticationToken(
-                "internal-service", null,
+                systemAgentId, null,
                 List.of(new SimpleGrantedAuthority("ROLE_OWNER"))
             );
             SecurityContextHolder.getContext().setAuthentication(auth);
@@ -63,7 +66,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // ── Public Path Bypass (never hijack public paths with 401 responses) ──
         String uri = request.getRequestURI();
-        boolean isPublicPath = uri.contains("/api/v1/auth/") ||
+        boolean isPublicPath = uri.equals("/") ||
+                               uri.contains("/api/v1/auth/") ||
                                uri.startsWith("/ws/") ||
                                uri.equals("/health") ||
                                uri.equals("/error") ||

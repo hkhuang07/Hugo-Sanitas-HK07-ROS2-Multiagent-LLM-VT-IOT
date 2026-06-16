@@ -32,6 +32,74 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+import socket
+import struct
+
+def load_env_file():
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(10):
+        checks = [
+            os.path.join(curr_dir, ".env"),
+            os.path.join(curr_dir, "backend", ".env"),
+            os.path.join(curr_dir, "source", "backend", ".env"),
+            os.path.join(curr_dir, "hk07-agent", ".env"),
+        ]
+        for path in checks:
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            if "=" in line:
+                                key, val = line.split("=", 1)
+                                key = key.strip()
+                                val = val.strip().strip('"').strip("'")
+                                if key:
+                                    os.environ[key] = val
+                    return
+                except Exception:
+                    pass
+        parent = os.path.dirname(curr_dir)
+        if parent == curr_dir:
+            break
+        curr_dir = parent
+
+def get_default_gateway_ip() -> str:
+    try:
+        # Standard Linux/WSL2 routing table evaluation
+        with open("/proc/net/route") as fh:
+            for line in fh:
+                fields = line.strip().split()
+                if len(fields) > 2 and fields[1] == "00000000":
+                    return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+async def run_network_ingestion_worker():
+    """
+    Background worker parsing local .env modifications and validating gateway IP every 5.0 seconds.
+    """
+    log.info("[NETWORK_WORKER] Network Ingestion worker started.")
+    while True:
+        try:
+            load_env_file()
+            gateway_ip = get_default_gateway_ip()
+            os.environ["DEFAULT_GATEWAY"] = gateway_ip
+            
+            bb = get_blackboard()
+            await bb.write_value("system:network:gateway", gateway_ip)
+            await bb.write_value("system:network:status", "ONLINE" if gateway_ip != "127.0.0.1" else "LOCAL_LOOPBACK")
+            
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"[NETWORK_WORKER] Error: {e}")
+            await asyncio.sleep(5.0)
+
 import uvicorn
 import fastapi
 from fastapi import FastAPI, Header, Request
@@ -87,12 +155,11 @@ _safety_tripped = False
 async def run_subsumption_safety_worker():
     """
     Background worker mimicking Tầng 0 (Safety Logic).
-    Monitors LiDAR/environment states and trips when critical.
+    Monitors camera vision state via Blackboard clinical data and trips when critical.
     """
     global _safety_tripped
     import time
     import json
-    fusion_buf = get_fusion_buffer()
     log.info("[SAFETY_WORKER] Subsumption Safety Worker started.")
     
     # Wait for app startup
@@ -100,22 +167,31 @@ async def run_subsumption_safety_worker():
     
     while True:
         try:
-            lidar = await fusion_buf.latest_lidar()
+            bb = get_blackboard()
+            clinical = await bb.read_value("sensor:perception:clinical")
             trip = False
             reason = ""
-            lidar_clear = True
             
-            # Missing LiDAR or environment state buffer indicators
-            if lidar is None:
-                # Disabled hardware trip on empty/missing LiDAR buffer
-                if not hasattr(run_subsumption_safety_worker, "_logged_absent"):
-                    log.info("[SAFETY_GUARDS] LiDAR hardware absent; operating on Camera Vision and Mobile Ingestion layout.")
-                    run_subsumption_safety_worker._logged_absent = True
-            # Distance drops below critical levels (20cm = 0.2m)
-            elif lidar.min_distance_m < 0.2:
-                trip = True
-                reason = f"Obstacle distance {lidar.min_distance_m:.2f}m is below critical threshold 0.2m"
+            if clinical:
+                facial_distress = clinical.get("facial_distress", {})
+                env_hazards = clinical.get("environmental_hazards", {})
+                visible_injuries = clinical.get("visible_injuries", {})
                 
+                # Check for critical/warning threats detected in vision
+                if facial_distress.get("detected"):
+                    trip = True
+                    reason = f"Vision Safety Alert: Facial distress detected ({facial_distress.get('details')})"
+                elif env_hazards.get("detected"):
+                    trip = True
+                    reason = f"Vision Safety Alert: Environmental hazard detected ({env_hazards.get('details')})"
+                elif visible_injuries.get("detected"):
+                    trip = True
+                    reason = f"Vision Safety Alert: Visible injuries detected ({visible_injuries.get('details')})"
+            else:
+                if not hasattr(run_subsumption_safety_worker, "_logged_absent"):
+                    log.info("[SAFETY_GUARDS] Awaiting IPWebcam clinical vision telemetry stream...")
+                    run_subsumption_safety_worker._logged_absent = True
+                    
             if trip:
                 _safety_tripped = True
                 arbitrator.inhibit("EMPATHETIC", duration_s=10)
@@ -123,7 +199,6 @@ async def run_subsumption_safety_worker():
                 
                 # Write direct safety trip state to Blackboard
                 try:
-                    bb = get_blackboard()
                     await bb.write_value("safety:tripped", True)
                     await bb.write_value("safety:reason", reason)
                 except Exception as bb_err:
@@ -133,7 +208,6 @@ async def run_subsumption_safety_worker():
             else:
                 _safety_tripped = False
                 try:
-                    bb = get_blackboard()
                     await bb.write_value("safety:tripped", False)
                 except Exception:
                     pass
@@ -208,7 +282,7 @@ async def rosbridge_client_loop():
     import base64
     import struct
     import math
-    from services.sensor_fusion_buffer import get_fusion_buffer, VitalsSample, LidarSnapshot
+    from services.sensor_fusion_buffer import get_fusion_buffer, VitalsSample
     from services.blackboard_service import get_blackboard
 
     uri = "ws://localhost:9090"
@@ -225,7 +299,6 @@ async def rosbridge_client_loop():
                 subscribe_topics = [
                     {"topic": "/telemetry/sensors/vitals", "type": "sensor_msgs/msg/JointState"},
                     {"topic": "/sensors/camera/thermal_rppg", "type": "sensor_msgs/msg/JointState"},
-                    {"topic": "/telemetry/lidar/points", "type": "sensor_msgs/msg/PointCloud2"},
                     {"topic": "/vitals/wristband", "type": "sensor_msgs/msg/JointState"},
                     {"topic": "/telemetry/imu", "type": "sensor_msgs/msg/Imu"},
                     {"topic": "/hk07/perception/clinical", "type": "std_msgs/msg/String"}
@@ -271,6 +344,7 @@ async def rosbridge_client_loop():
                                     alert_level="CRITICAL" if (len(pos) >= 3 and pos[2] > 0) else "NORMAL"
                                 )
                                 await fusion_buf.push_vitals(sample)
+                                await bb.write_value("sensor:camera:fever_alert", bool(len(pos) >= 3 and pos[2] > 0))
                                 
                         elif topic == "/vitals/wristband":
                             pos = msg.get("position", [])
@@ -315,70 +389,7 @@ async def rosbridge_client_loop():
                             }
                             await bb.write_value("sensor:imu:latest", imu_data)
                             
-                        elif topic == "/telemetry/lidar/points":
-                            raw_bytes = base64.b64decode(msg.get("data", ""))
-                            width = msg.get("width", 0)
-                            height = msg.get("height", 0)
-                            point_step = msg.get("point_step", 12)
-                            num_points = width * height
-                            
-                            min_distance_m = 999.0
-                            obstacle_count = 0
-                            sector_data = {"N": 999.0, "NE": 999.0, "E": 999.0, "SE": 999.0, "S": 999.0, "SW": 999.0, "W": 999.0, "NW": 999.0}
-                            
-                            for i in range(num_points):
-                                offset = i * point_step
-                                if offset + 12 <= len(raw_bytes):
-                                    x, y, z = struct.unpack_from('<fff', raw_bytes, offset)
-                                    dx = x - 0.0
-                                    dy = y - 1.1
-                                    dz = z - 0.0
-                                    dist = math.sqrt(dx**2 + dy**2 + dz**2)
-                                    if dist < 0.01:
-                                        continue
-                                    if dist < min_distance_m:
-                                        min_distance_m = dist
-                                    if dist < 1.5:
-                                        obstacle_count += 1
-                                        
-                                    angle = math.atan2(dz, dx)
-                                    deg = math.degrees(angle)
-                                    if deg < 0:
-                                        deg += 360
-                                    
-                                    if 337.5 <= deg or deg < 22.5:
-                                        sector = "E"
-                                    elif 22.5 <= deg < 67.5:
-                                        sector = "SE"
-                                    elif 67.5 <= deg < 112.5:
-                                        sector = "S"
-                                    elif 112.5 <= deg < 157.5:
-                                        sector = "SW"
-                                    elif 157.5 <= deg < 202.5:
-                                        sector = "W"
-                                    elif 202.5 <= deg < 247.5:
-                                        sector = "NW"
-                                    elif 247.5 <= deg < 292.5:
-                                        sector = "N"
-                                    else:
-                                        sector = "NE"
-                                        
-                                    if dist < sector_data[sector]:
-                                        sector_data[sector] = dist
-                                        
-                            threat_level = "CLEAR"
-                            if min_distance_m < 0.2:
-                                threat_level = "CRITICAL"
-                            elif min_distance_m < 1.0:
-                                threat_level = "WARNING"
-                                
-                            snapshot = LidarSnapshot(
-                                min_distance_m=min_distance_m,
-                                obstacle_count=obstacle_count,
-                                sector_data=sector_data,
-                                threat_level=threat_level
-                            )
-                            await fusion_buf.push_lidar(snapshot)
+
                             
                         elif topic == "/hk07/perception/clinical":
                             try:
@@ -402,13 +413,19 @@ async def lifespan(app: FastAPI):
     log.info("|  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          |")
     log.info("+--------------------------------------------------+")
 
+    # Active network config initialization directly in primary startup hook
+    load_env_file()
+    gateway_ip = get_default_gateway_ip()
+    os.environ["DEFAULT_GATEWAY"] = gateway_ip
+    log.info("[STARTUP] Materialized network config. Default Gateway: %s", gateway_ip)
+
     # Initialize LanceDB memory
     await memory.initialize()
     
     # Start agent log client for REST logging
     await start_log_client()
 
-    # Launch background loops for all agents + memory compaction + rosbridge client
+    # Launch background loops for all agents + memory compaction + rosbridge client + network worker
     active_orch = orchestrator_v2 if (USE_ORCHESTRATOR_V2 and orchestrator_v2) else orchestrator
     agent_tasks = [
         asyncio.create_task(active_orch.empathetic_agent.run_loop(), name="empathy-agent"),
@@ -417,6 +434,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(memory.run_compaction_loop(), name="memory-compaction"),
         asyncio.create_task(run_subsumption_safety_worker(), name="subsumption-safety-worker"),
         asyncio.create_task(rosbridge_client_loop(), name="rosbridge-client"),
+        asyncio.create_task(run_network_ingestion_worker(), name="network-ingestion-worker"),
     ]
     # Start isolated heartbeat background thread
     start_isolated_heartbeat_thread()
@@ -464,7 +482,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://localhost:8888"],
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

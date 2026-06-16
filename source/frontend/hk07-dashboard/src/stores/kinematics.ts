@@ -69,11 +69,7 @@ export interface JointData {
   temp: number
 }
 
-export interface LidarPoint {
-  x: number
-  y: number
-  z: number
-}
+
 
 export interface Vector3D {
   x: number
@@ -102,13 +98,13 @@ export const useKinematicsStore = defineStore('kinematics', () => {
 
   // Watchdog timer to automatically invalidate live telemetry status on timeout
   setInterval(() => {
-    if (isLive.value && lastUpdateMs.value > 0 && Date.now() - lastUpdateMs.value > 3000) {
+    if (isLive.value && lastUpdateMs.value > 0 && Date.now() - lastUpdateMs.value > 60000) {
       isLive.value = false
     }
   }, 1000)
 
   // Spatial perception states
-  const lidarPoints = ref<LidarPoint[]>([])
+
   const avoidanceVector = ref<Vector3D>({ x: 0, y: 0, z: 0 })
   const jointStates = ref<JointState>({ name: [], position: [] })
 
@@ -202,14 +198,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     }
   }
 
-  function updateLidarPoints(data: any) {
-    touch()
-    if (Array.isArray(data)) {
-      lidarPoints.value = data
-    } else if (data && data.points && Array.isArray(data.points)) {
-      lidarPoints.value = data.points
-    }
-  }
+
 
   function updateAvoidanceVector(data: any) {
     touch()
@@ -283,7 +272,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     timestampMs.value = 0
     isLive.value = false
     lastUpdateMs.value = 0
-    lidarPoints.value = []
+
     avoidanceVector.value = { x: 0, y: 0, z: 0 }
     pressureL.value = 1.8
     pressureR.value = 1.8
@@ -306,7 +295,6 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     rotation,
     timestampMs,
     isLive,
-    lidarPoints,
     avoidanceVector,
     pressureL,
     pressureR,
@@ -320,7 +308,6 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     positionFormatted,
     rotationFormatted,
     updateKinematics,
-    updateLidarPoints,
     updateAvoidanceVector,
     updateJointStates,
     updatePneumatic,

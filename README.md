@@ -264,6 +264,7 @@ Once infrastructure is active, launch each subsystem in a dedicated terminal win
     ```bash
     cd source/robotics
     source /opt/ros/humble/setup.bash
+    colcon build --packages-select sensors --symlink-install
     source install/setup.bash
     ros2 run sensors hk07_runtime_orchestrator
     ```

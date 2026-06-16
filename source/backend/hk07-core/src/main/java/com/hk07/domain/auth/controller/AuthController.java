@@ -164,4 +164,19 @@ public class AuthController {
 
         return ResponseEntity.ok(ApiResponse.ok("Device PIN authentication successful", tokenResponse));
     }
+
+    @org.springframework.beans.factory.annotation.Value("${PHONE_IP:}")
+    private String phoneIp;
+
+    @org.springframework.beans.factory.annotation.Value("${WIFI_IP:}")
+    private String wifiIp;
+
+    @GetMapping("/config")
+    public ResponseEntity<ApiResponse<java.util.Map<String, String>>> getSystemConfig() {
+        return ResponseEntity.ok(ApiResponse.ok("System config retrieved", java.util.Map.of(
+            "phoneIp", phoneIp != null ? phoneIp : "",
+            "wifiIp", wifiIp != null ? wifiIp : ""
+        )));
+    }
 }
+

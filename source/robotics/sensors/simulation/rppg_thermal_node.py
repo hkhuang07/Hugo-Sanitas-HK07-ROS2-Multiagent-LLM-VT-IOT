@@ -1,5 +1,13 @@
 import os
 import sys
+
+# Ensure package root is in sys.path
+package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if package_root not in sys.path:
+    sys.path.append(package_root)
+
+from utils.network_helper import load_env_file, get_default_gateway_ip
+
 import time
 import math
 import random
@@ -50,6 +58,14 @@ class RppgThermalNode(Node):
         else:
             log.warning("[rPPG_THERMAL] MediaPipe is not installed. Face-detection-based ROI is disabled. Using default central ROI.")
         
+        # Environment & Config Loading
+        load_env_file()
+        phone_ip = os.getenv("PHONE_IP")
+        if not phone_ip:
+            phone_ip = get_default_gateway_ip()
+        
+        use_ip_webcam = os.getenv("USE_IP_WEBCAM", "false").lower() == "true"
+
         # Publishers
         self.telemetry_pub = self.create_publisher(JointState, '/sensors/camera/thermal_rppg', 10)
         
@@ -58,13 +74,13 @@ class RppgThermalNode(Node):
         param = self.get_parameter('video_source')
         
         if param.value is None:
-            video_src_str = os.getenv('RTSP_CAMERA_URL', 'http://192.168.133.228:8080/video')
+            video_src_str = os.getenv('RTSP_CAMERA_URL', f"http://{phone_ip}:8080/video")
         else:
             video_src_str = str(param.value)
             
-        # Completely bypass physical camera index 0 and redirect to network stream
-        if video_src_str == '0':
-            video_src_str = "http://192.168.133.228:8080/video"
+        # Completely bypass physical camera index 0 and redirect to network stream if requested
+        if video_src_str == '0' and use_ip_webcam:
+            video_src_str = f"http://{phone_ip}:8080/video"
             
         try:
             self.video_source = int(video_src_str)
@@ -105,7 +121,6 @@ class RppgThermalNode(Node):
         except Exception as e:
             log.error(f"[rPPG_THERMAL] Exception initializing VideoCapture: {e}")
             self.cap = None
-
 
     def compute_rppg_heart_rate(self) -> float:
         """

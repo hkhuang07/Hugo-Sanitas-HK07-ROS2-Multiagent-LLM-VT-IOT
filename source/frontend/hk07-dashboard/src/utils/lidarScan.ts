@@ -36,7 +36,7 @@ export function classifyThreat(minDist: number): ThreatLevel {
 
 export function baymaxHint(minDist: number, closeSectors: number): string {
   if (minDist <= 0.01) {
-    return 'Chưa nhận tín hiệu LiDAR — tôi đang lắng nghe môi trường xung quanh bạn.'
+    return 'Chưa nhận tín hiệu thị giác IPWebcam — tôi đang lắng nghe môi trường xung quanh bạn.'
   }
   if (minDist < OBSTACLE_STOP_M) {
     return 'Có vật thể quá gần — tôi sẽ dừng lại ngay để bảo vệ bạn.'

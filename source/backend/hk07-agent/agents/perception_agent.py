@@ -32,6 +32,25 @@ from arbitrator.arbitrator import Arbitrator
 
 log = logging.getLogger("hk07.perception_agent")
 
+def safe_float(val: Any, default: float = 0.0) -> float:
+    """
+    Safely cast any value to float. If the value is a dictionary (metadata model),
+    extract nested keys cleanly using .get("vitals", {}).get("heart_rate") or other
+    common metric keys.
+    """
+    if val is None:
+        return default
+    if isinstance(val, dict):
+        vitals_hr = val.get("vitals", {}).get("heart_rate")
+        if vitals_hr is not None:
+            val = vitals_hr
+        else:
+            val = val.get("value") or val.get("score") or val.get("level") or default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
 # ─── PerceptionScan Schema ────────────────────────────────────────────────────
 
 @dataclass
@@ -55,10 +74,6 @@ class PerceptionScan:
     spo2:             Optional[float] = None
     body_temperature: Optional[float] = None
 
-    # LiDAR context
-    nearest_obstacle_m: float = 999.0
-    threat_level:       str   = "CLEAR"  # CLEAR | WARNING | CRITICAL
-
     # Overall assessment
     overall_risk:     str  = "LOW"       # LOW | MED | HIGH | CRITICAL
     confidence:       float = 0.0
@@ -68,10 +83,24 @@ class PerceptionScan:
         "Vui lòng tham khảo bác sĩ nếu có triệu chứng."
     )
     ttl_seconds:      int   = 300
+    status:           str   = "UNKNOWN"
+    alertLevel:       str   = "NORMAL"
+
+    # Robotics / Dynamic physical properties
+    nearest_obstacle_m: float = 1.5  # Safe dynamic distance fallback
+    threat_level:       str   = "LOW"
+    risk:               str   = "LOW"
+    details:            str   = ""
 
     def __post_init__(self):
         if not self.timestamp:
             self.timestamp = datetime.utcnow().isoformat() + "Z"
+        if not self.risk or self.risk == "LOW":
+            self.risk = self.overall_risk
+        if not self.details:
+            self.details = self.notes
+        if not self.threat_level:
+            self.threat_level = "LOW"
 
     def is_expired(self) -> bool:
         from datetime import timedelta
@@ -162,32 +191,69 @@ Rules:
 
         # ── Camera analysis ──────────────────────────────────────────────────
         vision_result: Dict[str, Any] = {}
+        vision_payload_url = ""
 
-        camera = ctx.camera
-        frame_b64 = ""
-
-        if camera and camera.frame_b64:
-            frame_b64 = camera.frame_b64
-        elif camera and camera.frame_path and os.path.isfile(camera.frame_path):
+        bb = get_blackboard()
+        phone_ip = await bb.read_value("PHONE_IP")
+        if not phone_ip:
+            phone_ip = os.getenv("PHONE_IP", "")
+        if not phone_ip or phone_ip == "127.0.0.1":
             try:
-                with open(camera.frame_path, "rb") as f:
-                    frame_b64 = base64.b64encode(f.read()).decode("utf-8")
-            except Exception as e:
-                log.warning("[PERCEPTION] Failed to read camera frame: %s", e)
+                import sys
+                from pathlib import Path
+                parent_dir = str(Path(__file__).resolve().parent.parent)
+                if parent_dir not in sys.path:
+                    sys.path.append(parent_dir)
+                from main import get_default_gateway_ip
+                phone_ip = get_default_gateway_ip()
+            except Exception:
+                phone_ip = "127.0.0.1"
+
+        if not phone_ip:
+            phone_ip = "127.0.0.1"
+
+        video_url = f"http://{phone_ip}:8080/shot.jpg"
+        log.info("[PERCEPTION] Fetching live frame snapshot from IPWebcam: %s", video_url)
+        
+        frame_bytes = None
+        try:
+            # Enforce strict non-blocking HTTP fetch with a 2-second timeout
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(video_url)
+                if resp.status_code == 200:
+                    frame_bytes = resp.content
+                    log.info("[PERCEPTION] Live snapshot successfully ingested from IPWebcam.")
+                    
+                    # Safe concurrent disk synchronization / Overwrite latest_frame.jpg on disk
+                    default_path = os.path.join(os.path.dirname(__file__), "..", "latest_frame.jpg")
+                    default_path = os.path.normpath(default_path)
+                    try:
+                        with open(default_path, "wb") as f:
+                            f.write(frame_bytes)
+                    except Exception as e:
+                        log.warning("[PERCEPTION] Failed to save latest_frame.jpg: %s", e)
+        except Exception as e:
+            log.warning("[PERCEPTION] Live frame fetch failed: %s. Falling back to shared disk buffer.", e)
+
+        # Fallback to shared disk buffer if live stream fetch failed
+        if frame_bytes:
+            encoded_frame = base64.b64encode(frame_bytes).decode("utf-8")
+            vision_payload_url = f"data:image/jpeg;base64,{encoded_frame}"
         else:
-            # Try the default frame path used by empathetic_agent
             default_path = os.path.join(os.path.dirname(__file__), "..", "latest_frame.jpg")
             default_path = os.path.normpath(default_path)
             if os.path.isfile(default_path):
                 try:
                     with open(default_path, "rb") as f:
-                        frame_b64 = base64.b64encode(f.read()).decode("utf-8")
-                    log.info("[PERCEPTION] Using default latest_frame.jpg")
+                        fallback_bytes = f.read()
+                        encoded_frame = base64.b64encode(fallback_bytes).decode("utf-8")
+                        vision_payload_url = f"data:image/jpeg;base64,{encoded_frame}"
+                    log.info("[PERCEPTION] Successfully read fallback latest_frame.jpg from disk.")
                 except Exception as e:
-                    log.warning("[PERCEPTION] Failed to read default frame: %s", e)
+                    log.warning("[PERCEPTION] Failed to read fallback latest_frame.jpg from disk: %s", e)
 
-        if frame_b64:
-            vision_result = await self._call_vision_llm(frame_b64, vitals_str)
+        if vision_payload_url:
+            vision_result = await self._call_vision_llm(vision_payload_url, vitals_str)
         else:
             log.warning("[PERCEPTION] No camera frame available — vitals-only scan")
             vision_result = await self._vitals_only_assessment(ctx)
@@ -196,19 +262,19 @@ Rules:
         scan = PerceptionScan(
             scan_duration_ms=round((time.perf_counter() - t_start) * 1000, 1),
             skin_tone_note=vision_result.get("skin_tone_note", ""),
-            facial_distress=float(vision_result.get("facial_distress", 0.0)),
+            facial_distress=safe_float(vision_result.get("facial_distress", 0.0)),
             visible_injuries=vision_result.get("visible_injuries", []),
             posture_risk=vision_result.get("posture_risk", "LOW"),
-            confidence=float(vision_result.get("confidence", 0.0)),
+            confidence=safe_float(vision_result.get("confidence", 0.0)),
             notes=vision_result.get("notes", ""),
             overall_risk=vision_result.get("overall_risk", "LOW"),
             # Vitals from fusion buffer
             heart_rate=ctx.vitals.heart_rate if ctx.vitals else None,
             spo2=ctx.vitals.spo2 if ctx.vitals else None,
             body_temperature=ctx.vitals.body_temperature if ctx.vitals else None,
-            # LiDAR context
-            nearest_obstacle_m=ctx.lidar.min_distance_m if ctx.lidar else 999.0,
-            threat_level=ctx.lidar.threat_level if ctx.lidar else "CLEAR",
+            status=vision_result.get("status", "UNKNOWN"),
+            alertLevel=vision_result.get("alertLevel", "NORMAL"),
+            nearest_obstacle_m=safe_float(vision_result.get("nearest_obstacle_m", 999.0), 999.0),
         )
 
         # ── Adjust overall_risk based on vitals thresholds ───────────────────
@@ -218,13 +284,13 @@ Rules:
         await self._write_to_blackboard(scan)
 
         self._latest_scan = scan
-        log.info("[PERCEPTION] Scan complete in %.0fms — risk=%s confidence=%.2f",
-                 scan.scan_duration_ms, scan.overall_risk, scan.confidence)
+        log.info("[PERCEPTION] Scan complete in %.0fms — risk=%s confidence=%.2f status=%s",
+                 scan.scan_duration_ms, scan.overall_risk, scan.confidence, scan.status)
         return scan
 
     # ── Private Helpers ───────────────────────────────────────────────────────
 
-    async def _call_vision_llm(self, frame_b64: str, vitals_context: str) -> Dict[str, Any]:
+    async def _call_vision_llm(self, vision_payload_url: str, vitals_context: str) -> Dict[str, Any]:
         """
         Call Vision LLM (via unified LLMClient fallback engine) with image + vitals.
         Falls back to vitals-only assessment on failure.
@@ -237,12 +303,27 @@ Rules:
             raw_text, provider = await LLMClient.generate_vision_completion(
                 prompt=prompt,
                 tiers=VISION_TIERS,
-                image_base64=frame_b64,
+                image_base64=vision_payload_url,
                 system_prompt="You are a medical-support AI vision system for robot HK-07 (Baymax-inspired).",
                 max_tokens=512,
                 temperature=0.1,
                 timeout=15
             )
+
+            if provider == "LOCAL_FALLBACK":
+                log.warning("[PERCEPTION] LLM returned LOCAL_FALLBACK. Applying safe nominal fallback values.")
+                return {
+                    "skin_tone_note": "NORMAL",
+                    "facial_distress": 0.0,
+                    "visible_injuries": [],
+                    "posture_risk": "LOW",
+                    "overall_risk": "LOW",
+                    "confidence": 0.5,
+                    "notes": "LOCAL_FALLBACK: Vision API blackout / timeout. Pre-streaming nominal fallback.",
+                    "status": "LOCAL_FALLBACK",
+                    "alertLevel": "NORMAL",
+                    "nearest_obstacle_m": 1.5
+                }
 
             # Strip markdown fences if present or find JSON boundary
             start = raw_text.find('{')
@@ -260,17 +341,40 @@ Rules:
             result.setdefault("overall_risk", "LOW")
             result.setdefault("notes", f"Vision analysis via {provider}")
             result.setdefault("confidence", 0.75 if provider != "LOCAL_FALLBACK" else 0.0)
+            result.setdefault("status", "NOMINAL")
+            result.setdefault("alertLevel", "NORMAL")
 
             log.debug("[PERCEPTION_LLM] Vision result via %s: %s", provider, result)
             return result
 
         except json.JSONDecodeError as e:
             log.error("[PERCEPTION_LLM] JSON parse error: %s", e)
-            return {"overall_risk": "LOW", "confidence": 0.3,
-                    "notes": "Vision analysis returned non-JSON — vitals used instead."}
+            return {
+                "skin_tone_note": "NORMAL",
+                "facial_distress": 0.0,
+                "visible_injuries": [],
+                "posture_risk": "LOW",
+                "overall_risk": "LOW",
+                "confidence": 0.5,
+                "notes": "Vision analysis returned non-JSON — API blackout.",
+                "status": "LOCAL_FALLBACK",
+                "alertLevel": "NORMAL",
+                "nearest_obstacle_m": 1.5
+            }
         except Exception as e:
             log.error("[PERCEPTION_LLM] Unexpected error during vision LLM call: %s", e)
-            return {"overall_risk": "LOW", "confidence": 0.0, "notes": str(e)[:100]}
+            return {
+                "skin_tone_note": "NORMAL",
+                "facial_distress": 0.0,
+                "visible_injuries": [],
+                "posture_risk": "LOW",
+                "overall_risk": "LOW",
+                "confidence": 0.5,
+                "notes": f"Vision analysis error: {str(e)[:50]}",
+                "status": "LOCAL_FALLBACK",
+                "alertLevel": "NORMAL",
+                "nearest_obstacle_m": 1.5
+            }
 
     async def _vitals_only_assessment(self, ctx: FusedContext) -> Dict[str, Any]:
         """Fallback when no camera frame is available — assess risk from vitals alone"""
@@ -326,8 +430,6 @@ Rules:
             parts.append(f"BP: {v.systolic:.0f}/{v.diastolic:.0f} mmHg")
         if v.body_temperature:
             parts.append(f"Temp: {v.body_temperature:.1f}°C")
-        if ctx.lidar:
-            parts.append(f"Nearest obstacle: {ctx.lidar.min_distance_m:.2f}m ({ctx.lidar.threat_level})")
         return " | ".join(parts) if parts else "No vitals available."
 
     def _apply_vitals_risk_override(self, scan: PerceptionScan, ctx: FusedContext) -> PerceptionScan:
@@ -357,8 +459,7 @@ Rules:
             elif v.spo2 < 93:
                 upgrade("HIGH")
 
-        if ctx.lidar and ctx.lidar.threat_level == "CRITICAL":
-            upgrade("CRITICAL")
+
 
         scan.overall_risk = current
         return scan

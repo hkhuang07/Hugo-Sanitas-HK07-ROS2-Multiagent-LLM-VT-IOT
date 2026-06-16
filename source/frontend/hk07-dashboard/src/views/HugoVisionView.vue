@@ -1,5 +1,9 @@
 <template>
   <div class="vision-shell">
+    <!-- Cinematic HUD Terminal Loader -->
+    <div v-if="cfg.isConfigLoading" class="hud-terminal-loader">
+      <span class="loader-text font-mono">[ CRITICAL_SYSTEM_UPLINK: FETCHING_ENV_METRICS... ]</span>
+    </div>
 
     <!-- ── FULL-SCREEN CAMERA BACKGROUND ──────────────────────────────────── -->
     <div class="camera-bg-layer">
@@ -323,12 +327,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useVitalsStore } from '../stores/vitals';
-import { useSensorTelemetryStore } from '../stores/sensorTelemetry';
-import { useKinematicsStore } from '../stores/kinematics';
-import { useDeviceConfigStore } from '../stores/deviceConfig';
+import { useVitalsStore } from '../stores/vitals.ts';
+import { useSensorTelemetryStore } from '../stores/sensorTelemetry.ts';
+import { useKinematicsStore } from '../stores/kinematics.ts';
+import { useDeviceConfigStore } from '../stores/deviceConfig.ts';
 import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue';
-import api from '../services/api';
+import api from '../services/api.ts';
 
 const vitalsStore = useVitalsStore();
 const sensorStore = useSensorTelemetryStore();
@@ -485,7 +489,10 @@ async function fetchLatestScan() {
 let tickTimerId: any = null;
 let pollTimerId: any = null;
 
-onMounted(() => {
+onMounted(async () => {
+  // Try to load dynamic IP configuration from backend first
+  await cfg.fetchBackendConfig();
+
   // Probe camera with current confirmed IP from store
   const img = new Image();
   img.src = cfg.cameraUrl;
@@ -527,6 +534,28 @@ onUnmounted(() => {
 }
 .orbitron { font-family: 'Orbitron', sans-serif; }
 .mono { font-family: 'Roboto Mono', monospace; }
+
+/* ── CINEMATIC HUD TERMINAL LOADER ───────────────────────────────────────── */
+.hud-terminal-loader {
+  position: absolute;
+  inset: 0;
+  background: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.loader-text {
+  font-family: 'Roboto Mono', monospace;
+  color: #00FF66;
+  font-size: 14px;
+  letter-spacing: 2px;
+  animation: scanning-glow 1.5s ease-in-out infinite;
+}
+@keyframes scanning-glow {
+  0%, 100% { opacity: 0.3; text-shadow: 0 0 2px rgba(0, 255, 102, 0.2); }
+  50% { opacity: 1; text-shadow: 0 0 10px rgba(0, 255, 102, 0.8); }
+}
 
 /* ── CAMERA BACKGROUND ─────────────────────────────────────────────────── */
 .camera-bg-layer {

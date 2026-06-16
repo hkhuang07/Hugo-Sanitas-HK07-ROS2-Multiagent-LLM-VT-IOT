@@ -48,7 +48,7 @@ class SafetyAgent:
         self._subsumption_active = False
         self._last_scan_time = 0.0
         self._volatile_context = {}  # RAM-only, wiped on shutdown
-        self._last_processed = {"lidar": 0.0, "imu": 0.0, "vitals": 0.0, "light": 0.0}
+        self._last_processed = {"vision": 0.0, "imu": 0.0, "vitals": 0.0, "light": 0.0}
         self._freefall_start_time = None
         self._freefall_duration_exceeded = False
         self._freefall_ended_time = None
@@ -81,78 +81,110 @@ class SafetyAgent:
             while True:
                 start_ns = time.perf_counter_ns()
                 
-                danger = False
-                trigger = SafetyTrigger.NONE
-                msg = ""
-                dist = 1.0
-                accel = 1.0
-                lux = 500.0
+                # ─── CROSS-MODAL SENSOR FUSION CONSENSUS MATRIX ───
+                # Spatial Activity Validation Window evaluation
+                # 1. Camera Posture/Vitals Stream (Fever Alert and Clinical)
+                fever_alert = await bb.read_value("sensor:camera:fever_alert") or False
+                clinical = await bb.read_value("sensor:perception:clinical")
+                
+                # 2. Phone Ingestion Stream (Accel and FallState)
+                imu_data = await bb.read_value("sensor:imu:latest")
+                accel_is_zero = False
+                ax, ay, az = 0.0, 0.0, 0.0
+                if imu_data:
+                    ax = float(imu_data.get("accel_x", 0.0))
+                    ay = float(imu_data.get("accel_y", 0.0))
+                    az = float(imu_data.get("accel_z", 0.0))
+                    magnitude = (ax**2 + ay**2 + az**2) ** 0.5
+                    EPSILON = 0.05
+                    if magnitude < EPSILON:
+                        accel_is_zero = True
+                
+                fall_state = await bb.read_value("sensor:vitals:is_falling") or False
+                
+                # 3. LiDAR Range States (Physical distances)
+                lidar_hardware_absent = os.getenv("LIDAR_HARDWARE_ABSENT", "true").lower() == "true"
+                lidar_active = not lidar_hardware_absent
 
-                # 1. LiDAR
-                lidar = await fusion_buf.latest_lidar()
-                if lidar:
-                    dist = lidar.min_distance_m
-                    if dist < self.OBSTACLE_STOP_DISTANCE_M:
+                # Perform threshold evaluation
+                # 1. Vision Clinical Analysis from IPWebcam
+                if clinical:
+                    facial_distress = clinical.get("facial_distress", {})
+                    env_hazards = clinical.get("environmental_hazards", {})
+                    visible_injuries = clinical.get("visible_injuries", {})
+                    
+                    if facial_distress.get("detected"):
                         danger = True
-                        trigger = SafetyTrigger.OBSTACLE
-                        msg = f"Obstacle too close: {dist:.2f}m (threshold < {self.OBSTACLE_STOP_DISTANCE_M}m)"
+                        trigger = SafetyTrigger.OWNER_EMERGENCY
+                        msg = f"Vision Safety Alert: Facial distress detected ({facial_distress.get('details')})"
+                        dist = 0.1
+                    elif env_hazards.get("detected"):
+                        danger = True
+                        trigger = SafetyTrigger.FALL_RISK
+                        msg = f"Vision Safety Alert: Environmental hazard detected ({env_hazards.get('details')})"
+                        dist = 0.3
+                    elif visible_injuries.get("detected"):
+                        danger = True
+                        trigger = SafetyTrigger.OWNER_EMERGENCY
+                        msg = f"Vision Safety Alert: Visible injuries detected ({visible_injuries.get('details')})"
+                        dist = 0.2
 
                 # 2. IMU / Fall risk
-                if not danger:
-                    imu_data = await bb.read_value("sensor:imu:latest")
-                    if imu_data:
-                        ax = float(imu_data.get("accel_x", 0.0))
-                        ay = float(imu_data.get("accel_y", 0.0))
-                        az = float(imu_data.get("accel_z", 9.80665))
-                        raw_magnitude = float((ax**2 + ay**2 + az**2) ** 0.5)
-                        
-                        # Convert to standard G-forces (resting at ~1.0g)
-                        if raw_magnitude > 5.0:
-                            normalized_g_force = float(raw_magnitude / 9.80665)
-                        else:
-                            normalized_g_force = float(raw_magnitude)
-                            
-                        accel = float(normalized_g_force)
-                        
-                        # Fall Detection State Machine
-                        now = float(time.time())
-                        if normalized_g_force < 0.3:
-                            if self._freefall_start_time is None:
-                                self._freefall_start_time = now
-                            elif (now - self._freefall_start_time) > 0.15:
-                                self._freefall_duration_exceeded = True
-                        else:
-                            if self._freefall_duration_exceeded:
-                                if normalized_g_force > 2.5:
-                                    danger = True
-                                    trigger = SafetyTrigger.OWNER_EMERGENCY
-                                    msg = f"Fall detected (Freefall >150ms followed by impact spike {normalized_g_force:.2f}g)"
-                                    self._freefall_start_time = None
-                                    self._freefall_duration_exceeded = False
-                                    self._freefall_ended_time = None
-                                else:
-                                    if self._freefall_ended_time is None:
-                                        self._freefall_ended_time = now
-                                    elif (now - self._freefall_ended_time) > 0.5:
-                                        self._freefall_start_time = None
-                                        self._freefall_duration_exceeded = False
-                                        self._freefall_ended_time = None
-                            else:
+                if not danger and imu_data:
+                    raw_magnitude = float((ax**2 + ay**2 + (az if az != 0.0 else 9.80665)**2) ** 0.5)
+                    if raw_magnitude > 5.0:
+                        normalized_g_force = float(raw_magnitude / 9.80665)
+                    else:
+                        normalized_g_force = float(raw_magnitude)
+                    accel = float(normalized_g_force)
+                    
+                    now = float(time.time())
+                    if normalized_g_force < 0.3:
+                        if self._freefall_start_time is None:
+                            self._freefall_start_time = now
+                        elif (now - self._freefall_start_time) > 0.15:
+                            self._freefall_duration_exceeded = True
+                    else:
+                        if self._freefall_duration_exceeded:
+                            if normalized_g_force > 2.5:
+                                danger = True
+                                trigger = SafetyTrigger.OWNER_EMERGENCY
+                                msg = f"Fall detected (Freefall >150ms followed by impact spike {normalized_g_force:.2f}g)"
                                 self._freefall_start_time = None
                                 self._freefall_duration_exceeded = False
                                 self._freefall_ended_time = None
-                                
-                        if not danger:
-                            log.info(f"[SAFETY_WORKER] Normalized G-force: {normalized_g_force:.2f}g - Status: CLEAR")
+                            else:
+                                if self._freefall_ended_time is None:
+                                    self._freefall_ended_time = now
+                                elif (now - self._freefall_ended_time) > 0.5:
+                                    self._freefall_start_time = None
+                                    self._freefall_duration_exceeded = False
+                                    self._freefall_ended_time = None
+                        else:
+                            self._freefall_start_time = None
+                            self._freefall_duration_exceeded = False
+                            self._freefall_ended_time = None
+                            
+                    if not danger:
+                        log.info(f"[SAFETY_WORKER] Normalized G-force: {normalized_g_force:.2f}g - Status: CLEAR")
 
-                # 3. Vitals Emergency button
+                # 3. Vitals emergency button
                 if not danger:
-                    is_falling = await bb.read_value("sensor:vitals:is_falling") or False
                     emergency = await bb.read_value("sensor:vitals:emergency") or False
-                    if emergency or is_falling:
+                    if emergency or fall_state:
                         danger = True
                         trigger = SafetyTrigger.OWNER_EMERGENCY
                         msg = "Emergency SOS or Fall reported by Wristband!"
+
+                # Consensus matrix logical verification rule:
+                # If phone registers static baseline (magnitude < EPSILON) and mobile FallState is False,
+                # we CLASSIFY the user state as SAFE/IDLE, overriding and suppressing any stray threshold spikes.
+                if accel_is_zero and not fall_state:
+                    if danger:
+                        log.info("[SAFETY_CONSENSUS] Suppressed stray threshold spike (danger=%s, trigger=%s). Static user state verified.", danger, trigger.value)
+                    danger = False
+                    trigger = SafetyTrigger.NONE
+                    msg = ""
 
                 if danger and not self._subsumption_active:
                     elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
@@ -162,11 +194,9 @@ class SafetyAgent:
                     await bb.write_value("safety:tripped", True)
                     await bb.write_value("safety:reason", msg)
 
-                    # Trigger arbitration inhibit rules
                     self.arbitrator.inhibit("EMPATHETIC", duration_s=3)
                     self.arbitrator.inhibit("MEDICAL", duration_s=3)
 
-                    # Try to publish inhibit signal via MQTT if available for external components
                     if self._mqtt:
                         try:
                             inhibit_payload = json.dumps({
@@ -182,7 +212,6 @@ class SafetyAgent:
                         except Exception:
                             pass
 
-                    # Auto-reset subsumption after 3 seconds in background
                     async def reset_safety_after_delay():
                         await asyncio.sleep(3.0)
                         self._subsumption_active = False
@@ -292,3 +321,95 @@ class SafetyAgent:
     def clear_volatile_context(self):
         self._volatile_context.clear()
         log.info("[VOLATILE_WIPE] SafetyAgent context cleared")
+
+    async def evaluate_actuation_safety(self, telemetry_data, blackboard):
+        """
+        Enforce strict kinematic constraints before permitting mechanical hugs.
+        Completes compliance with Agile Robotics Safety Standards.
+        """
+        robot_state = "IDLE"
+        user_intent = None
+
+        if hasattr(blackboard, "read_value"):
+            robot_state = await blackboard.read_value("robot_state") or "IDLE"
+            user_intent = await blackboard.read_value("user_intent")
+        elif isinstance(blackboard, dict):
+            robot_state = blackboard.get("robot_state", "IDLE")
+            user_intent = blackboard.get("user_intent")
+        elif hasattr(blackboard, "get"):
+            try:
+                robot_state = blackboard.get("robot_state") or "IDLE"
+                user_intent = blackboard.get("user_intent")
+            except Exception:
+                pass
+
+        cmd_velocity_x = 0.0
+        cmd_velocity_z = 0.0
+        if telemetry_data:
+            try:
+                cmd_velocity_x = abs(float(telemetry_data.get("CmdLinearX", 0.0)))
+            except (ValueError, TypeError):
+                pass
+            try:
+                cmd_velocity_z = abs(float(telemetry_data.get("CmdLinearZ", 0.0)))
+            except (ValueError, TypeError):
+                pass
+
+        vel_magnitude = (cmd_velocity_x**2 + cmd_velocity_z**2) ** 0.5
+        is_walking = robot_state == "WALKING"
+
+        # Track stable stance duration
+        now = time.time()
+        if not hasattr(self, "_stable_stance_start_time") or self._stable_stance_start_time is None:
+            self._stable_stance_start_time = now
+
+        if is_walking or vel_magnitude > 0.05:
+            self._stable_stance_start_time = None
+            stance_duration = 0.0
+        else:
+            stance_duration = now - self._stable_stance_start_time
+
+        inhibit = False
+        reason = ""
+        if is_walking or vel_magnitude > 0.05:
+            inhibit = True
+            reason = f"Kinematic motion override. robot_state={robot_state}, velocity_magnitude={vel_magnitude:.3f} m/s (threshold > 0.05)."
+        elif robot_state != "IDLE" and stance_duration < 5.0:
+            inhibit = True
+            reason = f"Stance duration is too short: {stance_duration:.2f}s (threshold >= 5.0s)."
+
+        if inhibit:
+            log.warning(f"[KINEMATIC_INHIBIT_ENGAGED] Forcefully disarming pneumatic pumps. Reason: {reason}")
+            if hasattr(blackboard, "write_value"):
+                await blackboard.write_value("pump_inhibit", True)
+                await blackboard.write_value("inhibit_reason", "USER_IN_MOTION")
+                await blackboard.write_value("hug_permitted", False)
+                await blackboard.write_value("actuation:Pump", False)
+                await blackboard.write_value("actuation:Hug", 0.0)
+            elif hasattr(blackboard, "set"):
+                blackboard.set("pump_inhibit", True)
+                blackboard.set("inhibit_reason", "USER_IN_MOTION")
+                blackboard.set("hug_permitted", False)
+                blackboard.set("actuation:Pump", False)
+                blackboard.set("actuation:Hug", 0.0)
+            elif isinstance(blackboard, dict):
+                blackboard["pump_inhibit"] = True
+                blackboard["inhibit_reason"] = "USER_IN_MOTION"
+                blackboard["hug_permitted"] = False
+                blackboard["actuation:Pump"] = False
+                blackboard["actuation:Hug"] = 0.0
+            
+            return {
+                "action": "FORCE_DISARM_PUMP",
+                "reason": f"[KINEMATIC_INHIBIT_ENGAGED] {reason}",
+                "pump": False,
+                "hug_force_newtons": 0.0
+            }
+
+        if user_intent == "HUG_REQUEST":
+            if hasattr(blackboard, "write_value"):
+                await blackboard.write_value("pump_inhibit", False)
+                await blackboard.write_value("hug_permitted", True)
+            return {"action": "ENGAGE_PUMP", "pump": True, "hug_force_newtons": 15.0}
+
+        return {"action": "HOLD_IDLE", "pump": False, "hug_force_newtons": 0.0}

@@ -147,6 +147,41 @@ class EmpatheticAgent:
             user_id = current_user_id.get()
         start_time = time.time()
         
+        bb = get_blackboard()
+        stage_key = f"dialogue:stage:{user_id}"
+        ts_key = f"dialogue:last_interaction_timestamp:{user_id}"
+        
+        # Track timestamps & check FSM context expiration timeout (5 minutes threshold)
+        current_time = time.time()
+        last_ts = await bb.read_value(ts_key)
+        if last_ts is None:
+            last_ts = await bb.read_value("last_interaction_timestamp")
+            
+        if last_ts is not None:
+            delta = current_time - float(last_ts)
+            
+            # Retrieve robot state and vitals indicators to check safety range
+            robot_state = await bb.read_value("robot_state") or "IDLE"
+            fever_alert = await bb.read_value("sensor:camera:fever_alert") or False
+            fall_state = await bb.read_value("sensor:vitals:is_falling") or False
+            emergency = await bb.read_value("sensor:vitals:emergency") or False
+            
+            latest_clinical = await bb.read_latest_clinical(user_id=user_id)
+            vitals_safe = True
+            if latest_clinical and latest_clinical.alert_level not in ("NORMAL", None):
+                vitals_safe = False
+            if fever_alert or fall_state or emergency:
+                vitals_safe = False
+                
+            if robot_state == "IDLE" and vitals_safe and delta > 300:
+                log.info(f"[EMPATHY_FSM_PURGE] Inactivity timeout reached ({delta:.1f}s > 300s). Resetting DialogueState to STAGE_0_INIT and purging RAM buffer.")
+                await bb.write_value(stage_key, "STAGE_0_INIT", ttl_seconds=600)
+                self._history.clear()
+        
+        # Save timestamp of the inbound user event
+        await bb.write_value(ts_key, current_time, ttl_seconds=86400)
+        await bb.write_value("last_interaction_timestamp", current_time, ttl_seconds=86400)
+
         # 1. Retrieve memory context from LanceDB
         mem_context = []
         if self.memory:
@@ -179,12 +214,69 @@ class EmpatheticAgent:
             history_str += f"{role}: {h['content']}\n"
         context_str = "\n".join([f"- {d['text']}" for d in documents])
         
-        system_instruction = EMPATHY_SYSTEM_PROMPT
+        # ── Dialogue State Machine (FSM) ──
+        current_stage = await bb.read_value(stage_key) or "STAGE_0_INIT"
+        
+        user_msg_lower = user_message.lower()
+        import re
+        has_pain_score = False
+        # Matches standalone numbers 1-10, or 'mức X', 'độ X', 'X/10'
+        pain_score_match = re.search(r'\b(10|[1-9])\b', user_msg_lower)
+        if pain_score_match:
+            has_pain_score = True
+            
+        has_location = any(w in user_msg_lower for w in [
+            "đầu", "ngực", "chân", "tay", "bụng", "lưng", "vai", "cổ", "họng", "trán", "tai",
+            "head", "chest", "leg", "foot", "arm", "hand", "stomach", "back", "shoulder", "neck", "throat"
+        ])
+
+        if current_stage == "STAGE_0_INIT":
+            if has_pain_score:
+                current_stage = "STAGE_1_PAIN_SCALE_RECORDED"
+        
+        if current_stage == "STAGE_1_PAIN_SCALE_RECORDED":
+            if has_location:
+                current_stage = "STAGE_2_LOCATION_DIAGNOSED"
+
+        latest_plan = await bb.read_latest_action_plan(user_id=user_id)
+        if latest_plan and latest_plan.status in ("EXECUTING", "COMPLETED"):
+            current_stage = "STAGE_3_FIRST_AID_DISPATCHED"
+
+        await bb.write_value(stage_key, current_stage, ttl_seconds=600)
+        log.info("[EMPATHY_FSM] Current dialogue stage for user %s is %s", user_id, current_stage)
+
+        dynamic_rules = []
+        if current_stage == "STAGE_0_INIT":
+            dynamic_rules.append("2. Khi phản hồi về tình trạng sức khỏe hoặc triệu chứng đau đớn, bắt buộc phải chèn câu hỏi về thang điểm đau: \"Từ thang điểm từ 1 đến 10, bạn đánh giá cơn đau của mình ở mức nào?\".")
+        elif current_stage == "STAGE_1_PAIN_SCALE_RECORDED":
+            dynamic_rules.append("2. Bạn đã ghi nhận điểm đau của bệnh nhân. TUYỆT ĐỐI không hỏi lại điểm số đau hay thang điểm đau dưới bất kỳ hình thức nào. Hãy tập trung hỏi rõ vị trí bị thương hoặc vị trí đau vật lý cụ thể (ví dụ: đau ở đầu, ngực, bụng, hay tay chân).")
+        elif current_stage == "STAGE_2_LOCATION_DIAGNOSED":
+            dynamic_rules.append("2. Bạn đã biết điểm đau và vị trí đau. TUYỆT ĐỐI không hỏi lại điểm đau hay vị trí đau. Hãy đưa ra chẩn đoán sơ bộ và hướng dẫn sơ cứu lâm sàng ngắn gọn phù hợp.")
+        elif current_stage == "STAGE_3_FIRST_AID_DISPATCHED":
+            dynamic_rules.append("2. Trạng thái sơ cứu khẩn cấp đã được kích hoạt. Hãy thông báo cho bệnh nhân biết quy trình hỗ trợ y tế đang được thực thi và trấn an họ bình tĩnh, nằm yên nghỉ ngơi.")
+
+        # Read pump_inhibit and inject verbal warning to system prompt
+        pump_inhibit = await bb.read_value("pump_inhibit") or False
+        inhibit_rule = ""
+        if pump_inhibit:
+            inhibit_warning = "Tôi nhận thấy bạn đang di chuyển hoặc tư thế chưa ổn định, vui lòng đứng yên 5 giây để tôi có thể tiến hành cơ chế ôm áp lực an toàn"
+            inhibit_rule = f"\nQUY TẮC AN TOÀN KHẨN CẤP: Hiện tại cơ chế ôm áp lực của robot đang bị khóa cơ học (pump_inhibit=True). Bạn BẮT BUỘC phải đưa câu cảnh báo nguyên văn sau vào câu trả lời: \"{inhibit_warning}\".\n"
+
+        empathy_system_prompt_dynamic = (
+            "Bạn là Hugo, robot đồng hành chăm sóc sức khỏe của bệnh nhân.\n"
+            "Quy tắc phản hồi bắt buộc:\n"
+            "1. Luôn bắt đầu phản hồi bằng cụm từ: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe...\" (hoặc tương tự gần nhất như: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe của bạn.\").\n"
+            f"{dynamic_rules[0]}\n"
+            "3. Nếu dữ liệu cảm biến/thị giác bị lỗi, trả về trống, hoặc kết nối đến cổng 3000 bị từ chối, bạn BẮT BUỘC phải xuất ra chuỗi lỗi: `[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline` và TUYỆT ĐỐI KHÔNG tự bịa ra chỉ số y tế hay giả định người dùng khỏe mạnh.\n"
+            "4. Giọng điệu thấu cảm, ấm áp, ngắn gọn chuẩn trợ lý chăm sóc y tế Baymax."
+            f"{inhibit_rule}"
+        )
+
+        system_instruction = empathy_system_prompt_dynamic
         if baseline:
             system_instruction = f"Thông tin hồ sơ sức khỏe cơ bản của bệnh nhân:\n{baseline}\n\n{system_instruction}"
 
         # Fetch latest clinical data from Blackboard (Shared Context)
-        from services.blackboard_service import get_blackboard
         latest_clinical = await get_blackboard().read_latest_clinical(user_id=user_id)
         if latest_clinical and "[SYSTEM_PERCEPTION_ERROR]" in str(latest_clinical.diagnosis):
             return "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"

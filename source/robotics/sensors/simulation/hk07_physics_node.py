@@ -15,7 +15,7 @@ except ImportError:
     print("=================================================================================")
     sys.exit(1)
 
-from sensor_msgs.msg import Imu, JointState, PointCloud2
+from sensor_msgs.msg import Imu, JointState
 from geometry_msgs.msg import Twist
 import struct
 
@@ -39,7 +39,6 @@ class Hk07PhysicsNode(Node):
         self.target_rot = {"qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0}
         
         # Obstacles and Avoidance Vectors
-        self.lidar_points = []
         self.avoidance_twist = {"linear": {"x": 0.0, "y": 0.0, "z": 0.0}}
         
         # Resolved states (physical states)
@@ -53,7 +52,6 @@ class Hk07PhysicsNode(Node):
         
         # Subscriptions
         self.target_sub = self.create_subscription(Imu, '/sensors/imu/target', self.target_callback, 10)
-        self.lidar_sub = self.create_subscription(PointCloud2, '/telemetry/lidar/points', self.lidar_callback, 10)
         self.avoidance_sub = self.create_subscription(Twist, '/telemetry/avoidance', self.avoidance_callback, 10)
         
         # Publishers
@@ -80,26 +78,7 @@ class Hk07PhysicsNode(Node):
                 "qz": msg.orientation.z
             }
 
-    def lidar_callback(self, msg):
-        # LiDAR hardware absent short-circuit
-        lidar_absent = os.environ.get("LIDAR_HARDWARE_ABSENT", "False").lower() in ("true", "1", "yes") or \
-                       os.environ.get("LIDAR_ABSENT", "False").lower() in ("true", "1", "yes")
-        if lidar_absent:
-            with self.state_lock:
-                self.lidar_points = []
-            return
 
-        pts = []
-        point_step = msg.point_step
-        data = msg.data
-        num_points = msg.width * msg.height
-        for i in range(num_points):
-            offset = i * point_step
-            if offset + 12 <= len(data):
-                x, y, z = struct.unpack_from('<fff', data, offset)
-                pts.append({'x': x, 'y': y, 'z': z})
-        with self.state_lock:
-            self.lidar_points = pts
 
     def avoidance_callback(self, msg):
         with self.state_lock:
@@ -163,10 +142,9 @@ class Hk07PhysicsNode(Node):
                 # Copy shared variables for execution
                 t_pos = dict(self.target_pos)
                 t_rot = dict(self.target_rot)
-                pts = list(self.lidar_points)
                 av = dict(self.avoidance_twist["linear"])
                 
-            # 1. Spring force pulling robot towards desired target
+            # Spring force pulling robot towards desired target
             spring_k = 180.0
             damping = 18.0
             
@@ -174,23 +152,6 @@ class Hk07PhysicsNode(Node):
             fx = spring_k * (t_pos["x"] - self.phys_pos["x"]) - damping * self.phys_vel["x"]
             fy = spring_k * (t_pos["y"] - self.phys_pos["y"]) - damping * self.phys_vel["y"]
             fz = spring_k * (t_pos["z"] - self.phys_pos["z"]) - damping * self.phys_vel["z"]
-            
-            # 2. Artificial Potential Field Repulsive forces from LiDAR Points
-            for pt in pts:
-                dx = self.phys_pos["x"] - pt["x"]
-                dy = (self.phys_pos["y"] + 1.28) - pt["y"]
-                dz = self.phys_pos["z"] - pt["z"]
-                dist = math.sqrt(dx**2 + dy**2 + dz**2)
-                
-                # Bounding repulsion shell (0.6 meters)
-                if dist < 0.6:
-                    if dist > 0.01:
-                        ux, uy, uz = dx / dist, dy / dist, dz / dist
-                        # Force scale: increases exponentially close to center
-                        rep_force = 50.0 * (0.6 - dist) / (dist ** 2)
-                        fx += ux * rep_force
-                        fy += uy * rep_force
-                        fz += uz * rep_force
             
             # 3. Integrate Equations of Motion
             self.phys_vel["x"] += (fx / mass) * dt

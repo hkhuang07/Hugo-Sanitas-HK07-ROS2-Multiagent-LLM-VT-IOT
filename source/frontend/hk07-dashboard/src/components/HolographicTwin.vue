@@ -83,7 +83,6 @@ let dynamicTorsoMat: THREE.MeshBasicMaterial
 let dynamicLimbsMat: THREE.MeshBasicMaterial
 
 // Spatial perception elements
-let lidarPointsMesh: THREE.Points
 let arrowHelper: THREE.ArrowHelper
 
 // SLAM Costmap elements
@@ -205,18 +204,7 @@ function buildScene() {
   )
   composer.addPass(bloomPass)
 
-  // ── Point Cloud (LiDAR) ────────────────────────────────────────────────
-  const lidarGeo = new THREE.BufferGeometry()
-  const positions = new Float32Array(0)
-  lidarGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  const lidarMat = new THREE.PointsMaterial({
-    color: 0xffb000, // Amber #FFB000
-    size: 0.05,
-    transparent: true,
-    opacity: 0.85
-  })
-  lidarPointsMesh = new THREE.Points(lidarGeo, lidarMat)
-  scene.add(lidarPointsMesh)
+
 
   // ── Avoidance Vector Arrow ──────────────────────────────────────────────
   const arrowDir = new THREE.Vector3(0, 0, 1)
@@ -327,22 +315,7 @@ function updateHeatmapColors() {
 }
 
 // Watchers for spatial perception & SLAM Costmap Projection
-watch(() => kinematicsStore.lidarPoints, (newPoints) => {
-  if (!lidarPointsMesh) return
-  const count = newPoints.length
-  const positions = new Float32Array(count * 3)
-  for (let i = 0; i < count; i++) {
-    positions[i * 3] = newPoints[i].x
-    positions[i * 3 + 1] = newPoints[i].y
-    positions[i * 3 + 2] = newPoints[i].z
-  }
-  lidarPointsMesh.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  lidarPointsMesh.geometry.computeBoundingBox()
-  lidarPointsMesh.geometry.computeBoundingSphere()
-
-  // Update SLAM Costmap representation
-  updateCostmap()
-}, { deep: true })
+// Costmap initialized statically at buildScene
 
 watch(() => kinematicsStore.avoidanceVector, (newVec) => {
   if (!arrowHelper) return
@@ -440,35 +413,16 @@ function updateCostmap() {
   // Occupancy cells: 24x24 layout over a 12m square area
   const gridResolution = 24
   const cellSize = 256 / gridResolution
-  const occupancy = Array(gridResolution).fill(0).map(() => Array(gridResolution).fill(false))
-
-  const points = kinematicsStore.lidarPoints
-  points.forEach((pt) => {
-    const col = Math.floor((pt.x + 6.0) / 12.0 * gridResolution)
-    const row = Math.floor((pt.z + 6.0) / 12.0 * gridResolution)
-    if (col >= 0 && col < gridResolution && row >= 0 && row < gridResolution) {
-      occupancy[row][col] = true
-    }
-  })
 
   // Draw cells
   for (let r = 0; r < gridResolution; r++) {
     for (let c = 0; c < gridResolution; c++) {
       const x = c * cellSize
       const y = r * cellSize
-      if (occupancy[r][c]) {
-        // Red fill and Matrix Red border on occupied elements
-        ctx.fillStyle = 'rgba(255, 51, 51, 0.45)'
-        ctx.fillRect(x, y, cellSize, cellSize)
-        ctx.strokeStyle = '#FF3333'
-        ctx.lineWidth = 1.5
-        ctx.strokeRect(x, y, cellSize, cellSize)
-      } else {
-        // Safe grid trace lines
-        ctx.strokeStyle = 'rgba(0, 255, 102, 0.05)'
-        ctx.lineWidth = 0.5
-        ctx.strokeRect(x, y, cellSize, cellSize)
-      }
+      // Safe grid trace lines
+      ctx.strokeStyle = 'rgba(0, 255, 102, 0.05)'
+      ctx.lineWidth = 0.5
+      ctx.strokeRect(x, y, cellSize, cellSize)
     }
   }
   costmapTexture.needsUpdate = true

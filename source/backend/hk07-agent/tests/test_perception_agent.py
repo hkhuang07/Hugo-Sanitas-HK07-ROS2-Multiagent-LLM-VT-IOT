@@ -20,7 +20,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.sensor_fusion_buffer import (
-    SensorFusionBuffer, VitalsSample, LidarSnapshot, CameraFrame, get_fusion_buffer
+    SensorFusionBuffer, VitalsSample, CameraFrame, get_fusion_buffer
 )
 from agents.perception_agent import PerceptionAgent, PerceptionScan
 from services.blackboard_service import BlackboardService
@@ -38,8 +38,6 @@ async def test_sensor_fusion_buffer():
 
     # Push vitals
     await buf.push_vitals(VitalsSample(heart_rate=75.0, spo2=98.0, body_temperature=36.8))
-    # Push LiDAR
-    await buf.push_lidar(LidarSnapshot(min_distance_m=2.5, obstacle_count=1, threat_level="WARNING"))
     # Push camera (mock path, no actual file)
     await buf.push_camera(CameraFrame(frame_path="/tmp/test.jpg", frame_b64=""))
 
@@ -49,15 +47,11 @@ async def test_sensor_fusion_buffer():
     ok = (
         fused.vitals is not None and
         fused.vitals.heart_rate == 75.0 and
-        fused.lidar is not None and
-        fused.lidar.min_distance_m == 2.5 and
         fused.camera is not None and
-        stats["vitals_samples"] >= 1 and
-        stats["lidar_snapshots"] >= 1
+        stats["vitals_samples"] >= 1
     )
     status = PASS if ok else FAIL
     print(f"  Fused vitals HR={fused.vitals.heart_rate if fused.vitals else None}")
-    print(f"  Fused lidar dist={fused.lidar.min_distance_m if fused.lidar else None}")
     print(f"  Buffer stats: {stats}")
     print(f"  → {status}")
     results.append(("SensorFusionBuffer push/read", ok))
@@ -150,15 +144,10 @@ async def test_router_body_scan_routing():
     results.append(("Router body scan routing", all_ok))
 
 
-async def test_environment_scan_no_lidar():
-    """Test 6: execute_environment_scan when no lidar data — graceful empty response"""
-    print("\n[TEST 6] Environment scan — no lidar data in buffer")
+async def test_environment_scan_no_vision():
+    """Test 6: execute_environment_scan when no camera vision data — graceful response"""
+    print("\n[TEST 6] Environment scan — no camera vision data in Blackboard")
 
-    # Reset buffer by getting a fresh instance context
-    buf = get_fusion_buffer()
-    lidar = await buf.latest_lidar()
-    
-    # If lidar is present (from test 1), that's fine — just verify we get a string
     from agents.agent_orchestrator_v2 import AgentOrchestratorV2
     orch = AgentOrchestratorV2()
     result = await orch._execute_tool("execute_environment_scan", {}, {})
@@ -181,7 +170,7 @@ async def main():
     await test_risk_override_critical_hr()
     await test_blackboard_perception_roundtrip()
     await test_router_body_scan_routing()
-    await test_environment_scan_no_lidar()
+    await test_environment_scan_no_vision()
 
     print("\n" + "=" * 60)
     print("  RESULTS SUMMARY")

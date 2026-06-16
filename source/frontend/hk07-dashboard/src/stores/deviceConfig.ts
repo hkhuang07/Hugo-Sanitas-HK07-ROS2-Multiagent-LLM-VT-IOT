@@ -5,7 +5,7 @@
  * Persisted to localStorage so it survives page reload.
  *
  * Pipeline it controls:
- *   BaymaxVisionView  → MJPEG stream URL (camera on Phone)
+ *   HugoVisionView  → MJPEG stream URL (camera on Phone)
  *   SensorTelemetryView → Destination PC IP where phone SensorLogs publishes to
  *
  * Usage:
@@ -28,19 +28,23 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
   if (_storedSensorPort === '8080') localStorage.removeItem(LS_PORT_SENSOR)
 
   const _oldIp = localStorage.getItem('hk07_device_ip')
-  const phoneIp = ref(localStorage.getItem(LS_PHONE_IP) || _oldIp)
-  const pcIp = ref(localStorage.getItem(LS_PC_IP))
+  const phoneIp = ref(localStorage.getItem(LS_PHONE_IP) || _oldIp || '')
+  const pcIp = ref(localStorage.getItem(LS_PC_IP) || '')
   const cameraPort = ref(localStorage.getItem(LS_PORT_CAM) || '8080')
   const sensorPort = ref(localStorage.getItem(LS_PORT_SENSOR) || '5007')
 
   /** draft edited by the form — only committed on confirmIp() */
-  const draftPhoneIp = ref(phoneIp.value)
-  const draftPcIp = ref(pcIp.value)
-  const draftCameraPort = ref(cameraPort.value)
-  const draftSensorPort = ref(sensorPort.value)
+  const draftPhoneIp = ref(phoneIp.value || '')
+  const draftPcIp = ref(pcIp.value || '')
+  const draftCameraPort = ref(cameraPort.value || '8080')
+  const draftSensorPort = ref(sensorPort.value || '5007')
 
   /** last confirmation timestamp — watchers in views react to this */
   const confirmedAt = ref(0)
+
+  const isConfigLoaded = ref(false)
+  const isConfigLoading = ref(false)
+  const isConfigError = ref(false)
 
   /** human-readable status after last confirm */
   const status = ref<'IDLE' | 'TESTING' | 'ONLINE' | 'ERROR'>('IDLE')
@@ -117,6 +121,56 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
     statusMsg.value = ''
   }
 
+  // Fetch system config from Spring Boot backend on load
+  async function fetchBackendConfig() {
+    if (isConfigLoaded.value || isConfigError.value) {
+      return
+    }
+    if (isConfigLoading.value) {
+      return
+    }
+    isConfigLoading.value = true
+
+    const maxAttempts = 5
+    const base = 1000 // 1s
+    const cap = 10000 // 10s
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const response = await fetch('/api/v1/auth/config')
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}`)
+        }
+        const result = await response.json()
+        if (result.success && result.data) {
+          const { phoneIp: apiPhoneIp, wifiIp: apiWifiIp } = result.data
+          if (apiPhoneIp) draftPhoneIp.value = apiPhoneIp
+          if (apiWifiIp) draftPcIp.value = apiWifiIp
+          
+          await confirmIp()
+          console.log(`[CONFIG] Automatically configured and established phone IP: ${phoneIp.value}, PC IP: ${pcIp.value}`)
+          isConfigLoaded.value = true
+          isConfigError.value = false
+          isConfigLoading.value = false
+          return
+        } else {
+          throw new Error("Invalid response format")
+        }
+      } catch (err) {
+        console.warn(`[CONFIG] Attempt ${attempt + 1} failed to fetch config:`, err)
+        if (attempt === maxAttempts - 1) {
+          isConfigError.value = true
+          isConfigLoading.value = false
+          console.error('[CONFIG] Max retry attempts reached. Freezing further polling and displaying recovery layout.')
+          break
+        }
+        const delay = Math.min(cap, base * Math.pow(2, attempt)) + Math.random() * 1000
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    isConfigLoading.value = false
+  }
+
   // Auto-sync IP to Python bridge on store initialization
   setTimeout(async () => {
     try {
@@ -129,11 +183,16 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
     } catch { }
   }, 1000)
 
+  // Auto-fetch config on store initialization
+  fetchBackendConfig()
+
+
   return {
     phoneIp, pcIp, cameraPort, sensorPort,
     draftPhoneIp, draftPcIp, draftCameraPort, draftSensorPort,
     confirmedAt, status, statusMsg,
     cameraUrl, sensorBridgeUrl,
-    confirmIp, resetDraft,
+    confirmIp, resetDraft, fetchBackendConfig,
+    isConfigLoaded, isConfigLoading, isConfigError,
   }
 })
