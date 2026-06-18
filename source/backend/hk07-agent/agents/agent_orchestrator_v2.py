@@ -12,6 +12,7 @@ Thay vì routing vào 1 agent, Orchestrator v2 sử dụng LLM Tool Calling đ�
 import asyncio
 import logging
 import json
+import re
 from typing import TypedDict, List, Dict, Any, Optional
 
 from agents.router_agent_v2 import RouterAgentV2
@@ -83,6 +84,35 @@ class AgentOrchestratorV2:
             "action": "COMPANION_CHAT",
             "raw_orchestration_response": ""
         }
+
+        # ── FAST-PATH: Hard deterministic regex scan intercept ───────────────
+        # Fires BEFORE cloud LLM tool-calling to guarantee zero budget timeout
+        # on explicit scan commands regardless of provider availability.
+        _SCAN_PATTERN = re.compile(r"(?i)\b(scan|quét|scan\s+me)\b")
+        if _SCAN_PATTERN.search(user_message):
+            log.info("[ORCHESTRATOR_V2] [REGEX_INTERCEPT] Scan keyword detected — bypassing LLM tier. Forcing execute_full_body_scan.")
+            scan_result = await self._execute_tool("execute_full_body_scan", {}, current_vitals, user_id=user_id)
+            # Mandatory conversational text layer — prevents null payload deserialization error on Spring Boot
+            response_text = (
+                "[SYSTEM_VISION_ACTIVE] Hệ thống nhận thức HK-07 đang kích hoạt camera IPWebcam "
+                "để tiến hành quét diện rộng và phân tích lâm sàng của Sếp. "
+                "Vui lòng giữ nguyên vị trí trước ống kính."
+            )
+            if scan_result and not scan_result.startswith("[ERROR"):
+                response_text = response_text + "\n" + scan_result
+            state["current_agents"] = ["execute_full_body_scan"]
+            state["outputs"]["execute_full_body_scan"] = response_text
+            state["output"] = response_text
+            state["alert_level"] = self._aggregate_alert_levels(state["outputs"])
+            state["current_agent"] = "PERCEPTION"
+            state["action"] = "FULL_BODY_SCAN"
+            state["raw_orchestration_response"] = "[REGEX_INTERCEPT] execute_full_body_scan forced"
+            log.info("[AUDIT_TRAIL_V2] Processed event. Agents: %s, Alert: %s, Actions: %s",
+                     state["current_agents"], state["alert_level"], state["actions"])
+            if self.memory and response_text:
+                await self.memory.ingest_chat_cycle(user_message, response_text, user_id=user_id)
+            return state
+        # ─────────────────────────────────────────────────────────────────────
 
         # Step 1: Orchestrate with Tool Calling (LLM decides which tools to invoke)
         orchestration = None

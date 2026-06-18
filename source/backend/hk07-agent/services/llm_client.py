@@ -152,7 +152,7 @@ def _get_execution_chain(is_vision=False) -> List[Dict[str, Any]]:
         },
         {
             "provider": "openrouter",
-            "model": "openrouter/google/gemini-2.0-flash-exp:free",
+            "model": "openrouter/google/gemini-flash-1.5:free",
             "api_key": openrouter_key,
             "label": "OPENROUTER_TIER_6",
             "enabled": bool(openrouter_key),
@@ -160,7 +160,7 @@ def _get_execution_chain(is_vision=False) -> List[Dict[str, Any]]:
         },
         {
             "provider": "openrouter",
-            "model": "openrouter/google/gemini-2.0-flash-exp:free",
+            "model": "openrouter/google/gemini-flash-1.5:free",
             "api_key": openrouter_key,
             "label": "OPENROUTER_TIER_6_ALT",
             "enabled": bool(openrouter_key),
@@ -168,7 +168,7 @@ def _get_execution_chain(is_vision=False) -> List[Dict[str, Any]]:
         },
         {
             "provider": "huggingface",
-            "model": "huggingface/meta-llama/Llama-3.2-11B-Vision-Instruct" if is_vision else "huggingface/meta-llama/Llama-3-8B-Instruct",
+            "model": "huggingface/Qwen/Qwen2-VL-7B-Instruct" if is_vision else "huggingface/meta-llama/Meta-Llama-3-8B-Instruct",
             "api_key": hf_key,
             "label": "HUGGINGFACE_TIER_7",
             "enabled": bool(hf_key),
@@ -751,7 +751,7 @@ class LLMClient:
                 response = await cls.safe_execute_7_tier_chain(
                     tier_config=tier,
                     payload=messages,
-                    timeout_limit=min(1.5, remaining),
+                    timeout_limit=min(1.2, remaining),
                     **kwargs
                 )
                 

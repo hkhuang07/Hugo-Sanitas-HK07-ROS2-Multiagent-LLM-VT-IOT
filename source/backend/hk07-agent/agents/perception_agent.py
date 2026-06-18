@@ -207,10 +207,11 @@ Rules:
                 from main import get_default_gateway_ip
                 phone_ip = get_default_gateway_ip()
             except Exception:
-                phone_ip = "127.0.0.1"
+                pass
 
-        if not phone_ip:
-            phone_ip = "127.0.0.1"
+        # Hard production fallback — fires only if gateway auto-detect fails
+        if not phone_ip or phone_ip == "127.0.0.1":
+            phone_ip = os.getenv("PHONE_IP", "192.168.X.X")
 
         video_url = f"http://{phone_ip}:8080/shot.jpg"
         log.info("[PERCEPTION] Fetching live frame snapshot from IPWebcam: %s", video_url)
