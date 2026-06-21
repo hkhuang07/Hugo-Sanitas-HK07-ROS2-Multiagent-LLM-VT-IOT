@@ -42,7 +42,7 @@ import java.util.Map;
 public class AgentLogController {
 
     // ── Stream timeout constants (tunable via env) ──────────────────────────
-    private static final Duration INTERACT_TIMEOUT    = Duration.ofSeconds(30); // LLM can be slow
+    private static final Duration INTERACT_TIMEOUT    = Duration.ofSeconds(10); // LLM can be slow - tuned to 10s to fail fast under agent starvation
     private static final Duration PLAN_POLL_TIMEOUT   = Duration.ofMillis(2500); // High-freq poll — fail fast
     private static final Duration CONFIRM_TIMEOUT     = Duration.ofSeconds(10);
     private static final Duration SCAN_TIMEOUT        = Duration.ofSeconds(30);

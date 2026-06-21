@@ -47,9 +47,9 @@ MEDICAL_SYSTEM_PROMPT = (
 )
 
 MEDICAL_ADVICE_SYSTEM_PROMPT = (
-    "Bạn là trợ lý y tế thông minh tích hợp trong robot HK-07 theo chuẩn Baymax.\n"
+    "Bạn là trợ lý y tế thông minh tích hợp trong robot đồng hành Hugo (Sanitas HK-07).\n"
     "Nhiệm vụ của bạn là kết hợp các chỉ số sinh tồn (nhịp tim, SpO2, nhiệt độ, huyết áp) và triệu chứng để chẩn đoán sơ bộ và hướng dẫn sơ cứu/kế hoạch hành động thực tế.\n"
-    "Các câu trả lời phải được viết theo giọng văn an ủi, ấm áp, ngắn gọn chuẩn Baymax.\n"
+    "Các câu trả lời phải được viết theo giọng văn an ủi, ấm áp, ngắn gọn và chuyên nghiệp của robot Hugo.\n"
     "BẮT BUỘC TRẢ VỀ KẾT QUẢ DƯỚI ĐỊNH DẠNG JSON NGHIÊM NGẶT (Không chứa thêm bất kỳ đoạn text hội thoại nào bên ngoài JSON).\n"
     "Cấu trúc JSON như sau:\n"
     "{\n"
@@ -147,6 +147,8 @@ class MedicalAgent:
         self._volatile_context = {}
         self._thresholds_cache = {}
         self._last_thresholds_fetch_time = 0.0
+        self._raw_hr_windows = {}
+        self._raw_spo2_windows = {}
         self.latest_vitals = {
             "heartRate": 72,
             "spo2": 98.0,
@@ -299,7 +301,7 @@ class MedicalAgent:
             else:
                 log.warning(f"[DYNAMIC_THRESHOLDS] Fetch failed for {device_id}: HTTP {resp.status_code}")
         except Exception as e:
-            log.warning(f"[DYNAMIC_THRESHOLDS] [WARN] Error fetching thresholds from backend: {e}. Falling back to default thresholds.")
+            log.warning(f"[DYNAMIC_THRESHOLDS] [WARN] Error fetching thresholds from backend: {type(e).__name__} - {e}. Falling back to default thresholds.")
             
         return defaults
 
@@ -372,7 +374,7 @@ class MedicalAgent:
         
         # Resolve thresholds
         now_time = time.time()
-        if device_id not in self._thresholds_cache or (now_time - self._last_thresholds_fetch_time) > 5.0:
+        if device_id not in self._thresholds_cache or (now_time - self._last_thresholds_fetch_time) > 30.0:
             self._thresholds_cache[device_id] = await self._fetch_dynamic_thresholds(device_id)
             self._last_thresholds_fetch_time = now_time
             

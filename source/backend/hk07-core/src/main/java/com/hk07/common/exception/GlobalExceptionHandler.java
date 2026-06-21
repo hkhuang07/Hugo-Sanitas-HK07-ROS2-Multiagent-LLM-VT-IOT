@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 
 import java.util.stream.Collectors;
 
@@ -87,6 +88,14 @@ public class GlobalExceptionHandler {
         log.warn("[ROUTE_NOT_FOUND] {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiResponse.error("Resource not found: " + ex.getMessage()));
+    }
+
+    /** Async request timeouts (client disconnects or server too busy) */
+    @ExceptionHandler(AsyncRequestTimeoutException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAsyncTimeout(AsyncRequestTimeoutException ex) {
+        log.warn("[ASYNC_TIMEOUT] Async request timed out: client disconnected or backend too slow");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.error("Request timed out. Please try again."));
     }
 
     /**

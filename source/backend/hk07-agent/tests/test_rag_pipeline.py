@@ -181,10 +181,10 @@ class RAGPipelineTestSuite:
         # Query that maps to guidelines search
         result = await self.orchestrator._execute_tool(
             tool_name="search_medical_guidelines",
-            parameters={"query": "Đột quỵ FAST"},
+            parameters={"query": "Hypertension"},
             vitals={}
         )
-        if "Bộ Y Tế VN" in result or "Nguồn:" in result:
+        if "WHO" in result or "Nguồn:" in result:
             _pass(f"Orchestrator Guidelines tool returned citation. Response:\n{result[:160]}...")
             self.results.append({"test": "orchestrator_guidelines_tool", "status": "PASS"})
         else:

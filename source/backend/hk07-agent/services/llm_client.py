@@ -77,122 +77,341 @@ _OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 _HF_KEY          = os.getenv("HUGGINGFACE_API_KEY", "")
 
 class ProviderCircuitBreaker:
-    def __init__(self, recovery_time=30.0):
+    def __init__(self, recovery_time=5.0, allowed_fails=3):
         self.recovery_time = float(recovery_time)
-        self._tripped_providers = {}
+        self.allowed_fails = allowed_fails
+        self._tripped_providers = {}  # provider -> timestamp
+        self._consecutive_fails = {}  # provider -> count
 
     def trip(self, provider: str):
         p = provider.lower()
-        self._tripped_providers[p] = time.time()
-        log.error(f"[PROVIDER_CB] Tripped {p.upper()} due to 429/401/503. Offline for {self.recovery_time}s.")
+        self._consecutive_fails[p] = self._consecutive_fails.get(p, 0) + 1
+        if self._consecutive_fails[p] >= self.allowed_fails:
+            self._tripped_providers[p] = time.time()
+            log.error(f"[PROVIDER_CB] Tripped {p.upper()} due to {self.allowed_fails} failures. Offline for {self.recovery_time}s.")
+        else:
+            log.warning(f"[PROVIDER_CB] Fail count for {p.upper()} incremented to {self._consecutive_fails[p]}/{self.allowed_fails}.")
+
+    def reset_fails(self, provider: str):
+        p = provider.lower()
+        self._consecutive_fails[p] = 0
+
+    def mark_permanently_dead(self, provider: str):
+        p = provider.lower()
+        self._tripped_providers[p] = time.time() + 3153600000.0
+        log.error(f"[PROVIDER_CB] Tripped {p.upper()} permanently (server lifecycle) due to quota exhaustion.")
 
     def is_tripped(self, provider: str) -> bool:
         p = provider.lower()
         if p in self._tripped_providers:
             if time.time() - self._tripped_providers[p] >= self.recovery_time:
                 del self._tripped_providers[p]
+                self._consecutive_fails[p] = 0
                 log.warning(f"[PROVIDER_CB] Restored connection to {p.upper()}.")
                 return False
             return True
         return False
 
-_provider_breaker = ProviderCircuitBreaker()
+_provider_breaker = ProviderCircuitBreaker(recovery_time=5.0, allowed_fails=3)
+
+# Configure LiteLLM global fallback settings if available
+if LITELLM_AVAILABLE:
+    try:
+        litellm.cooldown_time = 5.0
+        litellm.allowed_fails = 3
+    except Exception:
+        pass
+
 _rolling_start_index = 0
 
 def _increment_rolling_index():
     global _rolling_start_index
     _rolling_start_index += 1
 
-def _get_execution_chain(is_vision=False) -> List[Dict[str, Any]]:
-    # Load all keys dynamically to allow hot-reloading if env changes
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    openai_key = os.getenv("OPENAI_API_KEY", "")
-    gemini_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", ""))
-    mistral_key = os.getenv("MISTRAL_API_KEY", "")
-    cohere_key = os.getenv("COHERE_API_KEY", "")
-    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
-    hf_key = os.getenv("HUGGINGFACE_API_KEY", "")
+# ─────────────────────────────────────────────────────────────────────────────
+# 4-TIER GROUP-BASED ORCHESTRATION MATRIX (2026-06-19 Refactor)
+# 
+# TIER 1 ─ GROQ (text-only, tool calling, intent parsing). Pinned as sole orchestrator.
+# TIER 2 ─ Cloud Vision Cluster: OpenAI gpt-4o-mini + Gemini gemini-2.0-flash.
+#           Runs concurrently via asyncio.gather. Hard cumulative timeout: 2.5s.
+# TIER 3 ─ Emergency Local Edge: Ollama moondream / qwen2b on localhost:11434.
+#           Activates instantly on TIER 2 429/501/503/timeout. Task.cancel fires.
+# TIER 4 ─ Background Non-Critical: Cohere, Mistral, OpenRouter, HuggingFace.
+#           Completely EXCLUDED from synchronous vision path. Background health-log only.
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Define the 7 Tiers Failover & Specialization Graph
-    chain = [
-        {
-            "provider": "groq",
-            "model": "groq/llama-3.3-70b-versatile",
-            "api_key": groq_key,
-            "label": "GROQ_TIER_1",
-            "enabled": bool(groq_key) and not is_vision,
-        },
-        {
-            "provider": "openai",
-            "model": "openai/gpt-4o-mini",
-            "api_key": openai_key,
-            "label": "OPENAI_TIER_2",
-            "enabled": bool(openai_key),
-        },
-        {
-            "provider": "gemini",
-            "model": "gemini/gemini-2.0-flash",
-            "api_key": gemini_key,
-            "label": "GEMINI_TIER_3",
-            "enabled": bool(gemini_key),
-        },
-        {
-            "provider": "mistral",
-            "model": "mistral/mistral-large-latest",
-            "api_key": mistral_key,
-            "label": "MISTRAL_TIER_4",
-            "enabled": bool(mistral_key) and not is_vision,
-        },
-        {
-            "provider": "cohere",
-            "model": "cohere/command-r-plus",
-            "api_key": cohere_key,
-            "label": "COHERE_TIER_5",
-            "enabled": bool(cohere_key) and not is_vision,
-        },
-        {
-            "provider": "openrouter",
-            "model": "openrouter/google/gemini-flash-1.5:free",
-            "api_key": openrouter_key,
-            "label": "OPENROUTER_TIER_6",
-            "enabled": bool(openrouter_key),
-            "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Core"},
-        },
-        {
-            "provider": "openrouter",
-            "model": "openrouter/google/gemini-flash-1.5:free",
-            "api_key": openrouter_key,
-            "label": "OPENROUTER_TIER_6_ALT",
-            "enabled": bool(openrouter_key),
-            "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Core"},
-        },
-        {
-            "provider": "huggingface",
-            "model": "huggingface/Qwen/Qwen2-VL-7B-Instruct" if is_vision else "huggingface/meta-llama/Meta-Llama-3-8B-Instruct",
-            "api_key": hf_key,
-            "label": "HUGGINGFACE_TIER_7",
-            "enabled": bool(hf_key),
-        }
+# TIER 2 hard timeout budget (cloud vision cluster cumulative)
+_VISION_TIER2_TIMEOUT_S: float = 4.5
+
+# TIER 3 Ollama config (mirrors local_vision_evaluator.py but kept inline for LLMClient scope)
+_OLLAMA_BASE_URL  = os.getenv("OLLAMA_BASE_URL",  "http://localhost:11434")
+_OLLAMA_VIS_MODEL = os.getenv("OLLAMA_VISION_MODEL", "moondream")
+_OLLAMA_VIS_TIMEOUT = float(os.getenv("OLLAMA_VISION_TIMEOUT_S", "8.0"))
+
+# Codes that trigger immediate TIER 3 activation (no retry in TIER 2 cluster)
+_TIER2_ABORT_CODES = frozenset({"429", "501", "503", "502", "504", "rate_limit", "ratelimiterror", "resourceexhausted"})
+
+
+def _get_execution_chain(is_vision: bool = False) -> List[Dict[str, Any]]:
+    """
+    Returns the synchronous execution chain appropriate for the request type.
+
+    TEXT path (is_vision=False):
+      GROQ_TIER_1 → OPENAI_TIER_2 → GEMINI_TIER_3 → MISTRAL → COHERE (sequential)
+
+    VISION path (is_vision=True):
+      Returns ONLY TIER 2 cloud vision nodes (OpenAI + Gemini).
+      GROQ is EXCLUDED (text-only). TIER 4 providers are EXCLUDED.
+      Actual TIER 3 Ollama fallback is handled by generate_vision_completion_grouped().
+    """
+    groq_key       = os.getenv("GROQ_API_KEY", "")
+    openai_key     = os.getenv("OPENAI_API_KEY", "")
+    gemini_key     = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", ""))
+    mistral_key    = os.getenv("MISTRAL_API_KEY", "")
+    cohere_key     = os.getenv("COHERE_API_KEY", "")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+    hf_key         = os.getenv("HUGGINGFACE_API_KEY", "")
+
+    if is_vision:
+        # TIER 2 Cloud Vision Cluster ONLY — GROQ and TIER 4 are excluded
+        chain = [
+            {
+                "provider": "openai",
+                "model": "openai/gpt-4o-mini",
+                "api_key": openai_key,
+                "label": "OPENAI_VISION_T2",
+                "enabled": bool(openai_key),
+            },
+            {
+                "provider": "gemini",
+                "model": "gemini/gemini-2.0-flash",
+                "api_key": gemini_key,
+                "label": "GEMINI_VISION_T2",
+                "enabled": bool(gemini_key),
+            },
+        ]
+    else:
+        # TEXT execution chain: GROQ first, then multimodal-capable tiers, TIER 4 last
+        chain = [
+            {
+                "provider": "groq",
+                "model": "groq/llama-3.3-70b-versatile",
+                "api_key": groq_key,
+                "label": "GROQ_TIER_1",
+                "enabled": bool(groq_key),
+            },
+            {
+                "provider": "openai",
+                "model": "openai/gpt-4o-mini",
+                "api_key": openai_key,
+                "label": "OPENAI_TIER_2",
+                "enabled": bool(openai_key),
+            },
+            {
+                "provider": "gemini",
+                "model": "gemini/gemini-2.0-flash",
+                "api_key": gemini_key,
+                "label": "GEMINI_TIER_3",
+                "enabled": bool(gemini_key),
+            },
+            # TIER 4: Background-degraded providers (text-only, excluded from vision)
+            {
+                "provider": "mistral",
+                "model": "mistral/mistral-large-latest",
+                "api_key": mistral_key,
+                "label": "MISTRAL_TIER_4_BG",
+                "enabled": bool(mistral_key),
+            },
+            {
+                "provider": "cohere",
+                "model": "cohere/command-r-plus",
+                "api_key": cohere_key,
+                "label": "COHERE_TIER_4_BG",
+                "enabled": bool(cohere_key),
+            },
+            {
+                "provider": "openrouter",
+                "model": "openrouter/google/gemini-flash-1.5:free",
+                "api_key": openrouter_key,
+                "label": "OPENROUTER_TIER_4_BG",
+                "enabled": bool(openrouter_key),
+                "extra_headers": {"HTTP-Referer": "https://hk07-hugobot.local", "X-Title": "HK-07 Core"},
+            },
+            {
+                "provider": "huggingface",
+                "model": "huggingface/meta-llama/Meta-Llama-3-8B-Instruct",
+                "api_key": hf_key,
+                "label": "HUGGINGFACE_TIER_4_BG",
+                "enabled": bool(hf_key),
+            },
+        ]
+
+    active_chain = [
+        t for t in chain
+        if t["enabled"] and not _provider_breaker.is_tripped(t["provider"])
     ]
 
-    active_chain = []
-    for tier in chain:
-        if tier["enabled"] and not _provider_breaker.is_tripped(tier["provider"]):
-            active_chain.append(tier)
-
-    # Roll/rotate active chain based on the centralized rolling tracking index
-    if active_chain:
+    # Rolling rotation only on text path (vision cluster is fixed-order)
+    if not is_vision and active_chain:
         global _rolling_start_index
         shift = _rolling_start_index % len(active_chain)
         active_chain = active_chain[shift:] + active_chain[:shift]
 
     return active_chain
 
-# ─── Standard Provider Tiers ──────────────────────────────────────────────────
+
+def _is_tier2_abort_error(exc: Exception) -> bool:
+    """
+    Returns True if the exception qualifies as an immediate TIER 3 activation trigger.
+    Matches HTTP 429, 501, 502, 503, 504 and provider-specific rate-limit identifiers.
+    """
+    err = str(exc).lower()
+    return any(code in err for code in _TIER2_ABORT_CODES) or "exceeded your current quota" in err or isinstance(exc, asyncio.TimeoutError)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TIER 3 ─ Local Ollama Vision Endpoint (direct httpx, no litellm)
+# ─────────────────────────────────────────────────────────────────────────────
+def _get_ollama_candidate_urls() -> List[str]:
+    """Get candidate URLs for Ollama host probing."""
+    candidates = [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://172.17.0.1:11434",
+        "http://0.0.0.0:11434"
+    ]
+    env_url = os.getenv("OLLAMA_BASE_URL", "").strip()
+    if env_url:
+        if env_url.endswith("/"):
+            env_url = env_url[:-1]
+        if env_url not in candidates:
+            candidates.insert(0, env_url)
+    return candidates
+
+
+async def _probe_ollama_host(client: Any, url: str) -> bool:
+    """Probe a single Ollama host's /api/tags endpoint to check if it's active."""
+    try:
+        resp = await client.get(f"{url}/api/tags", timeout=1.5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def _probe_ollama_hosts_concurrent() -> Optional[str]:
+    """
+    Probe candidate Ollama URLs concurrently.
+    Returns the first url that responds with 200 OK.
+    Cancels all other pending tasks. Strict 1.5s timeout.
+    """
+    import httpx
+    urls = _get_ollama_candidate_urls()
+    
+    async def task_wrapper(url: str) -> Optional[str]:
+        try:
+            async with httpx.AsyncClient() as client:
+                success = await _probe_ollama_host(client, url)
+                if success:
+                    return url
+        except Exception:
+            pass
+        return None
+
+    tasks = [asyncio.create_task(task_wrapper(url)) for url in urls]
+    if not tasks:
+        return None
+
+    winning_url = None
+    try:
+        async def get_first_successful_host():
+            for completed_task in asyncio.as_completed(tasks):
+                try:
+                    res = await completed_task
+                    if res:
+                        return res
+                except Exception:
+                    pass
+            return None
+
+        winning_url = await asyncio.wait_for(get_first_successful_host(), timeout=1.5)
+    except asyncio.TimeoutError:
+        log.warning("[OLLAMA_PROBE] Probing timed out after 1.5s.")
+    except Exception as exc:
+        log.error("[OLLAMA_PROBE] Concurrent probing error: %s", exc)
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+            else:
+                try:
+                    t.exception()
+                except (asyncio.CancelledError, asyncio.InvalidStateError):
+                    pass
+            
+    return winning_url
+
+
+async def _call_ollama_vision_direct(
+    image_bytes: bytes,
+    prompt: str,
+    system_prompt: str = "",
+) -> Tuple[Optional[str], str]:
+    """
+    TIER 3 Emergency Local Edge Vision — direct httpx call to Ollama API.
+    Bypasses litellm entirely to avoid any additional indirection layer.
+    Uses a strict _OLLAMA_VIS_TIMEOUT budget.
+
+    Returns: (response_text, "OLLAMA_TIER_3") or (None, "OLLAMA_TIER_3_FAILED")
+    """
+    import base64
+    try:
+        import httpx
+    except ImportError:
+        log.error("[TIER3_OLLAMA] httpx not installed — cannot call Ollama.")
+        return None, "OLLAMA_TIER_3_FAILED"
+
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+
+    payload = {
+        "model": _OLLAMA_VIS_MODEL,
+        "prompt": full_prompt,
+        "images": [b64],
+        "stream": False,
+        "options": {"temperature": 0.1, "num_predict": 256}
+    }
+
+    winning_url = await _probe_ollama_hosts_concurrent()
+    if not winning_url:
+        log.error("[TIER3_OLLAMA] No active Ollama candidate responded to concurrent probe.")
+        return None, "OLLAMA_TIER_3_FAILED"
+
+    try:
+        async with httpx.AsyncClient(timeout=_OLLAMA_VIS_TIMEOUT) as client:
+            resp = await client.post(f"{winning_url}/api/generate", json=payload)
+            if resp.status_code == 200:
+                text = resp.json().get("response", "").strip()
+                if text:
+                    log.info("[TIER3_OLLAMA] Ollama/%s responded OK on %s.", _OLLAMA_VIS_MODEL, winning_url)
+                    return text, "OLLAMA_TIER_3"
+        log.warning("[TIER3_OLLAMA] Ollama HTTP %d — empty or bad response on %s.", resp.status_code, winning_url)
+    except Exception as exc:
+        log.error("[TIER3_OLLAMA] Ollama vision call failed on %s: %s", winning_url, exc)
+
+    return None, "OLLAMA_TIER_3_FAILED"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard Provider Tiers (legacy compatibility — used by non-vision agents)
+# ─────────────────────────────────────────────────────────────────────────────
 ROUTER_TIERS: List[Dict[str, Any]] = []
 MEDICAL_TIERS: List[Dict[str, Any]] = []
 EMPATHY_TIERS: List[Dict[str, Any]] = []
-VISION_TIERS: List[Dict[str, Any]] = []
+VISION_TIERS: List[Dict[str, Any]] = []   # Kept for legacy compatibility — use generate_vision_completion_grouped()
 SYSTEM_QUERY_TIERS: List[Dict[str, Any]] = []
 
 
@@ -237,7 +456,11 @@ class LocalOfflineFallback:
             return cls._rule_based_completion(prompt, system_prompt)
 
         model_path = os.getenv("LOCAL_SLM_MODEL_PATH", "models/phi-3-mini-4k-instruct-q4.gguf").lower()
-        system = system_prompt or "You are Baymax, your personal healthcare companion. Operating in local offline mode."
+        system = system_prompt or (
+            "You are Hugo or Sanitas or HK-07, the personal robot healthcare companion assistant. "
+            "You are operating in local offline fallback mode. "
+            "Respond clinically and concisely."
+        )
         
         if "phi" in model_path:
             formatted_prompt = f"<|system|>\n{system}<|end|>\n<|user|>\n{prompt}<|end|>\n<|assistant|>\n"
@@ -262,47 +485,114 @@ class LocalOfflineFallback:
             log.error(f"[LOCAL_SLM] Local SLM generation failed: {e}. Falling back to rule-based completion.")
             return cls._rule_based_completion(prompt, system_prompt)
 
+
     @classmethod
-    def _rule_based_completion(cls, prompt: str, system_prompt: Optional[str] = None) -> str:
+    def _rule_based_completion(
+        cls,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        vitals_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Rule-based offline fallback for Hugo (Sanitas HK-07 System).
+        Dynamically injects real-time vitals (rPPG_HR, Thermal_Temp, SpO2)
+        when available — no static placeholder text.
+
+        vitals_context schema (optional):
+          { "hr": float, "temp": float, "spo2": float,
+            "fever": bool, "tachycardia": bool, "fall_detected": bool }
+        """
         prompt_lower = prompt.lower()
-        
-        # Check greetings
-        if any(w in prompt_lower for w in ["hello", "hi", "chào", "xin chào", "hey"]):
+        v = vitals_context or {}
+
+        hr   = v.get("hr")
+        temp = v.get("temp")
+        spo2 = v.get("spo2")
+        fever        = v.get("fever", False)
+        tachycardia  = v.get("tachycardia", False)
+        fall_detected = v.get("fall_detected", False)
+
+        def _vitals_str() -> str:
+            parts = []
+            if hr:   parts.append(f"nhịp tim {hr:.0f} bpm")
+            if temp: parts.append(f"nhiệt độ {temp:.1f}°C")
+            if spo2: parts.append(f"SpO2 {spo2:.0f}%")
+            return ", ".join(parts) if parts else "chỉ số chưa có dữ liệu"
+
+        def _clinical_alert() -> str:
+            alerts = []
+            if tachycardia and hr:
+                alerts.append(f"nhịp tim cao: {hr:.0f} bpm (nhịp tim nhanh)")
+            if fever and temp:
+                alerts.append(f"sốt: {temp:.1f}°C")
+            if fall_detected:
+                alerts.append("ngã được phát hiện")
+            if alerts:
+                return (
+                    f"⚠️ Hệ thống HK-07 phát hiện {' và '.join(alerts)}. "
+                    "Đang kích hoạt giao thức bảo vệ..."
+                )
+            return ""
+
+        clinical_prefix = _clinical_alert()
+
+        # ── Greetings ─────────────────────────────────────────────────────────
+        if any(w in prompt_lower for w in ["hello", "hi", "chào", "xin chào", "hey", "aw"]):
+            vitals_note = f" Tôi đang theo dõi {_vitals_str()}." if (hr or temp) else ""
+            critical_note = f" {clinical_prefix}" if clinical_prefix else ""
             return (
-                "Hello, I am Baymax, your personal healthcare companion. "
-                "I am currently operating in offline fallback mode. "
-                "How can I assist you with your health today?"
-            )
-            
-        # Check emergency / SOS
-        if any(w in prompt_lower for w in ["emergency", "sos", "stroke", "đột quỵ", "cấp cứu", "nguy kịch", "tai nạn"]):
-            return (
-                "[EMERGENCY ALERT] I have detected a potentially life-threatening situation. "
-                "Although my primary cloud connection is offline, I am triggering the local emergency protocol. "
-                "Please stay calm, rest immediately, and contact emergency medical services if you can."
-            )
-            
-        # Check clinical symptoms / chest pain
-        if any(w in prompt_lower for w in ["pain", "hurt", "chest", "headache", "fever", "đau", "sốt", "mệt", "ho"]):
-            return (
-                "I am currently offline, but based on your description, I advise you to rest and monitor your vitals. "
-                "If you experience chest pressure, difficulty breathing, or severe pain, please seek immediate medical attention."
-            )
-            
-        # Check connection / status
-        if any(w in prompt_lower for w in ["status", "device", "sensor", "connection", "kết nối", "thiết bị"]):
-            return (
-                "System Status: ONLINE (Local Offline Fallback Mode). "
-                "Primary LLM Cloud Service is currently unreachable. "
-                "Local controllers and safety nodes are operational."
+                f"Xin chào, tôi là Hugo — hệ thống hỗ trợ y tế Sanitas HK-07."
+                f"{critical_note}"
+                f" Hiện tôi đang hoạt động ở chế độ ngoại tuyến cục bộ.{vitals_note}"
+                f" Bạn cần tôi hỗ trợ gì về sức khỏe hôm nay?"
             )
 
-        # Default fallback
+        # ── Emergency / SOS ───────────────────────────────────────────────────
+        if any(w in prompt_lower for w in [
+            "emergency", "sos", "stroke", "đột quỵ", "cấp cứu",
+            "nguy kịch", "tai nạn", "hurt bad"
+        ]):
+            return (
+                f"[CẢNH BÁO KHẨN CẤP — Hugo HK-07] Phát hiện tình huống nguy hiểm tiềm tàng.\n"
+                f"Chỉ số hiện tại: {_vitals_str()}.\n"
+                "Mặc dù kết nối đám mây không khả dụng, hệ thống đang kích hoạt "
+                "giao thức khẩn cấp cục bộ. Vui lòng giữ bình tĩnh, nằm xuống "
+                "và liên hệ dịch vụ y tế khẩn cấp ngay lập tức."
+            )
+
+        # ── Clinical symptoms ─────────────────────────────────────────────────
+        if any(w in prompt_lower for w in [
+            "pain", "hurt", "chest", "headache", "fever", "đau", "sốt", "mệt", "ho"
+        ]):
+            critical_note = f" {clinical_prefix}" if clinical_prefix else ""
+            return (
+                f"Hugo HK-07 [Chế độ ngoại tuyến]:{critical_note}\n"
+                f"Chỉ số sinh tồn hiện tại: {_vitals_str()}.\n"
+                "Khuyến nghị: Nghỉ ngơi và theo dõi chỉ số. "
+                "Nếu bạn bị đau ngực, khó thở hoặc đau dữ dội, "
+                "hãy tìm kiếm sự trợ giúp y tế ngay lập tức."
+            )
+
+        # ── Status / sensor check ─────────────────────────────────────────────
+        if any(w in prompt_lower for w in [
+            "status", "device", "sensor", "connection", "kết nối", "thiết bị"
+        ]):
+            return (
+                f"Trạng thái hệ thống Hugo HK-07: ONLINE (Chế độ ngoại tuyến cục bộ).\n"
+                f"Dịch vụ LLM đám mây hiện không khả dụng.\n"
+                f"Chỉ số hiện tại: {_vitals_str()}.\n"
+                "Các bộ điều khiển cục bộ và nút an toàn đang hoạt động."
+            )
+
+        # ── Default ───────────────────────────────────────────────────────────
+        critical_note = f" {clinical_prefix}" if clinical_prefix else ""
         return (
-            "I am Baymax, your personal healthcare companion. "
-            "I am currently operating in offline mode due to a connection timeout. "
-            "My local health monitors are active and tracking your vitals. Please let me know how I can help."
+            f"Hugo (Sanitas HK-07) — Chế độ ngoại tuyến.{critical_note}\n"
+            f"Chỉ số theo dõi hiện tại: {_vitals_str()}.\n"
+            "Các cảm biến sức khỏe cục bộ đang hoạt động. "
+            "Vui lòng cho tôi biết tôi có thể hỗ trợ bạn như thế nào."
         )
+
 
     @classmethod
     def get_tool_call_fallback(cls, prompt: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -487,11 +777,42 @@ class LocalOfflineFallback:
 
     @staticmethod
     def get_vision_completion_fallback(prompt: str, system_prompt: Optional[str] = None) -> str:
-        fallback_data = {
-            "visible_injuries": {"detected": False, "details": "Offline vision fallback active"},
-            "facial_distress": {"detected": False, "details": "Offline vision fallback active"},
-            "environmental_hazards": {"detected": False, "details": "Offline vision fallback active"}
-        }
+        try:
+            from main import _sensor_cache
+            vitals = _sensor_cache.get("vitals") or {}
+            fall = _sensor_cache.get("fall_detected", False)
+            fever = _sensor_cache.get("fever_alert", False)
+            
+            fallback_data = {
+                "visible_injuries": {
+                    "detected": False,
+                    "details": f"Offline vision fallback active. Cached vitals: HR={vitals.get('hr', 'N/A')} bpm, Temp={vitals.get('temp', 'N/A')} C"
+                },
+                "facial_distress": {
+                    "detected": False,
+                    "details": "Offline vision fallback active"
+                },
+                "environmental_hazards": {
+                    "detected": fever,
+                    "details": f"Cached environmental alerts: fever={fever}, fall={fall}"
+                },
+                "overall_risk": "HIGH" if (fever or fall) else "LOW",
+                "posture_risk": "HIGH" if fall else "LOW",
+                "facial_distress_value": 0.0,
+                "notes": f"Rule-based fallback assessment from cache. Heart rate: {vitals.get('hr', 'N/A')} bpm.",
+                "confidence": 0.5
+            }
+        except Exception:
+            fallback_data = {
+                "visible_injuries": {"detected": False, "details": "Offline vision fallback active"},
+                "facial_distress": {"detected": False, "details": "Offline vision fallback active"},
+                "environmental_hazards": {"detected": False, "details": "Offline vision fallback active"},
+                "overall_risk": "LOW",
+                "posture_risk": "LOW",
+                "facial_distress_value": 0.0,
+                "notes": "Offline vision fallback active",
+                "confidence": 0.5
+            }
         return json.dumps(fallback_data)
 
 
@@ -521,33 +842,38 @@ class LLMClient:
     @classmethod
     async def safe_execute_7_tier_chain(cls, tier_config: Dict[str, Any], payload: List[Dict[str, Any]], timeout_limit: float, **kwargs) -> Any:
         """
-        Production-grade async LLM dispatch with explicit task lifecycle management.
-        Prevents orphaned coroutine leaks by creating an explicit asyncio.Task
-        and properly cancelling + awaiting it on timeout.
+        Production-grade async LLM dispatch. Directly awaits litellm.acompletion
+        using asyncio.create_task for proper lifecycle tracking and Windows event loop stability.
         """
-        task = asyncio.ensure_future(
-            litellm.acompletion(model=tier_config["model"], messages=payload, timeout=timeout_limit, **kwargs)
+        task = asyncio.create_task(
+            litellm.acompletion(
+                model=tier_config["model"],
+                messages=payload,
+                timeout=timeout_limit,
+                **kwargs
+            )
         )
         try:
-            response = await asyncio.wait_for(task, timeout=timeout_limit)
-            return response
-        except asyncio.TimeoutError:
-            # Explicitly cancel the task and await it to drain any internal coroutines
+            return await task
+        except asyncio.CancelledError:
+            log.warning(f"Tier {tier_config['label']} task cancelled.")
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
-            log.error(f"Tier {tier_config['label']} hit hard budget timeout. Rotating...")
-            raise asyncio.TimeoutError(f"Tier {tier_config['label']} timed out.") from None
-        except Exception:
-            # On non-timeout errors, ensure task is cleaned up if still running
+            raise
+        except Exception as e:
             if not task.done():
                 task.cancel()
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
                     pass
+            err_str = str(e).lower()
+            if "timeout" in err_str:
+                log.error(f"Tier {tier_config['label']} hit hard budget timeout. Rotating...")
+                raise asyncio.TimeoutError(f"Tier {tier_config['label']} timed out.") from e
             raise
 
     @staticmethod
@@ -585,7 +911,7 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.3,
         max_tokens: int = 1024,
-        timeout: int = 12,
+        timeout: int = 20,
         patient_id: Optional[str] = None
     ) -> Tuple[Optional[str], str]:
         """
@@ -596,16 +922,16 @@ class LLMClient:
             last_time = cls._last_groq_completion_times.get(patient_id, 0.0)
             elapsed = time.time() - last_time
             if elapsed < 15.0:
-                log.warning(f"[LLM_CLIENT_LIMITER] Patient {patient_id} LLM query debounced (last was {elapsed:.2f}s ago). Routing immediately to LocalOfflineFallback.")
-                return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+                log.warning(f"[LLM_CLIENT_LIMITER] Patient {patient_id} LLM query debounced (last was {elapsed:.2f}s ago).")
+                raise RuntimeError(f"Patient {patient_id} LLM query debounced. Online connection unavailable.")
 
         if not _circuit_breaker.allow_request():
-            log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
-            return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+            log.error("[LLM_CLIENT] Circuit is OPEN. Online connection unavailable.")
+            raise RuntimeError("Circuit is OPEN. Online connection unavailable.")
 
         if not LITELLM_AVAILABLE:
-            log.warning("[LLM_CLIENT] litellm not available. Activating LocalOfflineFallback.")
-            return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+            log.error("[LLM_CLIENT] litellm not available.")
+            raise RuntimeError("LiteLLM is not available. Online connection unavailable.")
 
         # Caching logic for repetitive queries
         import hashlib
@@ -629,57 +955,85 @@ class LLMClient:
                 continue
 
             elapsed = time.time() - global_start
-            remaining = 5.0 - elapsed
+            remaining = float(timeout) - elapsed
             if remaining <= 0.2:
-                log.warning("[LLM_CLIENT] Global 5.0s timeout reached. Aborting completion fallback chain.")
+                log.warning(f"[LLM_CLIENT] Global {timeout}s timeout reached. Aborting completion fallback chain.")
                 break
 
-            try:
-                kwargs = {
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-                if tier.get("api_key"):
-                    kwargs["api_key"] = tier["api_key"]
-                if tier.get("extra_headers"):
-                    kwargs["extra_headers"] = tier["extra_headers"]
+            # Retry loop for TIER 1 & 2 cloud providers up to 2 times (total 3 attempts)
+            is_cloud_provider = tier["provider"] in ("groq", "openai", "gemini")
+            max_attempts = 3 if is_cloud_provider else 1
 
-                if "groq" in tier["model"].lower() and patient_id:
-                    cls._last_groq_completion_times[patient_id] = time.time()
+            for attempt in range(max_attempts):
+                elapsed = time.time() - global_start
+                remaining = float(timeout) - elapsed
+                if remaining <= 0.2:
+                    break
 
-                response = await cls.safe_execute_7_tier_chain(
-                    tier_config=tier,
-                    payload=messages,
-                    timeout_limit=min(1.5, remaining),
-                    **kwargs
-                )
-                if response.choices and response.choices[0].message:
-                    content = response.choices[0].message.content
-                    if content:
-                        log.info("[LLM_CLIENT] ✅ Text completion succeeded via %s", tier["label"])
-                        result = (content.strip(), tier["label"])
-                        cls._set_cached_value(cache_key, result, ttl=5.0)
-                        return result
-            except Exception as e:
-                err_str = str(e).lower()
-                is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
-                is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
-                is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
-                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
-                is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
+                try:
+                    kwargs = {
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    }
+                    if tier.get("api_key"):
+                        kwargs["api_key"] = tier["api_key"]
+                    if tier.get("extra_headers"):
+                        kwargs["extra_headers"] = tier["extra_headers"]
 
-                if is_auth_error or is_provider_down or is_credit_issue or is_timeout:
-                    _provider_breaker.trip(tier["provider"])
-                _increment_rolling_index()
+                    if "groq" in tier["model"].lower() and patient_id:
+                        cls._last_groq_completion_times[patient_id] = time.time()
 
-                if is_credit_issue or is_rate_limit or is_timeout or is_auth_error or is_provider_down:
-                    log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
-                else:
-                    log.warning("[LLM_CLIENT] ❌ %s execution failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
-                continue
+                    # Individual connection ceiling: 6.0s for cloud, min(4.5, remaining) for others
+                    timeout_limit = min(6.0 if is_cloud_provider else 4.5, remaining)
 
-        log.warning("[LLM_CLIENT] All LLM tiers failed for text completion. Activating LocalOfflineFallback.")
-        return LocalOfflineFallback.get_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+                    response = await cls.safe_execute_7_tier_chain(
+                        tier_config=tier,
+                        payload=messages,
+                        timeout_limit=timeout_limit,
+                        **kwargs
+                    )
+                    if response.choices and response.choices[0].message:
+                        content = response.choices[0].message.content
+                        if content:
+                            log.info("[LLM_CLIENT] ✅ Text completion succeeded via %s on attempt %d", tier["label"], attempt + 1)
+                            _provider_breaker.reset_fails(tier["provider"])
+                            result = (content.strip(), tier["label"])
+                            cls._set_cached_value(cache_key, result, ttl=5.0)
+                            return result
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
+                    is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
+                    is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+                    is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
+                    is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
+
+                    if "exceeded your current quota" in err_str:
+                        log.error("[LLM_CLIENT] OpenAI Quota Exhausted! Marking OpenAI as permanently dead and skipping retries.")
+                        _provider_breaker.mark_permanently_dead(tier["provider"])
+                        break
+
+                    if is_timeout:
+                        log.warning("[LLM_CLIENT] ⚠️ Attempt %d/%d timed out on %s. (Do not trip circuit breaker)", attempt + 1, max_attempts, tier["label"])
+                    else:
+                        log.warning("[LLM_CLIENT] ⚠️ Attempt %d/%d failed on %s: %s", attempt + 1, max_attempts, tier["label"], err_str[:80])
+
+                    if attempt == max_attempts - 1:
+                        if not is_timeout:
+                            if is_auth_error or is_provider_down or is_credit_issue:
+                                _provider_breaker.trip(tier["provider"])
+                        _increment_rolling_index()
+
+                    if attempt < max_attempts - 1:
+                        # Exponential backoff delay
+                        backoff_delay = 1.0 * (2 ** attempt)
+                        await asyncio.sleep(backoff_delay)
+                        continue
+                    else:
+                        break
+
+        log.error("[LLM_CLIENT] All LLM tiers failed for text completion. Raising RuntimeError.")
+        raise RuntimeError("All LLM tiers failed for text completion.")
 
     @classmethod
     async def generate_tool_call(
@@ -690,7 +1044,7 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.1,
         max_tokens: int = 512,
-        timeout: int = 10
+        timeout: int = 20
     ) -> Tuple[Optional[Dict[str, Any]], str]:
         """
         Tool calling completion with fallback.
@@ -702,12 +1056,12 @@ class LLMClient:
         }
         """
         if not _circuit_breaker.allow_request():
-            log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
-            return LocalOfflineFallback.get_tool_call_fallback(prompt, tools), "LOCAL_FALLBACK"
+            log.error("[LLM_CLIENT] Circuit is OPEN. Online connection unavailable.")
+            raise RuntimeError("Circuit is OPEN. Online connection unavailable.")
 
         if not LITELLM_AVAILABLE:
-            log.warning("[LLM_CLIENT] litellm not available for tool call. Activating LocalOfflineFallback.")
-            return LocalOfflineFallback.get_tool_call_fallback(prompt, tools), "LOCAL_FALLBACK"
+            log.error("[LLM_CLIENT] litellm not available for tool call.")
+            raise RuntimeError("LiteLLM is not available for tool call. Online connection unavailable.")
 
         # Caching logic for repetitive queries
         import hashlib
@@ -731,87 +1085,116 @@ class LLMClient:
                 continue
 
             elapsed = time.time() - global_start
-            remaining = 5.0 - elapsed
+            remaining = float(timeout) - elapsed
             if remaining <= 0.2:
-                log.warning("[LLM_CLIENT] Global 5.0s timeout reached. Aborting tool call fallback chain.")
+                log.warning(f"[LLM_CLIENT] Global {timeout}s timeout reached. Aborting tool call fallback chain.")
                 break
 
-            try:
-                kwargs = {
-                    "tools": tools,
-                    "tool_choice": "auto",
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-                if tier.get("api_key"):
-                    kwargs["api_key"] = tier["api_key"]
-                if tier.get("extra_headers"):
-                    kwargs["extra_headers"] = tier["extra_headers"]
+            # Retry loop for TIER 1 & 2 cloud providers up to 2 times (total 3 attempts)
+            is_cloud_provider = tier["provider"] in ("groq", "openai", "gemini")
+            max_attempts = 3 if is_cloud_provider else 1
 
-                response = await cls.safe_execute_7_tier_chain(
-                    tier_config=tier,
-                    payload=messages,
-                    timeout_limit=min(1.2, remaining),
-                    **kwargs
-                )
-                
-                tool_calls = []
-                if response.choices and response.choices[0].message:
-                    msg = response.choices[0].message
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            try:
-                                params = json.loads(tc.function.arguments)
-                            except (json.JSONDecodeError, AttributeError):
-                                params = {}
-                            tool_calls.append({
-                                "tool_name": tc.function.name,
-                                "parameters": params,
-                            })
+            for attempt in range(max_attempts):
+                elapsed = time.time() - global_start
+                remaining = float(timeout) - elapsed
+                if remaining <= 0.2:
+                    break
 
-                # If we parsed actual tool calls, return them
-                if tool_calls:
-                    log.info("[LLM_CLIENT] ✅ Tool calling succeeded via %s — %d tools", tier["label"], len(tool_calls))
-                    result = ({
-                        "tools_to_invoke": [tc["tool_name"] for tc in tool_calls],
-                        "tool_calls": tool_calls,
-                        "raw_response": getattr(response.choices[0].message, "content", "") or "",
-                    }, tier["label"])
-                    cls._set_cached_value(cache_key, result, ttl=5.0)
-                    return result
+                try:
+                    kwargs = {
+                        "tools": tools,
+                        "tool_choice": "auto",
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    }
+                    if tier.get("api_key"):
+                        kwargs["api_key"] = tier["api_key"]
+                    if tier.get("extra_headers"):
+                        kwargs["extra_headers"] = tier["extra_headers"]
 
-                # If no tool call but returned text, we can build a fallback default response
-                content = getattr(response.choices[0].message, "content", "")
-                if content:
-                    log.info("[LLM_CLIENT] ✅ completion returned text instead of tool call via %s", tier["label"])
-                    result = ({
-                        "tools_to_invoke": [],
-                        "tool_calls": [],
-                        "raw_response": content,
-                    }, tier["label"])
-                    cls._set_cached_value(cache_key, result, ttl=5.0)
-                    return result
+                    # Individual connection ceiling: 6.0s for cloud, min(4.5, remaining) for others
+                    timeout_limit = min(6.0 if is_cloud_provider else 4.5, remaining)
 
-            except Exception as e:
-                err_str = str(e).lower()
-                is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
-                is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
-                is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
-                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
-                is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
+                    response = await cls.safe_execute_7_tier_chain(
+                        tier_config=tier,
+                        payload=messages,
+                        timeout_limit=timeout_limit,
+                        **kwargs
+                    )
+                    
+                    tool_calls = []
+                    if response.choices and response.choices[0].message:
+                        msg = response.choices[0].message
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                try:
+                                    params = json.loads(tc.function.arguments)
+                                except (json.JSONDecodeError, AttributeError):
+                                    params = {}
+                                tool_calls.append({
+                                    "tool_name": tc.function.name,
+                                    "parameters": params,
+                                })
 
-                if is_auth_error or is_provider_down or is_credit_issue or is_timeout:
-                    _provider_breaker.trip(tier["provider"])
-                _increment_rolling_index()
+                    # If we parsed actual tool calls, return them
+                    if tool_calls:
+                        log.info("[LLM_CLIENT] ✅ Tool calling succeeded via %s on attempt %d — %d tools", tier["label"], attempt + 1, len(tool_calls))
+                        _provider_breaker.reset_fails(tier["provider"])
+                        result = ({
+                            "tools_to_invoke": [tc["tool_name"] for tc in tool_calls],
+                            "tool_calls": tool_calls,
+                            "raw_response": getattr(response.choices[0].message, "content", "") or "",
+                        }, tier["label"])
+                        cls._set_cached_value(cache_key, result, ttl=5.0)
+                        return result
 
-                if is_credit_issue or is_rate_limit or is_timeout or is_auth_error or is_provider_down:
-                    log.warning("[LLM_CLIENT] ⚠️ Error on %s (%s) — instantly rotating in chain. Err: %s", tier["label"], tier["model"], err_str[:80])
-                else:
-                    log.warning("[LLM_CLIENT] ❌ %s tool call failed: %s. Rotating in chain.", tier["label"], str(e)[:120])
-                continue
+                    # If no tool call but returned text, we can build a fallback default response
+                    content = getattr(response.choices[0].message, "content", "")
+                    if content:
+                        log.info("[LLM_CLIENT] ✅ completion returned text instead of tool call via %s on attempt %d", tier["label"], attempt + 1)
+                        _provider_breaker.reset_fails(tier["provider"])
+                        result = ({
+                            "tools_to_invoke": [],
+                            "tool_calls": [],
+                            "raw_response": content,
+                        }, tier["label"])
+                        cls._set_cached_value(cache_key, result, ttl=5.0)
+                        return result
 
-        log.warning("[LLM_CLIENT] All LLM tiers failed for tool calling. Activating LocalOfflineFallback.")
-        return LocalOfflineFallback.get_tool_call_fallback(prompt, tools), "LOCAL_FALLBACK"
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_credit_issue = "insufficient credits" in err_str or "402" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str
+                    is_rate_limit = cls._is_rate_limit(e) or "429" in err_str or "ratelimit" in err_str
+                    is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
+                    is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
+                    is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
+
+                    if "exceeded your current quota" in err_str:
+                        log.error("[LLM_CLIENT] OpenAI Quota Exhausted! Marking OpenAI as permanently dead and skipping retries.")
+                        _provider_breaker.mark_permanently_dead(tier["provider"])
+                        break
+
+                    if is_timeout:
+                        log.warning("[LLM_CLIENT] ⚠️ Attempt %d/%d timed out on %s. (Do not trip circuit breaker)", attempt + 1, max_attempts, tier["label"])
+                    else:
+                        log.warning("[LLM_CLIENT] ⚠️ Attempt %d/%d failed on %s: %s", attempt + 1, max_attempts, tier["label"], err_str[:80])
+
+                    if attempt == max_attempts - 1:
+                        if not is_timeout:
+                            if is_auth_error or is_provider_down or is_credit_issue:
+                                _provider_breaker.trip(tier["provider"])
+                        _increment_rolling_index()
+
+                    if attempt < max_attempts - 1:
+                        # Exponential backoff delay
+                        backoff_delay = 1.0 * (2 ** attempt)
+                        await asyncio.sleep(backoff_delay)
+                        continue
+                    else:
+                        break
+
+        log.error("[LLM_CLIENT] All LLM tiers failed for tool calling. Raising RuntimeError.")
+        raise RuntimeError("All LLM tiers failed for tool calling.")
 
     @classmethod
     async def generate_vision_completion(
@@ -822,7 +1205,7 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         max_tokens: int = 512,
         temperature: float = 0.4,
-        timeout: int = 15
+        timeout: int = 20
     ) -> Tuple[Optional[str], str]:
         """
         Vision / Multimodal image processing completion with fallback.
@@ -843,9 +1226,9 @@ class LLMClient:
                 continue
 
             elapsed = time.time() - global_start
-            remaining = 5.0 - elapsed
+            remaining = float(timeout) - elapsed
             if remaining <= 0.2:
-                log.warning("[LLM_CLIENT] Global 5.0s timeout reached. Aborting vision fallback chain.")
+                log.warning(f"[LLM_CLIENT] Global {timeout}s timeout reached. Aborting vision fallback chain.")
                 break
 
             # Clean base64 payload to ensure perfect encapsulation
@@ -879,16 +1262,20 @@ class LLMClient:
                 if tier.get("extra_headers"):
                     kwargs["extra_headers"] = tier["extra_headers"]
 
+                # Individual connection ceiling: 4.5s
+                timeout_limit = min(4.5, remaining)
+
                 response = await cls.safe_execute_7_tier_chain(
                     tier_config=tier,
                     payload=tier_messages,
-                    timeout_limit=min(1.5, remaining),
+                    timeout_limit=timeout_limit,
                     **kwargs
                 )
                 if response.choices and response.choices[0].message:
                     content = response.choices[0].message.content
                     if content:
                         log.info("[LLM_CLIENT] ✅ Vision completion succeeded via %s", tier["label"])
+                        _provider_breaker.reset_fails(tier["provider"])
                         return content.strip(), tier["label"]
 
             except Exception as e:
@@ -898,6 +1285,10 @@ class LLMClient:
                 is_timeout = isinstance(e, asyncio.TimeoutError) or "timeout" in err_str
                 is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str or "forbidden" in err_str or "403" in err_str
                 is_provider_down = "503" in err_str or "502" in err_str or "504" in err_str or "unavailable" in err_str
+
+                if "exceeded your current quota" in err_str:
+                    log.error("[LLM_CLIENT] OpenAI Quota Exhausted! Marking OpenAI as permanently dead.")
+                    _provider_breaker.mark_permanently_dead(tier["provider"])
 
                 if is_auth_error or is_provider_down or is_credit_issue or is_timeout:
                     _provider_breaker.trip(tier["provider"])
@@ -911,3 +1302,189 @@ class LLMClient:
 
         log.warning("[LLM_CLIENT] All LLM tiers failed for vision completion. Activating LocalOfflineFallback.")
         return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+
+
+    # ──────────────────────────────────────────────────────────────────────
+    # GROUP-BASED 4-TIER VISION ORCHESTRATION (Main Entry Point for Perception)
+    # ──────────────────────────────────────────────────────────────────────
+    @classmethod
+    async def generate_vision_completion_grouped(
+        cls,
+        prompt: str,
+        image_base64: str,
+        image_bytes: Optional[bytes],
+        system_prompt: Optional[str] = None,
+        max_tokens: int = 512,
+        temperature: float = 0.1,
+    ) -> Tuple[Optional[str], str]:
+        """
+        4-TIER GROUP-BASED VISION ORCHESTRATION ENGINE
+        ================================================
+        TIER 1: GROQ — Text/Tool-Calling orchestrator ONLY. Not called here.
+                        This method is invoked AFTER Groq signals capture_vision_payload.
+
+        TIER 2: CONCURRENT Cloud Vision Cluster (OpenAI gpt-4o-mini + Gemini gemini-2.0-flash)
+                asyncio.gather fires both simultaneously.
+                First successful response wins. Hard cumulative timeout: 2.5s.
+                On 429/501/503/timeout → all cluster tasks are Task.cancel()'d.
+
+        TIER 3: Emergency Local Edge (Ollama moondream/qwen2b via direct httpx)
+                Activates instantly when TIER 2 cluster aborts.
+                Zero cloud dependency. Timeout: OLLAMA_VISION_TIMEOUT_S (default 8s).
+
+        TIER 4: Cohere/Mistral/OpenRouter/HuggingFace — EXCLUDED from this path.
+                They NEVER block the vision pipeline. Reserved for background health logs.
+
+        Args:
+            prompt:       Clinical analysis prompt string.
+            image_base64: Base64-encoded JPEG with or without data-URI prefix.
+            image_bytes:  Raw JPEG bytes (for TIER 3 Ollama direct call).
+            system_prompt: System context string (injected with sensor_meta_json).
+            max_tokens:   LLM response token budget.
+            temperature:  Inference temperature.
+
+        Returns:
+            Tuple[response_text, provider_label]
+            provider_label examples: "OPENAI_VISION_T2", "GEMINI_VISION_T2", "OLLAMA_TIER_3",
+                                     "RULE_BASED_TIER4", "LOCAL_FALLBACK"
+        """
+        if not _circuit_breaker.allow_request():
+            log.warning("[VISION_GROUPED] Global circuit OPEN — routing directly to TIER 3 Ollama.")
+            if image_bytes:
+                return await _call_ollama_vision_direct(image_bytes, prompt, system_prompt or "")
+            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+
+        if not LITELLM_AVAILABLE:
+            log.warning("[VISION_GROUPED] litellm unavailable — routing to TIER 3 Ollama.")
+            if image_bytes:
+                return await _call_ollama_vision_direct(image_bytes, prompt, system_prompt or "")
+            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+
+        # ── Normalise base64 payload for litellm vision message format ───────────────
+        clean_b64 = image_base64.strip()
+        if "," in clean_b64:
+            clean_b64 = clean_b64.split(",")[-1].strip()
+        clean_b64 = "".join(clean_b64.split())
+        image_url_payload = f"data:image/jpeg;base64,{clean_b64}"
+        combined_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+        tier2_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text",      "text": combined_prompt},
+                    {"type": "image_url", "image_url": {"url": image_url_payload}}
+                ]
+            }
+        ]
+
+        # ── TIER 2: Concurrent Cloud Vision Cluster ──────────────────────────────
+        tier2_cluster = _get_execution_chain(is_vision=True)
+        tier2_tasks: List[asyncio.Task] = []
+        tier2_abort_triggered = False
+
+        if tier2_cluster:
+            log.info(
+                "[VISION_GROUPED/T2] Firing concurrent cluster: %s (budget=%.1fs)",
+                [t["label"] for t in tier2_cluster], _VISION_TIER2_TIMEOUT_S
+            )
+
+            async def _single_vision_call(tier: Dict[str, Any]) -> Tuple[Optional[str], str]:
+                """One cloud vision API call wrapped in error classification."""
+                kwargs: Dict[str, Any] = {"max_tokens": max_tokens, "temperature": temperature}
+                if tier.get("api_key"):
+                    kwargs["api_key"] = tier["api_key"]
+                if tier.get("extra_headers"):
+                    kwargs["extra_headers"] = tier["extra_headers"]
+                try:
+                    resp = await cls.safe_execute_7_tier_chain(
+                        tier_config=tier,
+                        payload=tier2_messages,
+                        timeout_limit=_VISION_TIER2_TIMEOUT_S,
+                        **kwargs
+                    )
+                    if resp.choices and resp.choices[0].message:
+                        content = resp.choices[0].message.content
+                        if content:
+                            return content.strip(), tier["label"]
+                except Exception as exc:
+                    err_str = str(exc).lower()
+                    if "exceeded your current quota" in err_str:
+                        log.error("[LLM_CLIENT/T2] Quota Exhausted on %s! Marking permanently dead.", tier["label"])
+                        _provider_breaker.mark_permanently_dead(tier["provider"])
+                    if _is_tier2_abort_error(exc):
+                        _provider_breaker.trip(tier["provider"])
+                        log.warning(
+                            "[VISION_GROUPED/T2] %s abort-trigger error (%s) — escalating to TIER 3.",
+                            tier["label"], str(exc)[:60]
+                        )
+                        raise  # Re-raise to signal cluster abort
+                    log.warning("[VISION_GROUPED/T2] %s non-critical error: %s", tier["label"], str(exc)[:80])
+                return None, tier["label"]
+
+            # Build asyncio Tasks for all cluster members
+            tier2_tasks = [
+                asyncio.create_task(_single_vision_call(tier))
+                for tier in tier2_cluster
+            ]
+
+            winning_result = None
+            try:
+                async def get_first_successful_vision():
+                    nonlocal tier2_abort_triggered
+                    for completed_task in asyncio.as_completed(tier2_tasks):
+                        try:
+                            res = await completed_task
+                            if res and res[0]:
+                                return res
+                        except Exception as task_exc:
+                            if _is_tier2_abort_error(task_exc):
+                                tier2_abort_triggered = True
+                            log.warning("[VISION_GROUPED/T2] Task raised: %s", str(task_exc)[:80])
+                    return None
+
+                winning_result = await asyncio.wait_for(get_first_successful_vision(), timeout=_VISION_TIER2_TIMEOUT_S)
+                if winning_result:
+                    log.info(
+                        "[VISION_GROUPED/T2] ✅ Success via %s — TIER 2 cluster resolved.",
+                        winning_result[1]
+                    )
+                    return winning_result
+            except asyncio.TimeoutError:
+                tier2_abort_triggered = True
+                log.warning(
+                    "[VISION_GROUPED/T2] Cluster hard timeout (%.1fs). Escalating to TIER 3.",
+                    _VISION_TIER2_TIMEOUT_S
+                )
+            finally:
+                for t in tier2_tasks:
+                    if not t.done():
+                        t.cancel()
+                        try:
+                            await t
+                        except asyncio.CancelledError:
+                            pass
+
+        else:
+            log.warning("[VISION_GROUPED/T2] No TIER 2 providers available — jumping straight to TIER 3.")
+            tier2_abort_triggered = True
+
+        # ── TIER 3: Emergency Local Edge (Ollama) ────────────────────────────
+        log.warning("[VISION_GROUPED/T3] Activating TIER 3 Emergency Local Edge (Ollama/%s).", _OLLAMA_VIS_MODEL)
+        if image_bytes:
+            tier3_text, tier3_label = await _call_ollama_vision_direct(
+                image_bytes=image_bytes,
+                prompt=prompt,
+                system_prompt=system_prompt or "",
+            )
+            if tier3_text:
+                log.info("[VISION_GROUPED/T3] ✅ Ollama TIER 3 succeeded via %s.", tier3_label)
+                return tier3_text, tier3_label
+            log.error("[VISION_GROUPED/T3] Ollama also failed. Activating TIER 4 rule-based fallback.")
+        else:
+            log.warning("[VISION_GROUPED/T3] No raw image bytes available for Ollama — skipping TIER 3.")
+
+        # ── TIER 4: Rule-Based Offline Fallback (zero-dependency, always succeeds) ───
+        # Cohere/Mistral/OpenRouter/HuggingFace are EXCLUDED from the vision sync path.
+        # They are relegated to background health-log tasks only.
+        log.warning("[VISION_GROUPED/T4] Activating rule-based offline fallback. TIER 4 cloud providers excluded from vision.")
+        return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "RULE_BASED_TIER4"

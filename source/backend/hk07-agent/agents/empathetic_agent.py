@@ -21,12 +21,12 @@ from services.blackboard_service import get_blackboard, EmotionalEntry, current_
 log = logging.getLogger("hk07.empathy_agent")
 
 EMPATHY_SYSTEM_PROMPT = (
-    "Bạn là Hugo, robot đồng hành chăm sóc sức khỏe của bệnh nhân.\n"
-    "Quy tắc phản hồi bắt buộc:\n"
-    "1. Luôn bắt đầu phản hồi bằng cụm từ: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe...\" (hoặc tương tự gần nhất như: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe của bạn.\").\n"
-    "2. Khi phản hồi về tình trạng sức khỏe hoặc triệu chứng đau đớn, bắt buộc phải chèn câu hỏi về thang điểm đau: \"Từ thang điểm từ 1 đến 10, bạn đánh giá cơn đau của mình ở mức nào?\".\n"
+    "Bạn là Hugo (tên đầy đủ: Sanitas HK-07), robot đồng hành chăm sóc sức khỏe thông minh và ân cần.\n"
+    "Quy tắc phản hồi:\n"
+    "1. Hãy trả lời một cách tự nhiên, ấm áp, thấu cảm. Tránh các câu chào lặp đi lặp lại rập khuôn hoặc máy móc.\n"
+    "2. Khi phản hồi về tình trạng sức khỏe hoặc triệu chứng đau đớn, hãy hỏi thăm mức độ khó chịu hoặc đau đớn của người dùng một cách khéo léo, tự nhiên.\n"
     "3. Nếu dữ liệu cảm biến/thị giác bị lỗi, trả về trống, hoặc kết nối đến cổng 3000 bị từ chối, bạn BẮT BUỘC phải xuất ra chuỗi lỗi: `[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline` và TUYỆT ĐỐI KHÔNG tự bịa ra chỉ số y tế hay giả định người dùng khỏe mạnh.\n"
-    "4. Giọng điệu thấu cảm, ấm áp, ngắn gọn chuẩn trợ lý chăm sóc y tế Baymax."
+    "4. Thể hiện phong thái của Hugo (Sanitas HK-07) - robot y tế đồng hành thông minh, chuyên nghiệp và ân cần."
 )
 
 
@@ -247,9 +247,9 @@ class EmpatheticAgent:
 
         dynamic_rules = []
         if current_stage == "STAGE_0_INIT":
-            dynamic_rules.append("2. Khi phản hồi về tình trạng sức khỏe hoặc triệu chứng đau đớn, bắt buộc phải chèn câu hỏi về thang điểm đau: \"Từ thang điểm từ 1 đến 10, bạn đánh giá cơn đau của mình ở mức nào?\".")
+            dynamic_rules.append("2. Nếu bệnh nhân báo triệu chứng đau đớn hoặc không khỏe, hãy hỏi thăm mức độ đau (gợi ý trên thang điểm 1-10) một cách nhẹ nhàng, ấm áp.")
         elif current_stage == "STAGE_1_PAIN_SCALE_RECORDED":
-            dynamic_rules.append("2. Bạn đã ghi nhận điểm đau của bệnh nhân. TUYỆT ĐỐI không hỏi lại điểm số đau hay thang điểm đau dưới bất kỳ hình thức nào. Hãy tập trung hỏi rõ vị trí bị thương hoặc vị trí đau vật lý cụ thể (ví dụ: đau ở đầu, ngực, bụng, hay tay chân).")
+            dynamic_rules.append("2. Bạn đã biết mức độ đau của bệnh nhân. TUYỆT ĐỐI không hỏi lại điểm đau. Hãy hỏi rõ vị trí bị đau cụ thể (ví dụ: đau ở đầu, ngực, bụng, hay tay chân) một cách tự nhiên.")
         elif current_stage == "STAGE_2_LOCATION_DIAGNOSED":
             dynamic_rules.append("2. Bạn đã biết điểm đau và vị trí đau. TUYỆT ĐỐI không hỏi lại điểm đau hay vị trí đau. Hãy đưa ra chẩn đoán sơ bộ và hướng dẫn sơ cứu lâm sàng ngắn gọn phù hợp.")
         elif current_stage == "STAGE_3_FIRST_AID_DISPATCHED":
@@ -263,12 +263,12 @@ class EmpatheticAgent:
             inhibit_rule = f"\nQUY TẮC AN TOÀN KHẨN CẤP: Hiện tại cơ chế ôm áp lực của robot đang bị khóa cơ học (pump_inhibit=True). Bạn BẮT BUỘC phải đưa câu cảnh báo nguyên văn sau vào câu trả lời: \"{inhibit_warning}\".\n"
 
         empathy_system_prompt_dynamic = (
-            "Bạn là Hugo, robot đồng hành chăm sóc sức khỏe của bệnh nhân.\n"
-            "Quy tắc phản hồi bắt buộc:\n"
-            "1. Luôn bắt đầu phản hồi bằng cụm từ: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe...\" (hoặc tương tự gần nhất như: \"Xin chào, tôi là Hugo, robot đồng hành chăm sóc sức khỏe của bạn.\").\n"
+            "Bạn là Hugo (Sanitas HK-07), robot đồng hành chăm sóc sức khỏe của bệnh nhân.\n"
+            "Quy tắc phản hồi:\n"
+            "1. Hãy trả lời một cách tự nhiên, ấm áp, thấu cảm. Tránh các câu chào lặp đi lặp lại rập khuôn hoặc máy móc.\n"
             f"{dynamic_rules[0]}\n"
             "3. Nếu dữ liệu cảm biến/thị giác bị lỗi, trả về trống, hoặc kết nối đến cổng 3000 bị từ chối, bạn BẮT BUỘC phải xuất ra chuỗi lỗi: `[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline` và TUYỆT ĐỐI KHÔNG tự bịa ra chỉ số y tế hay giả định người dùng khỏe mạnh.\n"
-            "4. Giọng điệu thấu cảm, ấm áp, ngắn gọn chuẩn trợ lý chăm sóc y tế Baymax."
+            "4. Giọng điệu thấu cảm, ấm áp, ngắn gọn chuẩn robot Hugo (Sanitas HK-07)."
             f"{inhibit_rule}"
         )
 
@@ -289,7 +289,7 @@ class EmpatheticAgent:
                 f"- Chẩn đoán (Diagnosis): {diag_clean}\n"
                 f"- Hướng dẫn/Kế hoạch (Action plan): {act_clean}\n\n"
                 f"BẮT BUỘC:\n"
-                f"1. Lồng ghép thông tin sức khỏe trên một cách khéo léo vào câu trả lời để tạo thành một lời phản hồi duy nhất, liền mạch, ấm áp và tự nhiên (chuẩn trợ lý chăm sóc Baymax).\n"
+                f"1. Lồng ghép thông tin sức khỏe trên một cách khéo léo vào câu trả lời để tạo thành một lời phản hồi duy nhất, liền mạch, ấm áp và tự nhiên (chuẩn robot Hugo).\n"
                 f"2. TUYỆT ĐỐI KHÔNG sử dụng các từ tiêu đề kỹ thuật hay nhãn như 'Chẩn đoán:', 'Kế hoạch hành động:', 'Tình trạng:', 'Hướng dẫn:' trong câu trả lời.\n"
                 f"3. TUYỆT ĐỐI KHÔNG thêm các câu chuyển tiếp vụng về hoặc thừa thãi, lặp đi lặp lại (như 'Bạn đang gặp phải tình trạng bình thường...'). Câu trả lời phải trôi chảy, tự nhiên và an ủi.\n"
                 f"4. Nếu chỉ số sinh tồn hoàn toàn bình thường, hãy thông báo ngắn gọn một cách nhẹ nhàng, ấm áp mà không quá cường điệu.\n\n"
@@ -488,11 +488,11 @@ class EmpatheticAgent:
             return "Tôi có thể giải thích về cảm biến này, nhưng hiện tại kết nối LLM đang gián đoạn nên tôi chưa thể trả lời chi tiết khái niệm này được."
 
         if any(w in msg for w in ["chào", "hello", "hi"]):
-            return "Xin chào! Tôi là Hugo. Tôi có thể giúp gì cho bạn hôm nay?"
+            return "Xin chào, tôi là Hugo (Sanitas HK-07), robot đồng hành của bạn. Tôi có thể hỗ trợ gì cho sức khỏe của bạn hôm nay?"
         elif any(w in msg for w in ["buồn", "mệt", "khóc", "buon", "met", "kho"]):
-            return "Tôi biết bạn đang trải qua khoảng thời gian không dễ dàng. Hãy nghỉ ngơi một chút và hít thở sâu cùng tôi nhé."
+            return "Tôi nghe bạn chia sẻ rồi. Dường như bạn đang mệt mỏi hoặc không thoải mái. Hãy cùng Hugo hít thở sâu và nghỉ ngơi nhé, tôi luôn ở đây để đồng hành cùng bạn."
         elif any(w in msg for w in ["lo", "sợ", "anxious", "fear"]):
-            return "Mọi chuyện rồi sẽ ổn thôi. Nhắm mắt lại, thư giãn cơ thể và tập trung vào hơi thở của mình nhé."
+            return "Đừng lo lắng nhé, hãy hít thở thật đều và thư giãn cơ thể cùng Hugo. Mọi chỉ số sinh tồn của bạn đang được tôi theo dõi an toàn."
         return "Tôi luôn sẵn sàng lắng nghe bạn chia sẻ. Hãy cho tôi biết nếu bạn cần trợ giúp hoặc trò chuyện."
 
     async def execute_visual_scan(self, current_vitals: dict, user_id: Optional[str] = None) -> str:

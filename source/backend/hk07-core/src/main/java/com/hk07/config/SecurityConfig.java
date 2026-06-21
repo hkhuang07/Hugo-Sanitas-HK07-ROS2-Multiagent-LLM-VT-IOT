@@ -51,7 +51,7 @@ public class SecurityConfig {
                 // ── Internal service endpoints (Python hk07-agent → hk07-core) ──
                 // Agent log POST uses internal JWT — already protected by JWT filter
                 // ── Role-Based Access Control ────────────────────────────────────
-                .requestMatchers("/api/v1/safety/**", "/api/v1/agents/**")
+                .requestMatchers("/api/v1/safety/**", "/api/v1/agents/**", "/api/v1/sensor-cache/**")
                     .hasAnyRole(UserRole.OWNER.name(), UserRole.OPERATOR.name())
                 // Only OWNER can issue shutdown command
                 .requestMatchers("/api/v1/robot/command/shutdown")

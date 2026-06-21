@@ -34,26 +34,26 @@ class TestLocalOfflineFallback(unittest.TestCase):
     def test_rule_based_completion_greetings(self):
         """Verify greeting query matches rule-based response."""
         res = LocalOfflineFallback.get_completion_fallback("Xin chào, bạn khỏe không?")
-        self.assertIn("Baymax", res)
-        self.assertIn("offline", res.lower())
+        self.assertIn("Hugo", res)
+        self.assertIn("ngoại tuyến", res.lower())
 
     def test_rule_based_completion_emergency(self):
         """Verify emergency query triggers rule-based emergency message."""
         res = LocalOfflineFallback.get_completion_fallback("Cấp cứu! Tôi đang bị đột quỵ")
-        self.assertIn("EMERGENCY", res)
-        self.assertIn("local emergency protocol", res.lower())
+        self.assertIn("KHẨN CẤP", res)
+        self.assertIn("khẩn cấp cục bộ", res.lower())
 
     def test_rule_based_completion_symptoms(self):
         """Verify symptoms query advise vitals check."""
         res = LocalOfflineFallback.get_completion_fallback("Tôi bị đau ngực dữ dội")
-        self.assertIn("offline", res.lower())
-        self.assertIn("vitals", res.lower())
+        self.assertIn("ngoại tuyến", res.lower())
+        self.assertIn("chỉ số", res.lower())
 
     def test_rule_based_completion_status(self):
         """Verify status query returns offline status message."""
         res = LocalOfflineFallback.get_completion_fallback("Kiểm tra trạng thái kết nối")
         self.assertIn("ONLINE", res)
-        self.assertIn("unreachable", res.lower())
+        self.assertIn("không khả dụng", res.lower())
 
     def test_rule_based_tool_call_emergency(self):
         """Verify emergency query maps to trigger_sos_protocol tool."""

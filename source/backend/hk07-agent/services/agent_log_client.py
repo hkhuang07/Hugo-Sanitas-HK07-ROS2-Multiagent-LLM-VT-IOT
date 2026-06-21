@@ -73,7 +73,7 @@ class AgentLogClient:
         self._http = httpx.AsyncClient(
             base_url=CORE_API_URL,
             timeout=httpx.Timeout(5.0),
-            limits=httpx.Limits(max_connections=2, max_keepalive_connections=1)
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
         )
         await self._authenticate()
         self._flush_task = asyncio.create_task(self._flush_loop())

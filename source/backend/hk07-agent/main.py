@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 import sys
+from typing import Optional, Dict, Any, List
 # Prevent UnicodeEncodeError on Windows CP1252/other non-UTF-8 console encodings
 if sys.platform.startswith("win"):
     try:
@@ -68,12 +69,10 @@ def load_env_file():
 
 def get_default_gateway_ip() -> str:
     try:
-        # Standard Linux/WSL2 routing table evaluation
-        with open("/proc/net/route") as fh:
-            for line in fh:
-                fields = line.strip().split()
-                if len(fields) > 2 and fields[1] == "00000000":
-                    return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+        from utils.ip_scanner import get_default_route_info
+        gw_ip, _ = get_default_route_info()
+        if gw_ip:
+            return gw_ip
     except Exception:
         pass
     return "127.0.0.1"
@@ -404,6 +403,250 @@ async def rosbridge_client_loop():
             backoff = min(backoff * 2.0, 30.0)
 
 
+# ──────────────────────────────────────────────────────────────────────
+# [BUG2-FIX] HEADLESS PERSISTENT SENSOR INGESTION DAEMON
+#
+# Root Cause: Sensor/IPWebcam data previously only streamed when /sensor-telemetry
+#             or /vision pages were mounted in the browser (client-side hooks).
+#             On /companion route, SensorFusionBuffer was starved and returned stale/None.
+#
+# Fix: A persistent async coroutine continuously polls the IPWebcam stream
+#      and sensor fusion buffer at 500ms intervals, completely independent of
+#      frontend navigation state. The /companion page reads from the centralized
+#      in-memory cache via /api/v1/sensor-cache/latest instead of triggering
+#      its own direct ingestion.
+# ──────────────────────────────────────────────────────────────────────
+
+# Global in-memory sensor cache (hydrated by daemon, read by /companion endpoint)
+_sensor_cache: dict = {
+    "vitals": None,
+    "frame_bytes": None,
+    "frame_ts": None,
+    "imu": None,
+    "fall_detected": False,
+    "fever_alert": False,
+    "daemon_status": "STARTING",
+    "last_update": None,
+}
+
+_cache_lock: Optional[asyncio.Lock] = None
+
+# ── [HOT-RELOAD] Device config — updated via POST /api/v1/config/device-ip ──────
+# Daemon reads from this dict every poll cycle, allowing IP changes without restart
+_device_config: dict = {
+    "phone_ip": os.getenv("PHONE_IP", ""),
+    "camera_port": os.getenv("CAMERA_PORT", "8080"),
+    "updated_at": 0,
+}
+_device_config_lock: Optional[asyncio.Lock] = None
+
+
+async def run_headless_camera_daemon():
+    """
+    Headless persistent camera ingestion daemon.
+    Polls IPWebcam /shot.jpg at 500ms intervals (2 Hz).
+    Pushes each frame into SensorFusionBuffer and updates frame bytes in _sensor_cache.
+    Circuit breaker: 5s reconnect delay on repeated camera failures.
+    """
+    import time
+    import base64
+    try:
+        import httpx
+    except ImportError:
+        log.error("[CAMERA_DAEMON] httpx not installed. Camera polling disabled.")
+        return
+
+    log.info("[CAMERA_DAEMON] ▶ Headless Camera Daemon started. Poll interval: 500ms.")
+
+    # [HOT-RELOAD] Read initial config from hot-reload dict
+    phone_ip    = _device_config.get("phone_ip") or os.getenv("PHONE_IP", "")
+    camera_port = _device_config.get("camera_port") or os.getenv("CAMERA_PORT", "8080")
+    poll_interval   = float(os.getenv("SENSOR_DAEMON_POLL_S",  "0.5"))
+    failure_backoff = float(os.getenv("SENSOR_DAEMON_BACKOFF_S", "5.0"))
+
+    consecutive_failures = 0
+    MAX_FAILURES_BEFORE_BACKOFF = 5
+    camera_url: str = ""
+    _last_config_ts: int = 0
+
+    async def _resolve_camera_url() -> str:
+        nonlocal phone_ip, camera_port, camera_url, _last_config_ts
+        # [HOT-RELOAD] Check if config was updated since last resolution
+        config_ts = _device_config.get("updated_at", 0)
+        if config_ts > _last_config_ts:
+            new_ip = _device_config.get("phone_ip", "")
+            new_port = _device_config.get("camera_port", "8080")
+            if new_ip and (new_ip != phone_ip or new_port != camera_port):
+                log.info("[CAMERA_DAEMON] Hot-reload: IP changed %s:%s → %s:%s",
+                         phone_ip, camera_port, new_ip, new_port)
+                phone_ip = new_ip
+                camera_port = new_port
+                camera_url = ""  # Reset URL to trigger re-resolution
+            _last_config_ts = config_ts
+        # Also check env var (set by Python bridge /api/v1/config/device-ip)
+        env_ip = os.getenv("PHONE_IP", "")
+        if env_ip and env_ip != phone_ip:
+            phone_ip = env_ip
+            camera_url = ""
+        if phone_ip:
+            return f"http://{phone_ip}:{camera_port}/shot.jpg"
+        try:
+            from utils.ip_scanner import discover_ipwebcam_ip
+            discovered = await discover_ipwebcam_ip()
+            if discovered:
+                os.environ["PHONE_IP"] = discovered
+                return f"http://{discovered}:{camera_port}/shot.jpg"
+        except Exception as e:
+            log.error("[CAMERA_DAEMON] Error during camera IP discovery: %s", e)
+        return ""
+
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        while True:
+            try:
+                if not camera_url:
+                    camera_url = await _resolve_camera_url()
+                    if not camera_url:
+                        log.debug("[CAMERA_DAEMON] Camera URL not resolved. Retrying in %.1fs.", failure_backoff)
+                        async with _cache_lock:
+                            _sensor_cache["daemon_status"] = "CAMERA_UNRESOLVED"
+                        await asyncio.sleep(failure_backoff)
+                        continue
+                    log.info("[CAMERA_DAEMON] Camera resolved: %s", camera_url)
+
+                resp = await client.get(camera_url)
+                if resp.status_code == 200 and resp.content:
+                    frame_bytes = resp.content
+                    frame_b64 = base64.b64encode(frame_bytes).decode("utf-8")
+                    ts = time.time()
+
+                    fusion_buf = get_fusion_buffer()
+                    from services.sensor_fusion_buffer import CameraFrame
+                    await fusion_buf.push_camera(
+                        CameraFrame(frame_path="", frame_b64=frame_b64)
+                    )
+
+                    async with _cache_lock:
+                        _sensor_cache["frame_bytes"] = frame_bytes
+                        _sensor_cache["frame_ts"]  = ts
+                        _sensor_cache["daemon_status"] = "OK"
+                        _sensor_cache["last_update"]   = ts
+                    consecutive_failures = 0
+                else:
+                    raise ValueError(f"HTTP {resp.status_code}")
+
+                await asyncio.sleep(poll_interval)
+
+            except asyncio.CancelledError:
+                log.info("[CAMERA_DAEMON] Shutdown signal received.")
+                break
+            except Exception as exc:
+                consecutive_failures += 1
+                async with _cache_lock:
+                    _sensor_cache["daemon_status"] = f"CAMERA_ERROR ({consecutive_failures})"
+                if consecutive_failures >= MAX_FAILURES_BEFORE_BACKOFF:
+                    if consecutive_failures == MAX_FAILURES_BEFORE_BACKOFF:
+                        log.warning(
+                            "[CAMERA_DAEMON] %d consecutive failures. Resetting camera URL and backing off %.1fs.",
+                            consecutive_failures, failure_backoff
+                        )
+                        camera_url = ""
+                    await asyncio.sleep(failure_backoff)
+                else:
+                    log.debug("[CAMERA_DAEMON] Camera fetch error: %s", exc)
+                    await asyncio.sleep(poll_interval)
+
+
+async def run_headless_vitals_daemon():
+    """
+    Headless persistent vitals/IMU cache update daemon.
+    Decoupled from camera state. Continuously syncs SensorFusionBuffer and Blackboard
+    metrics to the global cache at 500ms intervals.
+    """
+    import time
+    log.info("[VITALS_DAEMON] ▶ Headless Vitals Daemon started. Poll interval: 500ms.")
+    poll_interval = float(os.getenv("SENSOR_DAEMON_POLL_S", "0.5"))
+
+    while True:
+        try:
+            fusion_buf = get_fusion_buffer()
+            latest_vitals = await fusion_buf.latest_vitals()
+
+            bb = get_blackboard()
+            fall_detected = await bb.read_value("sensor:vitals:is_falling") or False
+            fever_alert   = await bb.read_value("sensor:camera:fever_alert") or False
+            imu           = await bb.read_value("sensor:imu:latest")
+
+            async with _cache_lock:
+                if latest_vitals:
+                    _sensor_cache["vitals"] = {
+                        "hr":   latest_vitals.heart_rate,
+                        "spo2": latest_vitals.spo2,
+                        "temp": latest_vitals.body_temperature,
+                        "alert_level": latest_vitals.alert_level,
+                    }
+                _sensor_cache["fall_detected"] = fall_detected
+                _sensor_cache["fever_alert"]   = fever_alert
+                _sensor_cache["imu"]           = imu
+                _sensor_cache["last_update"]   = time.time()
+
+            await asyncio.sleep(poll_interval)
+
+        except asyncio.CancelledError:
+            log.info("[VITALS_DAEMON] Shutdown signal received.")
+            break
+        except Exception as exc:
+            log.error("[VITALS_DAEMON] Error: %s", exc)
+            await asyncio.sleep(poll_interval)
+
+
+async def run_auto_perception_scan_loop():
+    """
+    [AUTO_VISION] Headless auto-perception scan daemon.
+    Triggers PerceptionAgent.execute_full_body_scan() every 15s when camera is live.
+    Results are written to Blackboard and cached in _sensor_cache for frontend polling.
+    This eliminates the need for manual [TRIGGER_SCAN] click on the Vision page.
+    """
+    import time
+    log.info("[AUTO_VISION] ▶ Auto-Perception Scan Loop started. Interval: 15s.")
+    await asyncio.sleep(8.0)  # warm-up: let camera daemon initialize first
+
+    while True:
+        try:
+            # Only scan if camera daemon has a fresh frame (< 15s old)
+            async with _cache_lock:
+                cam_status = _sensor_cache.get("daemon_status", "")
+                frame_ts = _sensor_cache.get("frame_ts")
+
+            frame_is_fresh = frame_ts is not None and (time.time() - frame_ts) < 15.0
+
+            if frame_is_fresh or cam_status == "OK":
+                log.info("[AUTO_VISION] Triggering auto perception scan...")
+                scan = await perception_agent.execute_full_body_scan()
+                # Cache scan result for faster frontend retrieval
+                async with _cache_lock:
+                    _sensor_cache["latest_perception_scan"] = scan.to_dict()
+                    _sensor_cache["latest_perception_ts"] = time.time()
+                log.info(
+                    "[AUTO_VISION] Scan complete — risk=%s confidence=%.2f provider=%s",
+                    scan.overall_risk, scan.confidence, scan.status
+                )
+            else:
+                log.debug(
+                    "[AUTO_VISION] Scan skipped — camera not ready (status=%s, frame_age=%.1fs)",
+                    cam_status,
+                    (time.time() - frame_ts) if frame_ts else 999
+                )
+
+            await asyncio.sleep(15.0)
+
+        except asyncio.CancelledError:
+            log.info("[AUTO_VISION] Shutdown signal received.")
+            break
+        except Exception as e:
+            log.error("[AUTO_VISION] Error in auto scan loop: %s", e)
+            await asyncio.sleep(15.0)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown sequence for the agent engine"""
@@ -412,6 +655,11 @@ async def lifespan(app: FastAPI):
     log.info("|  Architecture: Supervisor Node-Router Graph      |")
     log.info("|  MAS-STANDARD: ROUTER -> SAFETY/MED/EMP          |")
     log.info("+--------------------------------------------------+")
+
+    # Initialize cache state locks
+    global _cache_lock, _device_config_lock
+    _cache_lock = asyncio.Lock()
+    _device_config_lock = asyncio.Lock()
 
     # Active network config initialization directly in primary startup hook
     load_env_file()
@@ -435,6 +683,11 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_subsumption_safety_worker(), name="subsumption-safety-worker"),
         asyncio.create_task(rosbridge_client_loop(), name="rosbridge-client"),
         asyncio.create_task(run_network_ingestion_worker(), name="network-ingestion-worker"),
+        # [BUG2-FIX] Decoupled Headless persistent sensor daemons — run regardless of active frontend route
+        asyncio.create_task(run_headless_camera_daemon(), name="headless-camera-daemon"),
+        asyncio.create_task(run_headless_vitals_daemon(), name="headless-vitals-daemon"),
+        # [AUTO_VISION] Autonomous perception scan loop — triggers every 15s when camera is live
+        asyncio.create_task(run_auto_perception_scan_loop(), name="auto-perception-scan"),
     ]
     # Start isolated heartbeat background thread
     start_isolated_heartbeat_thread()
@@ -473,7 +726,7 @@ async def lifespan(app: FastAPI):
 # ─── FastAPI Application ─────────────────────────────────────────────────────
 app = FastAPI(
     title="HK-07 Multi-Agent Engine (Phase 2)",
-    description="Baymax Cognitive Multi-Agent system — Blackboard + Orchestrator V2 + Perception Agent",
+    description="Hugo (Sanitas HK-07) Multi-Agent Cognitive System — Blackboard + Orchestrator V2 + Perception Agent",
     version="2.0.0-phase2",
     lifespan=lifespan,
     docs_url="/docs",
@@ -503,6 +756,105 @@ async def agents_status():
         "medical": orchestrator.medical_agent.get_status(),
         "safety": orchestrator.safety_agent.get_status(),
         "arbitrator": arbitrator.get_current_priority_agent(),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# [BUG2-FIX] Centralized Sensor Cache Endpoint (for /companion page)
+# ──────────────────────────────────────────────────────────────────────
+@app.get("/api/v1/sensor-cache/latest")
+async def sensor_cache_latest():
+    """
+    Returns the latest sensor state from the centralized in-memory cache
+    hydrated by run_headless_sensor_daemon.
+
+    The /companion frontend page MUST poll this endpoint instead of mounting
+    its own ingestion hooks. Polling interval recommended: 500–1000ms.
+
+    Response schema:
+      vitals:        { hr, spo2, temp, alert_level } or null
+      frame_b64:     base64 JPEG string or null
+      frame_ts:      Unix timestamp of last captured frame
+      fall_detected: bool
+      fever_alert:   bool
+      imu:           latest IMU dict or null
+      daemon_status: str (OK | CAMERA_UNRESOLVED | CAMERA_ERROR | RUNNING | STOPPED)
+      last_update:   Unix timestamp of last daemon cycle
+    """
+    import time
+    if _cache_lock.locked():
+        vitals = _sensor_cache.get("vitals")
+        daemon_status = _sensor_cache.get("daemon_status", "UNKNOWN")
+        last_update = _sensor_cache.get("last_update")
+        fall_detected = _sensor_cache.get("fall_detected", False)
+        fever_alert = _sensor_cache.get("fever_alert", False)
+        imu = _sensor_cache.get("imu")
+        frame_bytes = _sensor_cache.get("frame_bytes")
+        frame_ts = _sensor_cache.get("frame_ts")
+    else:
+        async with _cache_lock:
+            vitals = _sensor_cache.get("vitals")
+            daemon_status = _sensor_cache.get("daemon_status", "UNKNOWN")
+            last_update = _sensor_cache.get("last_update")
+            fall_detected = _sensor_cache.get("fall_detected", False)
+            fever_alert = _sensor_cache.get("fever_alert", False)
+            imu = _sensor_cache.get("imu")
+            frame_bytes = _sensor_cache.get("frame_bytes")
+            frame_ts = _sensor_cache.get("frame_ts")
+
+    # Build LocalOfflineFallback vitals_context for downstream use
+    vitals_context = None
+    if vitals:
+        hr   = vitals.get("hr") or 0
+        temp = vitals.get("temp") or 0
+        vitals_context = {
+            "hr":            hr,
+            "temp":          temp,
+            "spo2":          vitals.get("spo2"),
+            "fever":         temp >= 38.0,
+            "tachycardia":   hr >= 100,
+            "fall_detected": fall_detected,
+        }
+    return {
+        "status":        "ok",
+        "daemon_status": daemon_status,
+        "last_update":   last_update,
+        "vitals":        vitals,
+        "vitals_context": vitals_context,
+        "fall_detected": fall_detected,
+        "fever_alert":   fever_alert,
+        "imu":           imu,
+        # frame_b64 excluded from this endpoint by default (size) —
+        # use /api/v1/sensor-cache/frame for raw frame access
+        "frame_available": frame_bytes is not None,
+        "frame_ts":      frame_ts,
+    }
+
+
+@app.get("/api/v1/sensor-cache/frame")
+async def sensor_cache_frame():
+    """
+    Returns the latest base64 JPEG frame from the headless sensor daemon cache.
+    Intended for the /companion camera preview widget.
+    """
+    import base64
+    if _cache_lock.locked():
+        frame_bytes = _sensor_cache.get("frame_bytes")
+        frame_ts = _sensor_cache.get("frame_ts")
+    else:
+        async with _cache_lock:
+            frame_bytes = _sensor_cache.get("frame_bytes")
+            frame_ts = _sensor_cache.get("frame_ts")
+
+    if not frame_bytes:
+        return {"status": "no_frame", "frame_b64": None}
+    
+    # Lazy Base64 encoding on-demand
+    frame_b64 = base64.b64encode(frame_bytes).decode("utf-8")
+    return {
+        "status":    "ok",
+        "frame_b64": frame_b64,
+        "frame_ts":  frame_ts,
     }
 
 
@@ -847,14 +1199,103 @@ async def push_vitals(body: dict):
         return {"status": "error", "error": str(exc)}
 
 
+# ── [HOT-RELOAD] Device IP Configuration Endpoint ───────────────────────────────
+@app.post("/api/v1/config/device-ip")
+async def update_device_ip(body: dict):
+    """
+    Hot-reload device IP configuration for the camera daemon and PerceptionAgent.
+    Called by frontend DeviceIpConfigModal on IP confirm — no daemon restart needed.
+    Body: { "ip": str, "port": str (optional, default "8080") }
+    """
+    import time
+    new_ip   = (body.get("ip") or body.get("phone_ip") or "").strip()
+    new_port = (body.get("port") or body.get("camera_port") or "8080").strip()
+
+    if not new_ip:
+        return {"status": "error", "message": "ip field is required"}
+
+    # Update global hot-reload config
+    _device_config["phone_ip"]    = new_ip
+    _device_config["camera_port"] = new_port
+    _device_config["updated_at"]  = int(time.time() * 1000)
+
+    # Also sync to environment for PerceptionAgent IP discovery
+    os.environ["PHONE_IP"]    = new_ip
+    os.environ["CAMERA_PORT"] = new_port
+
+    # Write to Blackboard for PerceptionAgent to consume
+    try:
+        bb = get_blackboard()
+        await bb.write_value("PHONE_IP", new_ip)
+    except Exception as e:
+        log.warning("[CONFIG] Blackboard write skipped: %s", e)
+
+    log.info("[CONFIG] \U0001f4f1 Device IP hot-reloaded: %s:%s", new_ip, new_port)
+    return {
+        "status": "ok",
+        "phone_ip": new_ip,
+        "camera_port": new_port,
+        "message": f"Camera daemon will use {new_ip}:{new_port} on next poll cycle"
+    }
+
+
+@app.get("/api/v1/sensor-cache/vision")
+async def sensor_cache_vision():
+    """
+    Vision status endpoint — returns latest perception scan + camera daemon state.
+    Designed for efficient frontend polling (combines perception + camera in one call).
+    Poll interval recommendation: 5s (perception scans run at 15s intervals).
+    """
+    import time
+    if _cache_lock and not _cache_lock.locked():
+        async with _cache_lock:
+            latest_scan    = _sensor_cache.get("latest_perception_scan")
+            latest_scan_ts = _sensor_cache.get("latest_perception_ts")
+            daemon_status  = _sensor_cache.get("daemon_status", "UNKNOWN")
+            frame_ts       = _sensor_cache.get("frame_ts")
+            frame_avail    = _sensor_cache.get("frame_bytes") is not None
+    else:
+        latest_scan    = _sensor_cache.get("latest_perception_scan")
+        latest_scan_ts = _sensor_cache.get("latest_perception_ts")
+        daemon_status  = _sensor_cache.get("daemon_status", "UNKNOWN")
+        frame_ts       = _sensor_cache.get("frame_ts")
+        frame_avail    = _sensor_cache.get("frame_bytes") is not None
+
+    now = time.time()
+    frame_age_s    = round(now - frame_ts,    1) if frame_ts else None
+    scan_age_s     = round(now - latest_scan_ts, 1) if latest_scan_ts else None
+    camera_fresh   = frame_age_s is not None and frame_age_s < 10.0
+
+    return {
+        "status":          "ok",
+        "daemon_status":   daemon_status,
+        "camera_fresh":    camera_fresh,
+        "frame_available": frame_avail,
+        "frame_age_s":     frame_age_s,
+        "frame_ts":        frame_ts,
+        "phone_ip":        _device_config.get("phone_ip", ""),
+        "camera_port":     _device_config.get("camera_port", "8080"),
+        "latest_scan":     latest_scan,
+        "scan_age_s":      scan_age_s,
+    }
+
+
 if __name__ == "__main__":
     import logging.handlers
+    # Dynamic loop type selection based on platform support (uvloop not supported natively on Windows)
+    loop_type = "asyncio"
+    try:
+        import uvloop
+        loop_type = "uvloop"
+    except ImportError:
+        pass
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
-        workers=1,
-        loop="asyncio",
+        workers=4,
+        loop=loop_type,
         log_level="info",
         access_log=False,
     )

@@ -197,13 +197,27 @@ class LanceMemory:
         if not self._initialized or not self._table:
             return ""
         try:
-            records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
-            count = sum(1 for r in records if r.get("id", "").startswith(f"em_{user_id}_"))
+            # Bounded predicate query to filter type and ID prefix directly in LanceDB
+            records = await asyncio.to_thread(
+                lambda: self._table.search()
+                .where(f"type = 'emotional_event' AND id >= 'em_{user_id}_' AND id < 'em_{user_id}_\uFFFF'")
+                .to_arrow()
+                .to_pylist()
+            )
+            count = len(records)
             if count == 0:
                 return ""
             return f"Đã có {count} sự kiện được ghi nhớ về chủ nhân."
-        except Exception:
-            return ""
+        except Exception as e:
+            log.warning("[LANCE_MEMORY] Bounded preferences query failed: %s. Falling back to full table scan.", e)
+            try:
+                records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+                count = sum(1 for r in records if r.get("id", "").startswith(f"em_{user_id}_"))
+                if count == 0:
+                    return ""
+                return f"Đã có {count} sự kiện được ghi nhớ về chủ nhân."
+            except Exception:
+                return ""
 
     async def sync_medical_baseline(self, body: dict):
         """
@@ -253,40 +267,62 @@ class LanceMemory:
         if not self._initialized or not self._table:
             return "Hồ sơ y tế: Chưa được thiết lập."
         try:
-            # Query the table for records of type 'medical_baseline' using PyArrow
-            records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+            # Query the table for records of type 'medical_baseline' and matching mb_{user_id} using LanceDB search
+            records = await asyncio.to_thread(
+                lambda: self._table.search()
+                .where(f"type = 'medical_baseline' AND id = 'mb_{user_id}'")
+                .to_arrow()
+                .to_pylist()
+            )
             if not records:
                 return "Hồ sơ y tế: Chưa có thông tin cấu hình."
             
-            # Filter rows with type = 'medical_baseline' and matches the user_id's id 'mb_{user_id}'
-            baselines = [r for r in records if r.get("type") == "medical_baseline" and r.get("id") == f"mb_{user_id}"]
-            if not baselines:
-                return "Hồ sơ y tế: Chưa có thông tin cấu hình."
-            
             # Return the content of the most recent medical baseline (latest timestamp)
-            baselines.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
-            content = baselines[0]["content"]
+            records.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
+            content = records[0]["content"]
             return content
         except Exception as e:
-            log.error("[LANCE_MEMORY_RECALL_ERROR] %s", e)
-            return "Hồ sơ y tế: Lỗi truy xuất cơ sở dữ liệu."
+            log.warning("[LANCE_MEMORY] Bounded medical baseline query failed: %s. Falling back to full scan.", e)
+            try:
+                records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+                baselines = [r for r in records if r.get("type") == "medical_baseline" and r.get("id") == f"mb_{user_id}"]
+                if not baselines:
+                    return "Hồ sơ y tế: Chưa có thông tin cấu hình."
+                baselines.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
+                return baselines[0]["content"]
+            except Exception as ex:
+                log.error("[LANCE_MEMORY_RECALL_ERROR] %s", ex)
+                return "Hồ sơ y tế: Lỗi truy xuất cơ sở dữ liệu."
 
     async def retrieve_recent_events(self, limit: int = 5, user_id: str = "default_user") -> list:
         """Retrieve the most recent emotional events or preferences for RAG context"""
         if not self._initialized or not self._table:
             return []
         try:
-            records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+            # Bounded predicate query to filter type and ID prefix, with a quick limit
+            records = await asyncio.to_thread(
+                lambda: self._table.search()
+                .where(f"type = 'emotional_event' AND id >= 'em_{user_id}_' AND id < 'em_{user_id}_\uFFFF'")
+                .limit(limit * 2)
+                .to_arrow()
+                .to_pylist()
+            )
             if not records:
                 return []
-            # Filter by prefix of ID matching the user_id
-            user_records = [r for r in records if r.get("id", "").startswith(f"em_{user_id}_")]
-            # Sort by timestamp_ms descending
-            user_records.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
-            return user_records[:limit]
+            records.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
+            return records[:limit]
         except Exception as e:
-            log.error("[LANCE_MEMORY_RETRIEVE_ERROR] %s", e)
-            return []
+            log.warning("[LANCE_MEMORY] Bounded events query failed: %s. Falling back to full scan.", e)
+            try:
+                records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+                if not records:
+                    return []
+                user_records = [r for r in records if r.get("id", "").startswith(f"em_{user_id}_")]
+                user_records.sort(key=lambda x: x.get("timestamp_ms", 0), reverse=True)
+                return user_records[:limit]
+            except Exception as ex:
+                log.error("[LANCE_MEMORY_RETRIEVE_ERROR] %s", ex)
+                return []
 
     async def search_similar_patterns(self, query: str, limit: int = 3, user_id: str = "default_user") -> list[dict]:
         """
@@ -296,20 +332,23 @@ class LanceMemory:
         if not self._initialized or not self._table:
             return []
         try:
-            records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
-            if not records:
-                return []
-            
-            # Simple keyword matching on the content field (case-insensitive)
             keywords = [kw for kw in query.lower().split() if len(kw) > 1]
             if not keywords:
                 return []
                 
+            # Filter type and user directly in database to avoid loading extraneous users or record types
+            records = await asyncio.to_thread(
+                lambda: self._table.search()
+                .where(f"type = 'emotional_event' AND id >= 'em_{user_id}_' AND id < 'em_{user_id}_\uFFFF'")
+                .to_arrow()
+                .to_pylist()
+            )
+            if not records:
+                return []
+            
             # Score each row based on keyword frequency
             scored_records = []
             for r in records:
-                if not r.get("id", "").startswith(f"em_{user_id}_"):
-                    continue
                 content = r.get("content") or ""
                 content_lower = content.lower()
                 score = sum(1 for kw in keywords if kw in content_lower)
@@ -321,12 +360,39 @@ class LanceMemory:
             if not scored_records:
                 return []
 
-            # Sort by score descending, then timestamp_ms descending
             scored_records.sort(key=lambda x: (x["score"], x.get("timestamp_ms", 0)), reverse=True)
             return scored_records[:limit]
         except Exception as e:
-            log.error("[LANCE_MEMORY_SEARCH_ERROR] %s", e)
-            return []
+            log.warning("[LANCE_MEMORY] Bounded search failed: %s. Falling back to full scan.", e)
+            try:
+                records = await asyncio.to_thread(lambda: self._table.to_arrow().to_pylist())
+                if not records:
+                    return []
+                
+                keywords = [kw for kw in query.lower().split() if len(kw) > 1]
+                if not keywords:
+                    return []
+                    
+                scored_records = []
+                for r in records:
+                    if not r.get("id", "").startswith(f"em_{user_id}_"):
+                        continue
+                    content = r.get("content") or ""
+                    content_lower = content.lower()
+                    score = sum(1 for kw in keywords if kw in content_lower)
+                    if score > 0:
+                        r_copy = r.copy()
+                        r_copy["score"] = score
+                        scored_records.append(r_copy)
+
+                if not scored_records:
+                    return []
+
+                scored_records.sort(key=lambda x: (x["score"], x.get("timestamp_ms", 0)), reverse=True)
+                return scored_records[:limit]
+            except Exception as ex:
+                log.error("[LANCE_MEMORY_SEARCH_ERROR] %s", ex)
+                return []
 
     async def search_medical_guidelines(self, query: str, limit: int = 3) -> list[dict]:
         """
@@ -337,13 +403,18 @@ class LanceMemory:
             log.warning("[LANCE_MEMORY] Skipped search_medical_guidelines — guidelines table not initialized")
             return []
         try:
-            records = await asyncio.to_thread(lambda: self._guidelines_table.to_arrow().to_pylist())
-            if not records:
-                return []
-            
-            # Simple keyword matching on title and content fields (case-insensitive)
             keywords = [kw for kw in query.lower().split() if len(kw) > 1]
             if not keywords:
+                return []
+                
+            # Optimize: Select only needed metadata columns, completely omitting large list 'embedding' from read payload
+            records = await asyncio.to_thread(
+                lambda: self._guidelines_table.search()
+                .select(["id", "source", "title", "content", "timestamp_ms"])
+                .to_arrow()
+                .to_pylist()
+            )
+            if not records:
                 return []
                 
             scored_records = []
@@ -364,12 +435,42 @@ class LanceMemory:
             if not scored_records:
                 return []
 
-            # Sort by score descending, then timestamp_ms descending
             scored_records.sort(key=lambda x: (x["score"], x.get("timestamp_ms", 0)), reverse=True)
             return scored_records[:limit]
         except Exception as e:
-            log.error("[LANCE_MEMORY_GUIDELINE_SEARCH_ERROR] %s", e)
-            return []
+            log.warning("[LANCE_MEMORY] Optimized guidelines search failed: %s. Falling back to full scan.", e)
+            try:
+                records = await asyncio.to_thread(lambda: self._guidelines_table.to_arrow().to_pylist())
+                if not records:
+                    return []
+                
+                keywords = [kw for kw in query.lower().split() if len(kw) > 1]
+                if not keywords:
+                    return []
+                    
+                scored_records = []
+                for r in records:
+                    title = (r.get("title") or "").lower()
+                    content = (r.get("content") or "").lower()
+                    score = 0
+                    for kw in keywords:
+                        if kw in title:
+                            score += 2
+                        if kw in content:
+                            score += 1
+                    if score > 0:
+                        r_copy = r.copy()
+                        r_copy["score"] = score
+                        scored_records.append(r_copy)
+
+                if not scored_records:
+                    return []
+
+                scored_records.sort(key=lambda x: (x["score"], x.get("timestamp_ms", 0)), reverse=True)
+                return scored_records[:limit]
+            except Exception as ex:
+                log.error("[LANCE_MEMORY_GUIDELINE_SEARCH_ERROR] %s", ex)
+                return []
 
     async def ingest_chat_cycle(self, user_prompt: str, agent_response: str, user_id: str = "default_user"):
         """Ingest a single user prompt & agent response into agent_chat_memory table"""

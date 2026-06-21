@@ -1,5 +1,5 @@
 """
-test_proactive_baymax.py — Unit and Integration Test Suite for Proactive Baymax Subsystem (Phase 7)
+test_proactive_hugo.py — Unit and Integration Test Suite for Proactive Hugo Subsystem (Phase 7)
 """
 
 import sys
@@ -18,7 +18,7 @@ from agents.empathetic_agent import EmpatheticAgent
 from arbitrator.arbitrator import Arbitrator
 
 
-class TestProactiveBaymax(unittest.IsolatedAsyncioTestCase):
+class TestProactiveHugo(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.arbitrator = Arbitrator()
         self.blackboard = get_blackboard()
@@ -74,6 +74,8 @@ class TestProactiveBaymax(unittest.IsolatedAsyncioTestCase):
             "is_falling": False,
             "emergency_button_pressed": False
         }
+        import collections
+        self.medical._raw_hr_windows["default"] = collections.deque([140, 140, 140, 140, 140], maxlen=5)
         for _ in range(5):
             self.medical._buffer.append(critical_sample)
 

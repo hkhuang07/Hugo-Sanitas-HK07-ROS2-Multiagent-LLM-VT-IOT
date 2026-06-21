@@ -69,6 +69,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useVitalsStore } from './stores/vitals'
 import { initWebSocket, disconnectWebSocket } from './services/websocket'
+import globalStreamingService from './services/globalStreamingService'
 import api from './services/api'
 import NotificationToast from './components/NotificationToast.vue'
 import HeaderStatusStrip from './components/HeaderStatusStrip.vue'
@@ -76,12 +77,16 @@ import RoleSidebar from './components/RoleSidebar.vue'
 import CommonFooter from './components/CommonFooter.vue'
 
 import { useDeviceConfigStore } from './stores/deviceConfig'
+import { useKinematicsStore } from './stores/kinematics'
+import { useSensorTelemetryStore } from './stores/sensorTelemetry'
+import { useVisionStore } from './stores/vision'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
 const deviceConfigStore = useDeviceConfigStore()
+const _visionStore = useVisionStore()
 
 function retryConfigFetch() {
   deviceConfigStore.isConfigError = false
@@ -105,11 +110,20 @@ const showSidebar = computed(() => {
 
 const isDigitalTwin = computed(() => route.name === 'DigitalTwin')
 
+const kinematicsStore = useKinematicsStore()
+const sensorStore = useSensorTelemetryStore()
+
+
+// ── Global Streaming Service: watch auth state ──────────────────────────
+// GlobalStreamingService is a singleton that runs app-level,
+// independent of page navigation. It handles all sensor + vision polling.
 watch(() => authStore.isAuthenticated, (authed) => {
   if (authed) {
     initWebSocket()
+    globalStreamingService.start()  // [GSS] replaces startGlobalSensorCachePolling()
   } else {
     disconnectWebSocket()
+    globalStreamingService.stop()
   }
 }, { immediate: true })
 

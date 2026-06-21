@@ -7,6 +7,7 @@
 
     <!-- ── FULL-SCREEN CAMERA BACKGROUND ──────────────────────────────────── -->
     <div class="camera-bg-layer">
+      <!-- MODE A: Live MJPEG stream -->
       <img
         v-if="cameraOnline"
         :src="mjpegUrl"
@@ -14,6 +15,13 @@
         @error="handleCameraError"
         @load="handleCameraLoad"
         alt="Baymax Optical Stream"
+      />
+      <!-- MODE B: Base64 snapshot from Python daemon (fallback when MJPEG unavailable) -->
+      <img
+        v-else-if="snapshotSrc && visionStore.cameraFresh"
+        :src="snapshotSrc"
+        class="camera-bg-feed snapshot-feed"
+        alt="Baymax Snapshot Frame"
       />
       <div v-else class="camera-bg-offline">
         <div class="noise-bg"></div>
@@ -331,6 +339,7 @@ import { useVitalsStore } from '../stores/vitals.ts';
 import { useSensorTelemetryStore } from '../stores/sensorTelemetry.ts';
 import { useKinematicsStore } from '../stores/kinematics.ts';
 import { useDeviceConfigStore } from '../stores/deviceConfig.ts';
+import { useVisionStore } from '../stores/vision.ts';
 import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue';
 import api from '../services/api.ts';
 
@@ -338,6 +347,7 @@ const vitalsStore = useVitalsStore();
 const sensorStore = useSensorTelemetryStore();
 const kinematicsStore = useKinematicsStore();
 const cfg = useDeviceConfigStore();
+const visionStore = useVisionStore();
 const cameraIp = computed(() => cfg.phoneIp);
 
 // ── Panel cycle state ──────────────────────────────────────────────────────
@@ -345,12 +355,23 @@ const leftPanel = ref(0);   // 0 = CLINICAL_DIAGNOSIS, 1 = PATIENT_BODY_SCAN
 const rightPanel = ref(0);  // 0 = BRAIN, 1 = NEURO, 2 = SOCIAL
 
 // ── Camera / Scan state ────────────────────────────────────────────────────
-// IP is now owned by deviceConfig store — no local cameraIp ref needed
+// [DUAL-MODE] MJPEG primary stream from IP Webcam app.
+// Falls back to base64 snapshot from Python daemon cache when MJPEG is offline.
 const cameraOnline = ref(false);
 const scanning = ref(false);
-const latestScan = ref<any>(null);
+// latestScan now driven from visionStore (populated by GlobalStreamingService)
+const latestScan = computed(() => visionStore.latestScan);
 const scanY = ref(15);
 const scanDirection = ref(1);
+
+// MJPEG URL driven by the shared deviceConfig store
+const mjpegUrl = computed(() => cfg.cameraUrl);
+
+// [SNAPSHOT_FALLBACK] Base64 frame from Python daemon via visionStore
+const snapshotSrc = computed(() => {
+  if (visionStore.cameraFrameB64) return `data:image/jpeg;base64,${visionStore.cameraFrameB64}`;
+  return '';
+});
 
 // ── Bounding Box Tracker ───────────────────────────────────────────────────
 const trackerStyle = computed(() => {
@@ -365,9 +386,6 @@ const trackerStyle = computed(() => {
     height: `${height}%`,
   };
 });
-
-// MJPEG URL driven by the shared deviceConfig store
-const mjpegUrl = computed(() => cfg.cameraUrl);
 
 // ── Vitals ─────────────────────────────────────────────────────────────────
 const heartRate = computed(() => {
@@ -452,19 +470,52 @@ function getBarColor(val: number, max: number, idx: number, warnHigh = false): s
 }
 
 // ── Camera handlers ────────────────────────────────────────────────────────
-function handleCameraLoad() { cameraOnline.value = true; }
-function handleCameraError() { cameraOnline.value = false; }
+function handleCameraLoad() {
+  cameraOnline.value = true;
+  visionStore.setMjpegOnline(true);
+}
+function handleCameraError() {
+  cameraOnline.value = false;
+  visionStore.setMjpegOnline(false);
+}
 
 // Reload camera when user confirms a new IP in DeviceIpConfigModal
 watch(() => cfg.confirmedAt, () => {
   cameraOnline.value = false;
+  visionStore.setMjpegOnline(false);
   // Brief delay lets Vue re-render the img src before re-probing
   setTimeout(() => {
     const img = new Image();
     img.src = cfg.cameraUrl + '?' + Date.now();
-    img.onload = () => { cameraOnline.value = true; };
-    img.onerror = () => { cameraOnline.value = false; };
+    img.onload = () => { cameraOnline.value = true; visionStore.setMjpegOnline(true); };
+    img.onerror = () => { cameraOnline.value = false; visionStore.setMjpegOnline(false); };
   }, 400);
+});
+
+// [AUTO-PROBE] Retry MJPEG connection every 5s when camera is offline
+let _cameraProbeInterval: any = null;
+function startCameraProbe() {
+  if (_cameraProbeInterval) return;
+  _cameraProbeInterval = setInterval(() => {
+    if (cameraOnline.value) return; // already online, skip
+    const probeUrl = cfg.cameraUrl || `http://${cfg.phoneIp}:${cfg.cameraPort}/shot.jpg`;
+    if (!probeUrl.includes('undefined') && probeUrl.length > 10) {
+      const img = new Image();
+      img.src = probeUrl + '?probe=' + Date.now();
+      img.onload = () => { cameraOnline.value = true; visionStore.setMjpegOnline(true); };
+      img.onerror = () => { /* stay offline, will retry */ };
+    }
+  }, 5000);
+}
+
+// [VISION_STORE_WATCH] Sync visionStore daemon status to cameraOnline flag
+// This makes camera show as online even when MJPEG fails but daemon has fresh frame
+watch(() => visionStore.cameraFresh, (fresh) => {
+  // If Python daemon has a fresh frame, mark camera as reachable for snapshot mode
+  if (fresh && !cameraOnline.value) {
+    // Don't set cameraOnline=true here — that's for MJPEG mode only.
+    // Snapshot mode uses v-else-if + snapshotSrc computed.
+  }
 });
 
 async function triggerPerceptionScan() {
@@ -568,6 +619,11 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
   filter: contrast(1.1) brightness(0.75) saturate(0.8) sepia(0.1);
+}
+/* [SNAPSHOT_MODE] Visual indicator when showing cached base64 frame (not live MJPEG) */
+.snapshot-feed {
+  filter: contrast(1.0) brightness(0.65) saturate(0.5) sepia(0.25);
+  box-shadow: inset 0 0 40px rgba(255, 176, 0, 0.08);
 }
 .camera-bg-offline {
   width: 100%; height: 100%;
