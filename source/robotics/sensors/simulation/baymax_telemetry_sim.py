@@ -205,6 +205,7 @@ class BaymaxTelemetrySim(Node):
         self.last_fall_trigger_time = 0.0
         self.g_ema_sim = None
         self.current_cmd_vel = Twist()
+        self.last_estop_log_time = 0.0
         
         # Publishers
         self.pmu_pub = self.create_publisher(JointState, '/telemetry/pmu', 10)
@@ -240,8 +241,11 @@ class BaymaxTelemetrySim(Node):
             is_falling = (g > 15.0) if is_linear else (g < 4.0 or g > 20.0)
             
             if is_falling:
-                self.last_fall_trigger_time = time.time()
-                log.warning(f"[E-STOP TRIGGER] Fall detected in IMU stream. Deflation activated.")
+                now = time.time()
+                self.last_fall_trigger_time = now
+                if now - self.last_estop_log_time >= 2.0:
+                    log.warning(f"[E-STOP TRIGGER] Fall detected in IMU stream. Deflation activated.")
+                    self.last_estop_log_time = now
         except Exception as e:
             log.error(f"Error in IMU state callback: {e}")
 
@@ -259,8 +263,11 @@ class BaymaxTelemetrySim(Node):
                 emergency_button_pressed = bool(msg.position[idx])
                 
             if is_falling or emergency_button_pressed:
-                self.last_fall_trigger_time = time.time()
-                log.warning(f"[E-STOP TRIGGER] Fall or SOS reported by Wristband. Deflation activated.")
+                now = time.time()
+                self.last_fall_trigger_time = now
+                if now - self.last_estop_log_time >= 2.0:
+                    log.warning(f"[E-STOP TRIGGER] Fall or SOS reported by Wristband. Deflation activated.")
+                    self.last_estop_log_time = now
         except Exception as e:
             log.error(f"Error in wristband callback: {e}")
 
@@ -355,16 +362,16 @@ class BaymaxTelemetrySim(Node):
             ]
             self.tactile_pub.publish(tac_msg)
             
-            # 5. Vitals
+            # 5. Vitals — Purged simulated vitals pipeline (Hardware-bound SHBL)
             vit_msg = JointState()
             vit_msg.header.stamp = stamp
             vit_msg.name = ["heartRate", "spo2", "bodyTemperature", "stress_gsr", "respiratory_rate"]
             vit_msg.position = [
-                float(self.physics_engine.hr),
-                float(self.physics_engine.spo2),
-                36.6 if self.physics_engine.state != "DISTRESSED" else 37.8,
-                float(self.physics_engine.stress),
-                float(self.physics_engine.resp_rate)
+                float('nan'),
+                float('nan'),
+                float('nan'),
+                float('nan'),
+                float('nan')
             ]
             self.vitals_pub.publish(vit_msg)
             

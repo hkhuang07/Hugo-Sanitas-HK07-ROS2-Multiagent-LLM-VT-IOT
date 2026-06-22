@@ -28,12 +28,14 @@ import { useKinematicsStore } from '../stores/kinematics'
 import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
 import { useVisionStore } from '../stores/vision'
 import { useAuthStore } from '../stores/auth'
+import { useSafetyStore } from '../stores/safety'
 
 let _vitalsStore: ReturnType<typeof useVitalsStore> | null = null
 let _kinematicsStore: ReturnType<typeof useKinematicsStore> | null = null
 let _sensorStore: ReturnType<typeof useSensorTelemetryStore> | null = null
 let _visionStore: ReturnType<typeof useVisionStore> | null = null
 let _authStore: ReturnType<typeof useAuthStore> | null = null
+let _safetyStore: ReturnType<typeof useSafetyStore> | null = null
 
 function resolveStores() {
   if (!_vitalsStore) {
@@ -42,6 +44,7 @@ function resolveStores() {
     _sensorStore     = useSensorTelemetryStore()
     _visionStore     = useVisionStore()
     _authStore       = useAuthStore()
+    _safetyStore     = useSafetyStore()
   }
 }
 
@@ -101,7 +104,7 @@ class GlobalStreamingService {
 
       // 1. Update vitals store
       if (data.vitals && Object.keys(data.vitals).length > 0) {
-        _vitalsStore.updateVitals({
+        _vitalsStore!.updateVitals({
           deviceId: 'GlobalStream',
           heartRate: data.vitals.hr ?? data.vitals.heart_rate ?? 0,
           spo2: data.vitals.spo2 ?? 99,
@@ -114,7 +117,7 @@ class GlobalStreamingService {
       }
 
       // 2. Update kinematics store (rPPG + thermal)
-      _kinematicsStore.updateThermalRppg({
+      _kinematicsStore!.updateThermalRppg({
         rppg_heart_rate: data.vitals?.hr ?? data.vitals?.heart_rate ?? 0,
         thermal_temperature: data.vitals?.temp ?? data.vitals?.body_temperature ?? 36.6,
         fever_alert: data.fever_alert ?? false,
@@ -123,8 +126,8 @@ class GlobalStreamingService {
 
       // 3. Update sensor telemetry store (IMU/environment/activity)
       if (data.imu && Object.keys(data.imu).length > 0) {
-        _kinematicsStore.updateKinematics(data.imu)
-        _sensorStore.updateImu({
+        _kinematicsStore!.updateKinematics(data.imu)
+        _sensorStore!.updateImu({
           orientation: {
             w: data.imu.qw ?? 1.0,
             x: data.imu.qx ?? 0.0,
@@ -152,7 +155,7 @@ class GlobalStreamingService {
 
       // 4. Update environment data if available
       if (data.environment) {
-        _sensorStore.updateEnvironment({
+        _sensorStore!.updateEnvironment({
           ambient_light: data.environment.ambient_light ?? 0,
           barometric_pressure: data.environment.barometric_pressure ?? 1013.25,
           pressure_delta_hpa: data.environment.pressure_delta_hpa ?? 0,
@@ -162,7 +165,7 @@ class GlobalStreamingService {
 
       // 5. Update activity data if available
       if (data.activity) {
-        _sensorStore.updateActivity({
+        _sensorStore!.updateActivity({
           pedometer_steps: data.activity.steps ?? data.vitals?.step_count ?? 0,
           activity_type: data.activity.type ?? 'unknown',
           wrist_motion: data.activity.wrist_motion ?? [],
@@ -172,9 +175,9 @@ class GlobalStreamingService {
 
       // 6. Mark stores live when daemon is healthy
       if (data.daemon_status === 'OK') {
-        _kinematicsStore.setLive?.(true)
-        _vitalsStore.isConnected = true
-        _sensorStore.isLive = true
+        _kinematicsStore!.setLive?.(true)
+        _vitalsStore!.isConnected = true
+        _sensorStore!.isLive = true
       }
 
     } catch (err: any) {
@@ -201,7 +204,12 @@ class GlobalStreamingService {
       this.lastVisionOkMs = Date.now()
 
       // Update vision store with full payload
-      _visionStore.updateVisionStatus(data)
+      _visionStore!.updateVisionStatus(data)
+
+      // Propagate clinical scan to safety store for HUD and alert triggering
+      if (data.latest_scan) {
+        _safetyStore!.applyClinical(data.latest_scan)
+      }
 
     } catch (err: any) {
       if (err?.response?.status === 401) return

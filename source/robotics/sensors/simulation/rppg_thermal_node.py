@@ -214,24 +214,17 @@ class RppgThermalNode(Node):
                     self.is_using_real_camera = True
                     
             if not self.is_using_real_camera:
-                # Fallback to simulated green channel intensity G(t) with sine pulse + noise
-                pulse_freq = self.target_hr / 60.0
-                noise = random.uniform(-0.02, 0.02)
-                g_val = 128.0 + 1.2 * math.sin(2 * math.pi * pulse_freq * (self.tick * 0.1)) + noise
-            
-            self.g_buffer.append(g_val)
-            if len(self.g_buffer) > self.buffer_maxlen:
-                self.g_buffer.pop(0)
-
-                
-            # 2. Compute heart rate using rPPG frequency extraction
-            hr_rppg = self.compute_rppg_heart_rate()
-            
-            # 3. Simulate thermal reading with slight physiological fluctuation
-            temp_thermal = self.target_temp + 0.15 * math.sin(self.tick * 0.05) + random.uniform(-0.05, 0.05)
-            
-            # Fever threshold check (> 38.0 C)
-            fever_alert = 1.0 if temp_thermal >= 38.0 else 0.0
+                # Purged mock/simulated pipeline
+                hr_rppg = float('nan')
+                temp_thermal = float('nan')
+                fever_alert = float('nan')
+            else:
+                self.g_buffer.append(g_val)
+                if len(self.g_buffer) > self.buffer_maxlen:
+                    self.g_buffer.pop(0)
+                hr_rppg = self.compute_rppg_heart_rate()
+                temp_thermal = float('nan')  # No actual thermal hardware
+                fever_alert = 0.0
             
             # 4. Compile and publish ROS2 JointState message
             stamp = self.get_clock().now().to_msg()
@@ -244,25 +237,10 @@ class RppgThermalNode(Node):
             
             self.telemetry_pub.publish(msg)
             
-            # Periodically shift simulated state to test transitions
-            if self.tick % 300 == 0:
-                # Randomly trigger high temperature / high HR alert scenarios
-                scenario = random.choice(["NORMAL", "FEVER", "TACHYCARDIA"])
-                if scenario == "NORMAL":
-                    self.target_hr = 72.0
-                    self.target_temp = 36.6
-                elif scenario == "FEVER":
-                    self.target_hr = 95.0
-                    self.target_temp = 38.8
-                elif scenario == "TACHYCARDIA":
-                    self.target_hr = 135.0
-                    self.target_temp = 36.8
-                log.info(f"[rPPG_THERMAL] Transitioned simulated scenario to {scenario}")
-                
             if self.tick % 50 == 0:
                 log.info(
                     f"[rPPG_THERMAL] Published: rPPG_HR={hr_rppg} bpm | "
-                    f"Thermal_Temp={temp_thermal:.2f} C | "
+                    f"Thermal_Temp={temp_thermal} C | "
                     f"Fever_Alert={bool(fever_alert)}"
                 )
                 

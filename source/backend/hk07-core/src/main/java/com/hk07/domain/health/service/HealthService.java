@@ -150,34 +150,44 @@ public class HealthService {
         WristbandConfigEntity config = configOpt.get();
         UUID userId = config.getUser().getId();
 
-        // Smooth SpO2 and Heart Rate using median filter of size 5
+        // Smooth SpO2 and Heart Rate using median filter of size 5 (ignoring <= 0 disconnected/invalid signals)
         ConcurrentLinkedQueue<Integer> hrWindow = hrWindows.computeIfAbsent(deviceId, k -> new ConcurrentLinkedQueue<>());
         ConcurrentLinkedQueue<Float> spo2Window = spo2Windows.computeIfAbsent(deviceId, k -> new ConcurrentLinkedQueue<>());
         
-        hrWindow.add(vital.getHeartRate());
-        if (hrWindow.size() > 5) {
-            hrWindow.poll();
+        if (vital.getHeartRate() > 0) {
+            hrWindow.add(vital.getHeartRate());
+            if (hrWindow.size() > 5) {
+                hrWindow.poll();
+            }
+            List<Integer> hrList = new ArrayList<>(hrWindow);
+            int medianHr = computeMedianInt(hrList);
+            vital.setHeartRate(medianHr);
+        } else {
+            hrWindow.clear();
+            vital.setHeartRate(-1);
         }
         
-        spo2Window.add(vital.getSpo2());
-        if (spo2Window.size() > 5) {
-            spo2Window.poll();
+        if (vital.getSpo2() > 0.0f) {
+            spo2Window.add(vital.getSpo2());
+            if (spo2Window.size() > 5) {
+                spo2Window.poll();
+            }
+            List<Float> spo2List = new ArrayList<>(spo2Window);
+            float medianSpo2 = computeMedianFloat(spo2List);
+            vital.setSpo2(medianSpo2);
+        } else {
+            spo2Window.clear();
+            vital.setSpo2(-1.0f);
         }
         
         List<Integer> hrList = new ArrayList<>(hrWindow);
         List<Float> spo2List = new ArrayList<>(spo2Window);
         
-        int medianHr = computeMedianInt(hrList);
-        float medianSpo2 = computeMedianFloat(spo2List);
-        
-        vital.setHeartRate(medianHr);
-        vital.setSpo2(medianSpo2);
-
         // ─── [HẠNCHẾ-#9] Dynamic threshold check ───────────────────────────
         AlertLevel level = computeAlertLevel(vital, config, hrList, spo2List);
 
         // Confirmed critical warning (CRITICAL or STROKE level) or Fever Alert triggers bypass instantly
-        if (vital.getBodyTemperature() >= 38.5f || level == AlertLevel.CRITICAL || level == AlertLevel.STROKE) {
+        if ((vital.getBodyTemperature() >= 38.5f && vital.getBodyTemperature() > 0.0f) || level == AlertLevel.CRITICAL || level == AlertLevel.STROKE) {
             setBypassAggregation(userId, true);
         }
 
@@ -242,34 +252,61 @@ public class HealthService {
                         setBypassAggregation(userId, false);
                     }
                 } else {
-                    // Normal conditions: compute arithmetic mean
-                    double avgHr = 0;
-                    double avgSpo2 = 0;
-                    double avgTemp = 0;
-                    double avgSys = 0;
-                    double avgDias = 0;
-                    for (IngestedVital v : userGroup) {
-                        avgHr += v.getVital().getHeartRate();
-                        avgSpo2 += v.getVital().getSpo2();
-                        avgTemp += v.getVital().getBodyTemperature();
-                        avgSys += v.getVital().getSystolic();
-                        avgDias += v.getVital().getDiastolic();
-                    }
-                    int count = userGroup.size();
-                    avgHr /= count;
-                    avgSpo2 /= count;
-                    avgTemp /= count;
-                    avgSys /= count;
-                    avgDias /= count;
+                    // Normal conditions: compute arithmetic mean (ignoring <= 0 values)
+                    double sumHr = 0;
+                    int countHr = 0;
+                    double sumSpo2 = 0;
+                    int countSpo2 = 0;
+                    double sumTemp = 0;
+                    int countTemp = 0;
+                    double sumSys = 0;
+                    int countSys = 0;
+                    double sumDias = 0;
+                    int countDias = 0;
 
+                    for (IngestedVital v : userGroup) {
+                        int hrVal = v.getVital().getHeartRate();
+                        if (hrVal > 0) {
+                            sumHr += hrVal;
+                            countHr++;
+                        }
+                        float spo2Val = v.getVital().getSpo2();
+                        if (spo2Val > 0.0f) {
+                            sumSpo2 += spo2Val;
+                            countSpo2++;
+                        }
+                        float tempVal = v.getVital().getBodyTemperature();
+                        if (tempVal > 0.0f) {
+                            sumTemp += tempVal;
+                            countTemp++;
+                        }
+                        float sysVal = v.getVital().getSystolic();
+                        if (sysVal > 0.0f) {
+                            sumSys += sysVal;
+                            countSys++;
+                        }
+                        float diasVal = v.getVital().getDiastolic();
+                        if (diasVal > 0.0f) {
+                            sumDias += diasVal;
+                            countDias++;
+                        }
+                    }
+
+                    int finalHr = countHr > 0 ? (int) Math.round(sumHr / countHr) : -1;
+                    float finalSpo2 = countSpo2 > 0 ? (float) (sumSpo2 / countSpo2) : -1.0f;
+                    float finalTemp = countTemp > 0 ? (float) (sumTemp / countTemp) : -1.0f;
+                    float finalSys = countSys > 0 ? (float) (sumSys / countSys) : -1.0f;
+                    float finalDias = countDias > 0 ? (float) (sumDias / countDias) : -1.0f;
+
+                    int count = userGroup.size();
                     VitalSignDto lastVital = userGroup.get(count - 1).getVital();
                     VitalSignDto avgVital = VitalSignDto.builder()
                             .deviceId(lastVital.getDeviceId())
-                            .heartRate((int) Math.round(avgHr))
-                            .spo2((float) avgSpo2)
-                            .bodyTemperature((float) avgTemp)
-                            .systolic((float) avgSys)
-                            .diastolic((float) avgDias)
+                            .heartRate(finalHr)
+                            .spo2(finalSpo2)
+                            .bodyTemperature(finalTemp)
+                            .systolic(finalSys)
+                            .diastolic(finalDias)
                             .epochTimestampMs(lastVital.getEpochTimestampMs())
                             .build();
 
@@ -295,9 +332,9 @@ public class HealthService {
         float sys    = v.getSystolic();
         float temp   = v.getBodyTemperature();
 
-        // Stroke consistency check
-        boolean hrConsistentStroke = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > 150 || x < 40);
-        boolean spo2ConsistentStroke = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x < 85.0f);
+        // Stroke consistency check (ignore non-positive invalid values)
+        boolean hrConsistentStroke = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > 150 || (x > 0 && x < 40));
+        boolean spo2ConsistentStroke = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x > 0.0f && x < 85.0f);
 
         // STROKE: Absolute medical ceiling — cannot be overridden by user config
         if (hrConsistentStroke || spo2ConsistentStroke) return AlertLevel.STROKE;
@@ -307,9 +344,9 @@ public class HealthService {
         float sysCrit  = cfg.getBloodPressureSystolicMax() + 20;
         
         boolean hrConsistentCrit = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > hrMaxCrit);
-        boolean spo2ConsistentCrit = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x < 90.0f);
+        boolean spo2ConsistentCrit = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x > 0.0f && x < 90.0f);
         
-        if (hrConsistentCrit || sys > sysCrit || spo2ConsistentCrit || temp > 39.5f)
+        if (hrConsistentCrit || (sys > 0.0f && sys > sysCrit) || (spo2 > 0.0f && spo2ConsistentCrit) || (temp > 0.0f && temp > 39.5f))
             return AlertLevel.CRITICAL;
 
         // WARNING: Dynamic thresholds from DB
@@ -317,13 +354,13 @@ public class HealthService {
         int hrMaxWarn = cfg.getHeartRateThresholdMax();
         float spo2MinWarn = cfg.getSpo2Min();
         
-        boolean hrConsistentWarn = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > hrMaxWarn || x < hrMinWarn);
-        boolean spo2ConsistentWarn = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x < spo2MinWarn);
+        boolean hrConsistentWarn = hrWin.size() >= 5 && hrWin.stream().allMatch(x -> x > hrMaxWarn || (x > 0 && x < hrMinWarn));
+        boolean spo2ConsistentWarn = spo2Win.size() >= 5 && spo2Win.stream().allMatch(x -> x > 0.0f && x < spo2MinWarn);
 
         if (hrConsistentWarn
-                || sys > cfg.getBloodPressureSystolicMax()
+                || (sys > 0.0f && sys > cfg.getBloodPressureSystolicMax())
                 || spo2ConsistentWarn
-                || temp > 38.5f)
+                || (temp > 0.0f && temp > 38.5f))
             return AlertLevel.WARNING;
 
         return AlertLevel.NORMAL;

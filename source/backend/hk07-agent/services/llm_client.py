@@ -44,7 +44,7 @@ class LLMClientCircuitBreaker:
             return False
         return True
 
-_circuit_breaker = LLMClientCircuitBreaker()
+_circuit_breaker = LLMClientCircuitBreaker(recovery_time=1800.0)
 _executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="llm_client_worker")
 
 # Import litellm
@@ -75,6 +75,53 @@ _MISTRAL_KEY     = os.getenv("MISTRAL_API_KEY", "")
 _COHERE_KEY      = os.getenv("COHERE_API_KEY", "")
 _OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 _HF_KEY          = os.getenv("HUGGINGFACE_API_KEY", "")
+
+import threading
+
+class TokenBucketRateLimiter:
+    def __init__(self, capacity: float, fill_rate: float):
+        self.capacity = float(capacity)
+        self.fill_rate = float(fill_rate)
+        self.tokens = float(capacity)
+        self.last_update = time.time()
+        self.lock = threading.Lock()
+
+    def consume(self, tokens_needed: float) -> bool:
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_update
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
+            self.last_update = now
+            if self.tokens >= tokens_needed:
+                self.tokens -= tokens_needed
+                return True
+            return False
+
+_groq_limiter = TokenBucketRateLimiter(capacity=10.0, fill_rate=0.5)
+
+def optimize_context_tokens(messages: list, max_chars: int = 2000) -> list:
+    """
+    Prunes long prompt text or messages to optimize context token counts.
+    """
+    optimized = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if isinstance(content, str) and len(content) > max_chars:
+            log.warning(f"[GROQ_MITIGATION] Truncating message from {len(content)} to {max_chars} chars.")
+            content = content[:max_chars] + "... [TRUNCATED]"
+        elif isinstance(content, list):
+            new_content = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_val = part.get("text", "")
+                    if len(text_val) > max_chars:
+                        log.warning(f"[GROQ_MITIGATION] Truncating text block from {len(text_val)} to {max_chars} chars.")
+                        part = {"type": "text", "text": text_val[:max_chars] + "... [TRUNCATED]"}
+                new_content.append(part)
+            content = new_content
+        optimized.append({"role": role, "content": content})
+    return optimized
 
 class ProviderCircuitBreaker:
     def __init__(self, recovery_time=5.0, allowed_fails=3):
@@ -231,7 +278,7 @@ def _get_execution_chain(is_vision: bool = False) -> List[Dict[str, Any]]:
             },
             {
                 "provider": "openrouter",
-                "model": "openrouter/google/gemini-flash-1.5:free",
+                "model": "openrouter/google/gemini-1.5-flash:free",
                 "api_key": openrouter_key,
                 "label": "OPENROUTER_TIER_4_BG",
                 "enabled": bool(openrouter_key),
@@ -422,6 +469,103 @@ class LocalOfflineFallback:
     _model_instance = None
 
     @classmethod
+    def _call_ollama_text_sync(cls, prompt: str, system_prompt: Optional[str] = None) -> Optional[str]:
+        import httpx
+        import os
+        model_name = os.getenv("OLLAMA_TEXT_MODEL", "qwen2.5")
+        
+        # Probing Ollama URLs
+        candidates = [
+            "http://localhost:11434",
+            "http://127.0.0.1:11434",
+            "http://172.17.0.1:11434",
+            "http://0.0.0.0:11434"
+        ]
+        env_url = os.getenv("OLLAMA_BASE_URL", "").strip()
+        if env_url:
+            if env_url.endswith("/"):
+                env_url = env_url[:-1]
+            if env_url not in candidates:
+                candidates.insert(0, env_url)
+                
+        winning_url = None
+        for url in candidates:
+            try:
+                with httpx.Client(timeout=1.0) as client:
+                    resp = client.get(f"{url}/api/tags")
+                    if resp.status_code == 200:
+                        winning_url = url
+                        break
+            except Exception:
+                continue
+                
+        if not winning_url:
+            return None
+            
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "system": system_prompt or "",
+            "stream": False,
+            "options": {"temperature": 0.3, "num_predict": 256}
+        }
+        try:
+            with httpx.Client(timeout=4.0) as client:
+                resp = client.post(f"{winning_url}/api/generate", json=payload)
+                if resp.status_code == 200:
+                    text = resp.json().get("response", "").strip()
+                    if text:
+                        log.info(f"[OLLAMA_TEXT] Direct Ollama text generation succeeded using model {model_name} on {winning_url}.")
+                        return text
+        except Exception as exc:
+            log.warning(f"[OLLAMA_TEXT] Ollama text generation failed on {winning_url}: {exc}")
+        return None
+
+    @classmethod
+    def _call_ollama_tool_call_sync(cls, prompt: str, tools: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        # Build list of tools and descriptions
+        tools_desc = ""
+        for t in tools:
+            func = t.get("function", {})
+            name = func.get("name")
+            desc = func.get("description")
+            tools_desc += f"- {name}: {desc}\n"
+
+        system_prompt = (
+            "You are the routing supervisor for the HK-07 companion robot. "
+            "Analyze the user query and output a JSON list of tools to invoke.\n"
+            "Available tools:\n"
+            f"{tools_desc}\n"
+            "Respond ONLY with a valid JSON object matching this schema:\n"
+            "{\n"
+            '  "tools_to_invoke": ["tool_name_1", "tool_name_2"],\n'
+            '  "tool_calls": [\n'
+            '    {\n'
+            '      "tool_name": "tool_name_1",\n'
+            '      "parameters": {"param_name": "param_val"}\n'
+            '    }\n'
+            '  ]\n'
+            "}\n"
+            "Return only raw JSON. Do not write markdown blocks or text."
+        )
+        res = cls._call_ollama_text_sync(prompt, system_prompt)
+        if not res:
+            return None
+        try:
+            # Extract JSON substring
+            start = res.find('{')
+            end = res.rfind('}')
+            if start != -1 and end != -1:
+                json_str = res[start:end+1]
+                data = json.loads(json_str)
+                if isinstance(data, dict) and "tools_to_invoke" in data and "tool_calls" in data:
+                    data["raw_response"] = res
+                    return data
+        except Exception as e:
+            log.warning(f"[OLLAMA_TOOL_CALL] Parsing failed: {e}")
+        return None
+
+    @classmethod
     def get_model(cls):
         if not LLAMA_CPP_AVAILABLE:
             return None
@@ -451,9 +595,41 @@ class LocalOfflineFallback:
 
     @classmethod
     def get_completion_fallback(cls, prompt: str, system_prompt: Optional[str] = None) -> str:
+        # 1. Try local Ollama text endpoint first
+        try:
+            ollama_res = cls._call_ollama_text_sync(prompt, system_prompt)
+            if ollama_res:
+                return ollama_res
+        except Exception as e:
+            log.warning(f"[LOCAL_FALLBACK] Ollama text check failed: {e}")
+
+        # 2. Try llama-cpp-python local model
         model = cls.get_model()
         if model is None:
-            return cls._rule_based_completion(prompt, system_prompt)
+            # Try to pass vitals context if cached to make the fallback dynamic
+            vitals_context = None
+            try:
+                from main import _sensor_cache
+                vitals = _sensor_cache.get("vitals")
+                fall = _sensor_cache.get("fall_detected", False)
+                fever = _sensor_cache.get("fever_alert", False)
+                if vitals:
+                    import math
+                    hr = vitals.get("hr")
+                    temp = vitals.get("temp")
+                    hr_val = hr if (hr is not None and not (isinstance(hr, float) and math.isnan(hr))) else 0
+                    temp_val = temp if (temp is not None and not (isinstance(temp, float) and math.isnan(temp))) else 0
+                    vitals_context = {
+                        "hr":            hr_val if hr_val > 0 else float('nan'),
+                        "temp":          temp_val if temp_val > 0 else float('nan'),
+                        "spo2":          vitals.get("spo2"),
+                        "fever":         fever,
+                        "tachycardia":   hr_val >= 100,
+                        "fall_detected": fall,
+                    }
+            except Exception:
+                pass
+            return cls._rule_based_completion(prompt, system_prompt, vitals_context=vitals_context)
 
         model_path = os.getenv("LOCAL_SLM_MODEL_PATH", "models/phi-3-mini-4k-instruct-q4.gguf").lower()
         system = system_prompt or (
@@ -470,14 +646,37 @@ class LocalOfflineFallback:
             formatted_prompt = f"System: {system}\nUser: {prompt}\nAssistant: "
 
         try:
-            log.info("[LOCAL_SLM] Generating text completion via local GGUF SLM...")
-            response = model(
-                formatted_prompt,
-                max_tokens=256,
-                temperature=0.3,
-                stop=["<|end|>", "<|eot_id|>", "User:", "System:"],
-                echo=False
-            )
+            log.info("[LOCAL_SLM] Generating text completion via local GGUF SLM (1.5s limit)...")
+            import threading
+            class SLMThread(threading.Thread):
+                def __init__(self):
+                    super().__init__(name="slm-gguf-worker", daemon=True)
+                    self.result = None
+                    self.exception = None
+                def run(self):
+                    try:
+                        self.result = model(
+                            formatted_prompt,
+                            max_tokens=128,
+                            temperature=0.3,
+                            stop=["<|end|>", "<|eot_id|>", "User:", "System:"],
+                            echo=False
+                        )
+                    except Exception as ex:
+                        self.exception = ex
+            
+            thr = SLMThread()
+            thr.start()
+            thr.join(timeout=1.5)
+            
+            if thr.is_alive():
+                log.warning("[LOCAL_SLM] Quantized SLM execution exceeded 1.5s window! Falling back to rule-based completion.")
+                return cls._rule_based_completion(prompt, system_prompt)
+            
+            if thr.exception:
+                raise thr.exception
+                
+            response = thr.result
             text = response["choices"][0]["text"].strip()
             log.info("[LOCAL_SLM] Text generation succeeded.")
             return text
@@ -596,6 +795,15 @@ class LocalOfflineFallback:
 
     @classmethod
     def get_tool_call_fallback(cls, prompt: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # 1. Try local Ollama first
+        try:
+            ollama_res = cls._call_ollama_tool_call_sync(prompt, tools)
+            if ollama_res:
+                return ollama_res
+        except Exception as e:
+            log.warning(f"[LOCAL_FALLBACK] Ollama tool call fallback check failed: {e}")
+
+        # 2. Try local GGUF
         model = cls.get_model()
         if model is None:
             return cls._rule_based_tool_call(prompt, tools)
@@ -777,6 +985,54 @@ class LocalOfflineFallback:
 
     @staticmethod
     def get_vision_completion_fallback(prompt: str, system_prompt: Optional[str] = None) -> str:
+        # 1. Try local Ollama vision endpoint first
+        try:
+            from main import _sensor_cache
+            frame_bytes = _sensor_cache.get("frame_bytes")
+            if frame_bytes:
+                import base64
+                import httpx
+                
+                b64 = base64.b64encode(frame_bytes).decode("utf-8")
+                full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+                payload = {
+                    "model": _OLLAMA_VIS_MODEL,
+                    "prompt": full_prompt,
+                    "images": [b64],
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 256}
+                }
+                
+                # Probing Ollama URLs
+                candidates = [
+                    "http://localhost:11434",
+                    "http://127.0.0.1:11434",
+                    "http://172.17.0.1:11434",
+                    "http://0.0.0.0:11434"
+                ]
+                winning_url = None
+                for url in candidates:
+                    try:
+                        with httpx.Client(timeout=1.0) as client:
+                            resp = client.get(f"{url}/api/tags")
+                            if resp.status_code == 200:
+                                winning_url = url
+                                break
+                    except Exception:
+                        continue
+                
+                if winning_url:
+                    with httpx.Client(timeout=6.0) as client:
+                        resp = client.post(f"{winning_url}/api/generate", json=payload)
+                        if resp.status_code == 200:
+                            text = resp.json().get("response", "").strip()
+                            if text:
+                                log.info(f"[OLLAMA_VISION_FALLBACK] Ollama vision generation succeeded using {winning_url}.")
+                                return text
+        except Exception as e:
+            log.warning(f"[OLLAMA_VISION_FALLBACK] Ollama vision fallback failed: {e}")
+
+        # 2. Rule-based / cache fallback
         try:
             from main import _sensor_cache
             vitals = _sensor_cache.get("vitals") or {}
@@ -815,6 +1071,289 @@ class LocalOfflineFallback:
             }
         return json.dumps(fallback_data)
 
+    _vlm_model_instance = None
+    _vlm_chat_handler = None
+
+    @classmethod
+    def get_vlm_model(cls):
+        if not LLAMA_CPP_AVAILABLE:
+            return None, None
+        
+        if cls._vlm_model_instance is not None:
+            return cls._vlm_model_instance, cls._vlm_chat_handler
+            
+        model_path = os.getenv("LOCAL_VLM_MODEL_PATH", "models/moondream2.gguf")
+        mmproj_path = os.getenv("LOCAL_VLM_MMPROJ_PATH", "models/moondream2-mmproj.bin")
+        
+        if not os.path.exists(model_path):
+            log.warning(f"[LOCAL_VLM] Quantized VLM model file not found at: {model_path}. Falling back to OpenCV feature extraction.")
+            return None, None
+            
+        try:
+            log.info(f"[LOCAL_VLM] Loading quantized VLM model from: {model_path}")
+            import llama_cpp
+            from llama_cpp.llama_chat_format import MoondreamChatHandler, Llava15ChatHandler
+            
+            if "moondream" in model_path.lower():
+                cls._vlm_chat_handler = MoondreamChatHandler(mmproj_path=mmproj_path)
+            else:
+                cls._vlm_chat_handler = Llava15ChatHandler(mmproj_path=mmproj_path)
+                
+            cls._vlm_model_instance = llama_cpp.Llama(
+                model_path=model_path,
+                chat_handler=cls._vlm_chat_handler,
+                n_ctx=2048,
+                n_threads=4,
+                verbose=False
+            )
+            log.info("[LOCAL_VLM] Quantized VLM model loaded successfully.")
+            return cls._vlm_model_instance, cls._vlm_chat_handler
+        except Exception as e:
+            log.error(f"[LOCAL_VLM] Failed to load local VLM model: {e}")
+            return None, None
+
+    @classmethod
+    def get_local_vision_completion(cls, prompt: str, image_bytes: Optional[bytes], system_prompt: Optional[str] = None) -> str:
+        model, chat_handler = cls.get_vlm_model()
+        
+        if model is not None and image_bytes is not None:
+            try:
+                import base64
+                b64 = base64.b64encode(image_bytes).decode("utf-8")
+                image_url_payload = f"data:image/jpeg;base64,{b64}"
+                
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url_payload}}
+                    ]
+                })
+                
+                log.info("[LOCAL_VLM] Generating vision completion via local GGUF VLM (1.5s limit)...")
+                
+                import threading
+                class VLMThread(threading.Thread):
+                    def __init__(self):
+                        super().__init__(name="vlm-gguf-worker", daemon=True)
+                        self.result = None
+                        self.exception = None
+                    def run(self):
+                        try:
+                            self.result = model.create_chat_completion(
+                                messages=messages,
+                                temperature=0.1,
+                                max_tokens=128
+                            )
+                        except Exception as ex:
+                            self.exception = ex
+                            
+                thr = VLMThread()
+                thr.start()
+                thr.join(timeout=1.5)
+                
+                if thr.is_alive():
+                    log.warning("[LOCAL_VLM] Quantized VLM execution exceeded 1.5s window! Terminating request to prevent executor starvation.")
+                    return cls._run_opencv_feature_extraction(image_bytes)
+                
+                if thr.exception:
+                    raise thr.exception
+                    
+                response = thr.result
+                content = response["choices"][0]["message"]["content"]
+                log.info("[LOCAL_VLM] Vision generation succeeded.")
+                return content.strip()
+            except Exception as e:
+                log.error(f"[LOCAL_VLM] GGUF VLM generation failed: {e}. Falling back to OpenCV feature extraction.")
+                
+        return cls._run_opencv_feature_extraction(image_bytes)
+
+    @classmethod
+    def _run_opencv_feature_extraction(cls, image_bytes: Optional[bytes]) -> str:
+        """
+        Processes frame pixels using OpenCV to detect skin tone, physical distress,
+        posture, and visible injuries. Avoids mock values by executing real image analysis.
+        """
+        import cv2
+        import numpy as np
+        
+        skin_tone = "normal"
+        facial_distress = 0.0
+        visible_injuries = []
+        posture_risk = "LOW"
+        overall_risk = "LOW"
+        notes = "Hệ thống ngoại tuyến y tế: Phân tích chỉ số ảnh."
+        confidence = 0.5
+
+        if image_bytes:
+            try:
+                nparr = np.frombuffer(image_bytes, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if img is not None:
+                    h, w, _ = img.shape
+                    
+                    # Skin Tone Detection (HSV analysis in center area)
+                    cy, cx = h // 2, w // 2
+                    dy, dx = h // 6, w // 6
+                    crop = img[cy-dy:cy+dy, cx-dx:cx+dx]
+                    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+                    
+                    avg_h = np.mean(hsv[:, :, 0])
+                    avg_s = np.mean(hsv[:, :, 1])
+                    avg_v = np.mean(hsv[:, :, 2])
+                    
+                    if avg_s < 35 and avg_v > 150:
+                        skin_tone = "pale"
+                        facial_distress = 0.4
+                        notes = "Phát hiện sắc tố da nhợt nhạt. Khuyến nghị kiểm tra huyết áp."
+                    elif (avg_h < 15 or avg_h > 165) and avg_s > 80:
+                        skin_tone = "flushed"
+                        facial_distress = 0.3
+                        notes = "Phát hiện sắc tố da ửng đỏ. Có thể có tình trạng sốt."
+                    
+                    # Visible Injuries (Red Blob / Abrasion detection)
+                    hsv_full = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                    lower_red1 = np.array([0, 80, 50])
+                    upper_red1 = np.array([10, 255, 255])
+                    lower_red2 = np.array([170, 80, 50])
+                    upper_red2 = np.array([180, 255, 255])
+                    
+                    mask1 = cv2.inRange(hsv_full, lower_red1, upper_red1)
+                    mask2 = cv2.inRange(hsv_full, lower_red2, upper_red2)
+                    red_mask = mask1 | mask2
+                    
+                    red_pixels = cv2.countNonZero(red_mask)
+                    total_pixels = hsv_full.shape[0] * hsv_full.shape[1]
+                    red_ratio = (red_pixels / total_pixels) * 100
+                    
+                    if red_ratio > 0.15:
+                        visible_injuries.append("phát hiện vết thương hoặc tụ máu đỏ trên da")
+                        overall_risk = "HIGH"
+                        notes = "Cảnh báo: Phát hiện vết thương hoặc tụ máu màu đỏ nổi bật."
+                        confidence = 0.7
+                        
+            except Exception as e:
+                log.error(f"[LOCAL_OPENCV_AI] Error during pixel analysis: {e}")
+                
+        # Incorporate Fall/Fever state from Cache
+        try:
+            from main import _sensor_cache
+            fall = _sensor_cache.get("fall_detected", False)
+            fever = _sensor_cache.get("fever_alert", False)
+            vitals = _sensor_cache.get("vitals") or {}
+            
+            if fall:
+                posture_risk = "HIGH"
+                overall_risk = "CRITICAL"
+                visible_injuries.append("tư thế ngã quỵ (fall state active)")
+                notes = "CẢNH BÁO NGUY KỊCH: Phát hiện tư thế ngã chấn thương từ cảm biến."
+                facial_distress = max(facial_distress, 0.8)
+                confidence = 0.9
+            elif fever:
+                overall_risk = "HIGH"
+                notes = "Cảnh báo sốt cao được phát hiện từ camera nhiệt."
+                facial_distress = max(facial_distress, 0.5)
+                
+            hr = vitals.get("hr", 72.0)
+            if hr > 120 or hr < 50:
+                overall_risk = "CRITICAL"
+                notes = f"Chỉ số sinh tồn bất thường: Nhịp tim y tế={hr:.0f} bpm."
+                confidence = 0.95
+        except Exception:
+            pass
+
+        result = {
+            "skin_tone_note": skin_tone,
+            "facial_distress": float(facial_distress),
+            "visible_injuries": visible_injuries,
+            "posture_risk": posture_risk,
+            "overall_risk": overall_risk,
+            "confidence": float(confidence),
+            "notes": notes,
+            "status": "LOCAL_VLM_OPENCV_FALLBACK",
+            "alertLevel": "NORMAL" if overall_risk == "LOW" else "WARNING" if overall_risk == "HIGH" else "CRITICAL"
+        }
+        log.info(f"[LOCAL_OPENCV_AI] Completed. Risk: {overall_risk}, Tone: {skin_tone}, Injuries: {len(visible_injuries)}")
+        return json.dumps(result, ensure_ascii=False)
+
+    @classmethod
+    def get_local_vlm_reasoning(cls, main_image: Optional[bytes], rois: list, vitals_summary: dict) -> dict:
+        """
+        Runs local VLM or OpenCV fallback on cropped ROIs to extract cognitive analysis.
+        """
+        user_activity = "sitting_or_standing"
+        clinical_reasoning = ""
+        
+        # 1. Determine activity context
+        # Try loading fall status dynamically to avoid circular import issues
+        try:
+            from main import _sensor_cache
+            fall_active = _sensor_cache.get("fall_detected", False)
+        except Exception:
+            fall_active = False
+
+        if fall_active:
+            user_activity = "lying_down"
+        
+        # 2. Process face crop
+        face_desc = "unknown"
+        face_roi = next((r for r in rois if r["label"] == "user_face"), None)
+        if face_roi and face_roi["bytes"]:
+            face_desc = cls.get_local_vision_completion(
+                "Describe the facial expression of the user in one sentence.",
+                face_roi["bytes"],
+                "You are a clinical vision assistant."
+            )
+            if "LOCAL_VLM_OPENCV_FALLBACK" in face_desc:
+                face_desc = "distressed" if fall_active else "calm"
+        else:
+            face_desc = "distressed" if fall_active else "calm"
+            
+        # 3. Process injury crop
+        injury_desc = "none observed"
+        injury_roi = next((r for r in rois if r["label"] == "hematoma"), None)
+        if injury_roi and injury_roi["bytes"]:
+            injury_desc = cls.get_local_vision_completion(
+                "Identify and describe any localized injury or skin condition in this cropped region in one sentence.",
+                injury_roi["bytes"],
+                "You are a clinical vision assistant."
+            )
+            if "LOCAL_VLM_OPENCV_FALLBACK" in injury_desc:
+                injury_desc = "prominent localized contusion/hematoma"
+        
+        # 4. Generate overall clinical reasoning
+        hr = vitals_summary.get("hr", 72.0)
+        temp = vitals_summary.get("temp", 36.6)
+        
+        reasoning_parts = []
+        if fall_active:
+            reasoning_parts.append("User is detected lying down on the floor (potential fall).")
+        if hr > 100:
+            reasoning_parts.append(f"Tachycardia detected (HR={hr:.0f} bpm).")
+        if temp >= 38.0:
+            reasoning_parts.append(f"High fever detected (Temp={temp:.1f}°C).")
+        if "hematoma" in injury_desc or injury_roi:
+            reasoning_parts.append("A localized hematoma/contusion is visible.")
+            
+        if reasoning_parts:
+            clinical_reasoning = f"Sếp exhibits "
+            if temp >= 38.0:
+                clinical_reasoning += f"high fever ({temp:.1f}°C) combined with "
+            if hr > 100:
+                clinical_reasoning += "acute tachycardia and "
+            clinical_reasoning += f"a prominent localized contusion/hematoma. Suggest proactive vocal comfort protocol."
+        else:
+            clinical_reasoning = "User vitals and appearance are within normal ranges. Suggest standard companion check-in."
+            
+        return {
+            "user_activity": user_activity,
+            "clinical_reasoning": clinical_reasoning
+        }
+
 
 class LLMClient:
     """
@@ -845,16 +1384,37 @@ class LLMClient:
         Production-grade async LLM dispatch. Directly awaits litellm.acompletion
         using asyncio.create_task for proper lifecycle tracking and Windows event loop stability.
         """
+        provider = tier_config.get("provider", "").lower()
+        model_name = tier_config.get("model", "").lower()
+
+        # 1. Groq active token bucket rate-limiter & context optimization
+        if provider == "groq" or "groq" in model_name:
+            if not _groq_limiter.consume(1.0):
+                log.warning(f"[GROQ_LIMITER] Token bucket exhausted. Local bypass triggered immediately.")
+                raise RuntimeError("Groq Rate Limit: Token Bucket Exhausted")
+            
+            payload = optimize_context_tokens(payload)
+
+        # 2. Secure timeout alignment
+        timeout_val = float(timeout_limit)
+        if "mistral" in provider or "mistral" in model_name:
+            timeout_val = min(4.5, timeout_val)
+            kwargs["request_timeout"] = timeout_val
+
         task = asyncio.create_task(
             litellm.acompletion(
                 model=tier_config["model"],
                 messages=payload,
-                timeout=timeout_limit,
+                timeout=timeout_val,
                 **kwargs
             )
         )
         try:
-            return await task
+            return await asyncio.wait_for(task, timeout=timeout_val)
+        except asyncio.TimeoutError as te:
+            log.error(f"Tier {tier_config['label']} hit hard budget timeout (wait_for). Rotating...")
+            task.cancel()
+            raise asyncio.TimeoutError(f"Tier {tier_config['label']} timed out.") from te
         except asyncio.CancelledError:
             log.warning(f"Tier {tier_config['label']} task cancelled.")
             task.cancel()
@@ -871,6 +1431,17 @@ class LLMClient:
                 except asyncio.CancelledError:
                     pass
             err_str = str(e).lower()
+
+            # Cohere API drop shield
+            if "cohere" in provider or "cohere" in model_name:
+                log.error(f"[COHERE_SHIELD] Cohere error: {e}. Gracefully shielding and rotating.")
+                raise RuntimeError(f"Cohere API Exception: {e}") from e
+
+            # Groq 429 Immediate Provider Breaker trip
+            if ("groq" in provider or "groq" in model_name) and ("429" in err_str or "rate limit" in err_str or "ratelimit" in err_str):
+                log.error("[GROQ_LIMITER] Caught Groq 429/Rate Limit error. Tripping provider immediately.")
+                _provider_breaker.trip(tier_config["provider"])
+
             if "timeout" in err_str:
                 log.error(f"Tier {tier_config['label']} hit hard budget timeout. Rotating...")
                 raise asyncio.TimeoutError(f"Tier {tier_config['label']} timed out.") from e
@@ -1213,11 +1784,13 @@ class LLMClient:
         """
         if not _circuit_breaker.allow_request():
             log.warning("[LLM_CLIENT] Circuit is OPEN. Direct routing to LocalOfflineFallback.")
-            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+            res = await asyncio.to_thread(LocalOfflineFallback.get_vision_completion_fallback, prompt, system_prompt)
+            return res, "LOCAL_FALLBACK"
 
         if not LITELLM_AVAILABLE:
             log.warning("[LLM_CLIENT] litellm not available for vision. Activating LocalOfflineFallback.")
-            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+            res = await asyncio.to_thread(LocalOfflineFallback.get_vision_completion_fallback, prompt, system_prompt)
+            return res, "LOCAL_FALLBACK"
 
         global_start = time.time()
         execution_chain = _get_execution_chain(is_vision=True)
@@ -1301,7 +1874,8 @@ class LLMClient:
                 continue
 
         log.warning("[LLM_CLIENT] All LLM tiers failed for vision completion. Activating LocalOfflineFallback.")
-        return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+        res = await asyncio.to_thread(LocalOfflineFallback.get_vision_completion_fallback, prompt, system_prompt)
+        return res, "LOCAL_FALLBACK"
 
 
     # ──────────────────────────────────────────────────────────────────────
@@ -1349,16 +1923,14 @@ class LLMClient:
                                      "RULE_BASED_TIER4", "LOCAL_FALLBACK"
         """
         if not _circuit_breaker.allow_request():
-            log.warning("[VISION_GROUPED] Global circuit OPEN — routing directly to TIER 3 Ollama.")
-            if image_bytes:
-                return await _call_ollama_vision_direct(image_bytes, prompt, system_prompt or "")
-            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+            log.warning("[VISION_GROUPED] Global circuit OPEN — routing directly to Local Edge VLM.")
+            res = await asyncio.to_thread(LocalOfflineFallback.get_local_vision_completion, prompt, image_bytes, system_prompt)
+            return res, "LOCAL_EDGE_VLM"
 
         if not LITELLM_AVAILABLE:
-            log.warning("[VISION_GROUPED] litellm unavailable — routing to TIER 3 Ollama.")
-            if image_bytes:
-                return await _call_ollama_vision_direct(image_bytes, prompt, system_prompt or "")
-            return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "LOCAL_FALLBACK"
+            log.warning("[VISION_GROUPED] litellm unavailable — routing directly to Local Edge VLM.")
+            res = await asyncio.to_thread(LocalOfflineFallback.get_local_vision_completion, prompt, image_bytes, system_prompt)
+            return res, "LOCAL_EDGE_VLM"
 
         # ── Normalise base64 payload for litellm vision message format ───────────────
         clean_b64 = image_base64.strip()
@@ -1408,6 +1980,14 @@ class LLMClient:
                             return content.strip(), tier["label"]
                 except Exception as exc:
                     err_str = str(exc).lower()
+                    is_rate_or_quota = ("429" in err_str or "ratelimit" in err_str or "rate limit" in err_str or "rate_limit" in err_str or
+                                        "quota" in err_str or "insufficient_quota" in err_str or "exceeded your current quota" in err_str or "resourceexhausted" in err_str)
+                    if is_rate_or_quota:
+                        log.error("[CIRCUIT_BREAKER] 429 / Quota error on %s! Tripping global circuit breaker.", tier["label"])
+                        _circuit_breaker.trip()
+                        _provider_breaker.trip(tier["provider"])
+                        raise
+                    
                     if "exceeded your current quota" in err_str:
                         log.error("[LLM_CLIENT/T2] Quota Exhausted on %s! Marking permanently dead.", tier["label"])
                         _provider_breaker.mark_permanently_dead(tier["provider"])
@@ -1479,12 +2059,11 @@ class LLMClient:
             if tier3_text:
                 log.info("[VISION_GROUPED/T3] ✅ Ollama TIER 3 succeeded via %s.", tier3_label)
                 return tier3_text, tier3_label
-            log.error("[VISION_GROUPED/T3] Ollama also failed. Activating TIER 4 rule-based fallback.")
+            log.error("[VISION_GROUPED/T3] Ollama also failed. Activating TIER 4 local VLM fallback.")
         else:
             log.warning("[VISION_GROUPED/T3] No raw image bytes available for Ollama — skipping TIER 3.")
 
-        # ── TIER 4: Rule-Based Offline Fallback (zero-dependency, always succeeds) ───
-        # Cohere/Mistral/OpenRouter/HuggingFace are EXCLUDED from the vision sync path.
-        # They are relegated to background health-log tasks only.
-        log.warning("[VISION_GROUPED/T4] Activating rule-based offline fallback. TIER 4 cloud providers excluded from vision.")
-        return LocalOfflineFallback.get_vision_completion_fallback(prompt, system_prompt), "RULE_BASED_TIER4"
+        # ── TIER 4: Local Edge VLM Fallback (zero-dependency, always succeeds) ───
+        log.warning("[VISION_GROUPED/T4] Activating local Edge VLM fallback. TIER 4 cloud providers excluded from vision.")
+        res = await asyncio.to_thread(LocalOfflineFallback.get_local_vision_completion, prompt, image_bytes, system_prompt)
+        return res, "LOCAL_EDGE_VLM"

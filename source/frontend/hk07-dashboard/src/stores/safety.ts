@@ -18,6 +18,11 @@ export const useSafetyStore = defineStore('safety', () => {
   const activeTriggers = ref<ActiveSafetyTrigger[]>([])
   const imuFallRisk = ref(false)
   const clinicalAnalysis = ref<any>(null)
+  const spatialTargets = ref<any[]>([])
+  const cognitiveInsights = ref<Record<string, any>>({})
+  const overallRisk = ref<string>('LOW')
+  const confidence = ref<number>(0)
+  const postureRisk = ref<string>('LOW')
 
   const dataLive = computed(() => {
     if (lastScanMs.value <= 0) return false
@@ -104,6 +109,12 @@ export const useSafetyStore = defineStore('safety', () => {
 
   function applyClinical(payload: any) {
     clinicalAnalysis.value = payload
+    // Persist structured spatial perception data for HugoVisionView.vue HUD overlay
+    if (Array.isArray(payload?.spatial_targets)) spatialTargets.value = payload.spatial_targets
+    if (payload?.cognitive_insights) cognitiveInsights.value = payload.cognitive_insights
+    if (payload?.overall_risk) overallRisk.value = payload.overall_risk
+    if (payload?.confidence !== undefined) confidence.value = payload.confidence
+    if (payload?.posture_risk) postureRisk.value = payload.posture_risk
     if (payload?.visible_injuries?.detected) {
       activeTriggers.value = [
         {
@@ -167,6 +178,11 @@ export const useSafetyStore = defineStore('safety', () => {
     activeTriggers,
     imuFallRisk,
     clinicalAnalysis,
+    spatialTargets,
+    cognitiveInsights,
+    overallRisk,
+    confidence,
+    postureRisk,
     dataLive,
     dataLinkLabel,
     applyScan,

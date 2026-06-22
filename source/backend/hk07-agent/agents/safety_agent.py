@@ -52,6 +52,13 @@ class SafetyAgent:
         self._freefall_start_time = None
         self._freefall_duration_exceeded = False
         self._freefall_ended_time = None
+        
+        self._vision_trip_counter = 0
+        self._vision_clear_counter = 0
+        self._vision_danger_active = False
+        self._vision_trigger = SafetyTrigger.NONE
+        self._vision_msg = ""
+        self._vision_dist = 0.0
 
         # MQTT client for inhibit signals (resiliently wrapped)
         try:
@@ -81,6 +88,13 @@ class SafetyAgent:
             while True:
                 start_ns = time.perf_counter_ns()
                 
+                danger = False
+                trigger = SafetyTrigger.NONE
+                msg = ""
+                dist = 0.0
+                accel = 1.0
+                lux = 100.0
+                
                 # ─── CROSS-MODAL SENSOR FUSION CONSENSUS MATRIX ───
                 # Spatial Activity Validation Window evaluation
                 # 1. Camera Posture/Vitals Stream (Fever Alert and Clinical)
@@ -107,27 +121,53 @@ class SafetyAgent:
                 lidar_active = not lidar_hardware_absent
 
                 # Perform threshold evaluation
-                # 1. Vision Clinical Analysis from IPWebcam
+                # 1. Vision Clinical Analysis from IPWebcam (Debounced to prevent false-positives on dropout)
+                candidate_vision_danger = False
+                candidate_trigger = SafetyTrigger.NONE
+                candidate_msg = ""
+                candidate_dist = 0.0
+
                 if clinical:
                     facial_distress = clinical.get("facial_distress", {})
                     env_hazards = clinical.get("environmental_hazards", {})
                     visible_injuries = clinical.get("visible_injuries", {})
                     
                     if facial_distress.get("detected"):
-                        danger = True
-                        trigger = SafetyTrigger.OWNER_EMERGENCY
-                        msg = f"Vision Safety Alert: Facial distress detected ({facial_distress.get('details')})"
-                        dist = 0.1
+                        candidate_vision_danger = True
+                        candidate_trigger = SafetyTrigger.OWNER_EMERGENCY
+                        candidate_msg = f"Vision Safety Alert: Facial distress detected ({facial_distress.get('details')})"
+                        candidate_dist = 0.1
                     elif env_hazards.get("detected"):
-                        danger = True
-                        trigger = SafetyTrigger.FALL_RISK
-                        msg = f"Vision Safety Alert: Environmental hazard detected ({env_hazards.get('details')})"
-                        dist = 0.3
+                        candidate_vision_danger = True
+                        candidate_trigger = SafetyTrigger.FALL_RISK
+                        candidate_msg = f"Vision Safety Alert: Environmental hazard detected ({env_hazards.get('details')})"
+                        candidate_dist = 0.3
                     elif visible_injuries.get("detected"):
-                        danger = True
-                        trigger = SafetyTrigger.OWNER_EMERGENCY
-                        msg = f"Vision Safety Alert: Visible injuries detected ({visible_injuries.get('details')})"
-                        dist = 0.2
+                        candidate_vision_danger = True
+                        candidate_trigger = SafetyTrigger.OWNER_EMERGENCY
+                        candidate_msg = f"Vision Safety Alert: Visible injuries detected ({visible_injuries.get('details')})"
+                        candidate_dist = 0.2
+
+                # require 20 cycles (~1.0s at 20Hz) of vision threat to trip
+                if candidate_vision_danger:
+                    self._vision_clear_counter = 0
+                    self._vision_trip_counter += 1
+                    if self._vision_trip_counter >= 20:
+                        self._vision_danger_active = True
+                        self._vision_trigger = candidate_trigger
+                        self._vision_msg = candidate_msg
+                        self._vision_dist = candidate_dist
+                else:
+                    self._vision_trip_counter = 0
+                    self._vision_clear_counter += 1
+                    if self._vision_clear_counter >= 20:
+                        self._vision_danger_active = False
+
+                if self._vision_danger_active:
+                    danger = True
+                    trigger = self._vision_trigger
+                    msg = self._vision_msg
+                    dist = self._vision_dist
 
                 # 2. IMU / Fall risk
                 if not danger and imu_data:
@@ -139,13 +179,18 @@ class SafetyAgent:
                     accel = float(normalized_g_force)
                     
                     now = float(time.time())
-                    if normalized_g_force < 0.3:
+                    # Ignore static baseline or zero-baseline (normalized_g_force <= 0.05) to avoid false freefall detection
+                    if 0.05 < normalized_g_force < 0.3:
                         if self._freefall_start_time is None:
                             self._freefall_start_time = now
                         elif (now - self._freefall_start_time) > 0.15:
                             self._freefall_duration_exceeded = True
                     else:
-                        if self._freefall_duration_exceeded:
+                        if normalized_g_force <= 0.05:
+                            self._freefall_start_time = None
+                            self._freefall_duration_exceeded = False
+                            self._freefall_ended_time = None
+                        elif self._freefall_duration_exceeded:
                             if normalized_g_force > 2.5:
                                 danger = True
                                 trigger = SafetyTrigger.OWNER_EMERGENCY
@@ -167,6 +212,11 @@ class SafetyAgent:
                             
                     if not danger:
                         log.info(f"[SAFETY_WORKER] Normalized G-force: {normalized_g_force:.2f}g - Status: CLEAR")
+                else:
+                    # Reset freefall tracking if IMU data is not available (disconnected)
+                    self._freefall_start_time = None
+                    self._freefall_duration_exceeded = False
+                    self._freefall_ended_time = None
 
                 # 3. Vitals emergency button
                 if not danger:

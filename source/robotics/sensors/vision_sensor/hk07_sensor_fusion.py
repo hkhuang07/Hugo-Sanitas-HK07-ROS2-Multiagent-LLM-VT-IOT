@@ -19,6 +19,13 @@ import asyncio
 import numpy as np
 from sensor_msgs.msg import JointState
 import ctypes  # used for RT priority on Windows/Linux
+import queue
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
 
 # Suppress system logging from TF/MediaPipe
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -57,6 +64,12 @@ def get_agent_dir():
 agent_dir = get_agent_dir()
 if agent_dir:
     sys.path.append(agent_dir)
+    # Dynamically resolve import collision for 'utils' package under ROS 2 Executor path
+    import utils
+    if hasattr(utils, '__path__'):
+        agent_utils = os.path.join(agent_dir, "utils")
+        if os.path.isdir(agent_utils) and agent_utils not in utils.__path__:
+            utils.__path__.append(agent_utils)
 
 try:
     from services.llm_client import LLMClient, VISION_TIERS
@@ -85,6 +98,26 @@ class Hk07SensorFusionNode(Node):
         self.thermal_rppg_pub = self.create_publisher(JointState, '/sensors/camera/thermal_rppg', 10)
         self.clinical_pub = self.create_publisher(String, '/hk07/perception/clinical', 10)
 
+        # Initialize MQTT Client for direct vital signs database sync
+        self.mqtt_client = None
+        self.last_pub_hr = 0.0
+        self.last_pub_temp = 0.0
+        self.last_pub_time = 0.0
+        if mqtt is not None:
+            try:
+                broker_host = os.environ.get('MQTT_BROKER_HOST') or '127.0.0.1'
+                broker_port = int(os.environ.get('MQTT_BROKER_PORT') or 1883)
+                mqtt_user = os.environ.get('MQTT_USERNAME', 'hk07agent')
+                mqtt_pass = os.environ.get('MQTT_PASSWORD', 'hk07_mqtt_dev_pwd')
+                self.mqtt_client = mqtt.Client(client_id="hk07-sensor-fusion-node", protocol=mqtt.MQTTv311)
+                if mqtt_user:
+                    self.mqtt_client.username_pw_set(mqtt_user, mqtt_pass)
+                self.mqtt_client.connect_async(broker_host, broker_port, keepalive=30)
+                self.mqtt_client.loop_start()
+                self.get_logger().info(f"[MQTT] Connected asynchronously to {broker_host}:{broker_port}")
+            except Exception as e:
+                self.get_logger().warning(f"[MQTT] Failed to initialize MQTT client: {e}")
+
         # Shared State Variables (Thread-safe)
         self.state_lock = threading.Lock()
         self.latest_frame = None
@@ -92,36 +125,44 @@ class Hk07SensorFusionNode(Node):
         self.vision_fall = False
         self.tracker_box = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
 
-        # ── [FIX-3] RTOS Watchdog — Isolated RT-Priority Heartbeat Thread ────
-        # This thread runs COMPLETELY isolated from vision/LLM threads.
-        # Even if all LLM vision requests time out, the heartbeat publishes
-        # at < 100ms intervals, preventing emergency suit deflation.
+        # Bounded frame buffer ring (Queue of size 1)
+        self.frame_queue = queue.Queue(maxsize=1)
+
+        # Initialize callback groups
+        self.high_frequency_safe_group = MutuallyExclusiveCallbackGroup()
+        self.low_frequency_compute_group = MutuallyExclusiveCallbackGroup()
+
+        # Initialize perception agent
+        from agents.perception_agent import PerceptionAgent
+        from arbitrator.arbitrator import Arbitrator
+        self.arbitrator = Arbitrator()
+        self.perception_agent = PerceptionAgent(arbitrator=self.arbitrator)
+
+        # ── ROS 2 hardware timer watchdog (high frequency group) ────
         self._watchdog_running = True
-        self._watchdog_thread = threading.Thread(
-            target=self._rtos_watchdog_heartbeat,
-            name="rtos_watchdog_rt",
-            daemon=True
+        self.watchdog_timer = self.create_timer(
+            0.1,  # 10Hz
+            self._rtos_watchdog_timer_callback,
+            callback_group=self.high_frequency_safe_group
         )
-        self._watchdog_thread.start()
-        self._elevate_thread_priority(self._watchdog_thread, priority_level="REALTIME")
 
         # Event Loop for Async LLM Vision calls
         self.async_loop = asyncio.new_event_loop()
         self.async_thread = threading.Thread(target=self._run_async_loop, daemon=True)
         self.async_thread.start()
 
-        # OpenCV and MediaPipe Thread
+        # OpenCV and MediaPipe Thread (Updates self.frame_queue ring at 10 FPS)
         self.vision_thread = threading.Thread(target=self._blocking_vision_worker, daemon=True)
         self.vision_thread.start()
 
-        # Snapshot Analyzer Thread (lower priority — can block on LLM)
-        self.snapshot_thread = threading.Thread(target=self._snapshot_analyzer_worker, daemon=True)
-        self.snapshot_thread.start()
+        # ── ROS 2 VLM Inference Worker Timer (1 Hz, low frequency compute group) ──
+        self.vlm_timer = self.create_timer(
+            1.0,  # 1Hz
+            self._vlm_inference_timer_callback,
+            callback_group=self.low_frequency_compute_group
+        )
 
-        # NOTE: ROS timer for telemetry publish removed — replaced by _rtos_watchdog_heartbeat
-        # to guarantee < 1.0s heartbeat even during total LLM blackout.
-
-        self.get_logger().info("=== HK07 SENSOR FUSION ROS2 NODE INITIALIZED (RTOS WATCHDOG ISOLATED) ===")
+        self.get_logger().info("=== HK07 SENSOR FUSION ROS2 NODE INITIALIZED (NON-BLOCKING MULTI-THREADED EXECUTOR) ===")
 
     def _run_async_loop(self):
         asyncio.set_event_loop(self.async_loop)
@@ -166,85 +207,162 @@ class Hk07SensorFusionNode(Node):
                 f"[RTOS_WATCHDOG] Could not elevate thread priority (non-fatal): {exc}"
             )
 
-    def _rtos_watchdog_heartbeat(self) -> None:
+    def _rtos_watchdog_timer_callback(self) -> None:
         """
-        [FIX-3] RTOS Watchdog — Isolated Real-Time Heartbeat Publisher.
-
-        Runs on a COMPLETELY ISOLATED daemon thread with RT priority.
-        Publishes JointState telemetry at 10Hz (100ms interval).
-
-        Critical guarantees:
-          - NEVER waits on vision, LLM, or network I/O (no shared locks with those threads)
-          - Even if all LLM vision requests time out for > 30s, heartbeat continues
-          - Middleware heartbeat stays < 1.0s to prevent accidental suit deflation
-          - Thread terminates only on node destroy (self._watchdog_running = False)
+        [FIX-3] RTOS Watchdog — Isolated Real-Time Heartbeat callback.
+        Runs under self.high_frequency_safe_group on the MultiThreadedExecutor.
         """
-        # Apply SCHED_FIFO from within the thread itself (Linux)
-        try:
-            import platform, ctypes
-            if platform.system() == "Linux":
-                libc = ctypes.CDLL("libc.so.6", use_errno=True)
-                class SchedParam(ctypes.Structure):
-                    _fields_ = [("sched_priority", ctypes.c_int)]
-                param = SchedParam(sched_priority=80)
-                libc.sched_setscheduler(0, 1, ctypes.byref(param))  # 0=self, 1=SCHED_FIFO
-        except Exception:
-            pass  # Non-fatal — continue with default scheduling
-
-        _HEARTBEAT_INTERVAL_S = 0.1  # 10Hz — budget < 1.0s total watchdog period
-        _last_warn_ts = 0.0
-
-        while self._watchdog_running:
-            t_cycle_start = time.perf_counter()
-
-            # Snapshot shared state with a NON-BLOCKING try-lock
-            # If state_lock is contested by vision thread, use last known values (safe)
-            hr = 0.0
-            vision_fall = False
-            if self.state_lock.acquire(blocking=False):
-                try:
-                    hr = self.rppg_heart_rate
-                    vision_fall = self.vision_fall
-                finally:
-                    self.state_lock.release()
-            # else: use defaults — heartbeat still fires
-
-            # Simulate thermal fluctuation — isolated from sensor thread
-            temp_thermal = round(36.5 + (random.random() - 0.5) * 0.2, 1)
-            fever_alert = 1.0 if temp_thermal >= 38.0 else 0.0
-
-            # Construct and publish JointState heartbeat message
+        # Snapshot shared state with a NON-BLOCKING try-lock
+        hr = 0.0
+        vision_fall = False
+        if self.state_lock.acquire(blocking=False):
             try:
-                if rclpy.ok():
-                    js_msg = JointState()
-                    js_msg.header.stamp = self.get_clock().now().to_msg()
-                    js_msg.header.frame_id = "camera_optical_frame"
-                    js_msg.name = ["rppg_heart_rate", "thermal_temperature", "fever_alert"]
-                    js_msg.position = [float(hr), float(temp_thermal), float(fever_alert)]
-                    self.thermal_rppg_pub.publish(js_msg)
-            except Exception:
-                pass  # Publish failures are non-fatal for the watchdog
+                hr = self.rppg_heart_rate
+                vision_fall = self.vision_fall
+            finally:
+                self.state_lock.release()
 
-            # Measure actual cycle time — warn if watchdog drift > 500ms
-            cycle_ms = (time.perf_counter() - t_cycle_start) * 1000.0
-            if cycle_ms > 500.0:
-                now = time.monotonic()
-                if now - _last_warn_ts > 5.0:  # Rate-limit warnings to 1/5s
+        # Strict Hardware Binding Layer (SHBL) - Purged simulation
+        latest_frame_exists = False
+        if self.state_lock.acquire(blocking=False):
+            try:
+                latest_frame_exists = (self.latest_frame is not None)
+            finally:
+                self.state_lock.release()
+
+        # If camera stream drops/offline, immediately invalidate
+        if not latest_frame_exists:
+            hr = float('nan')
+            temp_thermal = float('nan')
+            fever_alert = float('nan')
+            sensor_status = "OFFLINE"
+        else:
+            temp_thermal = float('nan')  # No real thermal sensor hardware
+            fever_alert = 0.0
+            sensor_status = "ONLINE"
+
+        # Construct and publish JointState heartbeat message
+        try:
+            if rclpy.ok():
+                js_msg = JointState()
+                js_msg.header.stamp = self.get_clock().now().to_msg()
+                js_msg.header.frame_id = "camera_optical_frame"
+                js_msg.name = ["rppg_heart_rate", "thermal_temperature", "fever_alert"]
+                js_msg.position = [float(hr), float(temp_thermal), float(fever_alert)]
+                self.thermal_rppg_pub.publish(js_msg)
+        except Exception:
+            pass
+
+        # Direct MQTT Vital Signs Sync with Adaptive Thresholding
+        if self.mqtt_client:
+            import math
+            hr_change = abs(hr - self.last_pub_hr) if not (math.isnan(hr) or math.isnan(self.last_pub_hr)) else 1.0
+            temp_change = abs(temp_thermal - self.last_pub_temp) if not (math.isnan(temp_thermal) or math.isnan(self.last_pub_temp)) else 1.0
+            time_since_last_pub = time.time() - self.last_pub_time
+
+            # Publish if significant change or 4.0 seconds heartbeat elapsed
+            if hr_change >= 2.0 or temp_change >= 0.1 or time_since_last_pub >= 4.0:
+                self.last_pub_hr = hr
+                self.last_pub_temp = temp_thermal
+                self.last_pub_time = time.time()
+                
+                try:
+                    vitals_payload = {
+                        "heartRate": int(hr) if not math.isnan(hr) else -1,
+                        "spo2": -1.0,
+                        "bodyTemperature": float(temp_thermal) if not math.isnan(temp_thermal) else -1.0,
+                        "systolic": -1.0,
+                        "diastolic": -1.0,
+                        "stepCount": -1,
+                        "sensor_status": sensor_status,
+                        "alertLevel": "CRITICAL" if (fever_alert > 0 or vision_fall) else "NORMAL",
+                        "vision_fall_detected": bool(vision_fall)
+                    }
+                    topic = "hk07/sensors/wristband/camera/vitals"
+                    self.mqtt_client.publish(topic, json.dumps(vitals_payload), qos=0)
+                except Exception:
+                    pass
+
+    def _vlm_inference_timer_callback(self):
+        """
+        [VLM_WORKER] Background loop waking autonomously at 1 Hz.
+        Pops the newest frame from the ring buffer and executes VLM / OpenCV feature extraction.
+        Updates the Blackboard / local cache.
+        """
+        try:
+            frame = self.frame_queue.get_nowait()
+        except queue.Empty:
+            return
+
+        # Submit the analysis to the async thread
+        coro = self._run_async_vlm_scan(frame)
+        asyncio.run_coroutine_threadsafe(coro, self.async_loop)
+
+    async def _run_async_vlm_scan(self, frame):
+        try:
+            # 1. Push to frame cache buffer
+            _, buffer = cv2.imencode('.jpg', frame)
+            image_bytes = buffer.tobytes()
+            b64 = base64.b64encode(image_bytes).decode("utf-8")
+            
+            from services.sensor_fusion_buffer import get_fusion_buffer, CameraFrame
+            fusion_buf = get_fusion_buffer()
+            await fusion_buf.push_camera(CameraFrame(frame_path="", frame_b64=b64))
+
+            # 2. Run the Perception scan (bypass cache to perform inference)
+            scan = await self.perception_agent.execute_full_body_scan(bypass_cache=True)
+
+            # 3. Serialize full structured payload via to_dict() for canonical output
+            scan_dict = scan.to_dict()
+
+            # 4. Publish clinical analysis to ROS 2 topic
+            clinical_data = {
+                # Legacy fields — safety.ts & DigitalTwinView.vue compatibility
+                "visible_injuries": {
+                    "detected": len(scan.visible_injuries) > 0,
+                    "details": ", ".join(scan.visible_injuries) if scan.visible_injuries else None
+                },
+                "facial_distress": {
+                    "detected": scan.facial_distress > 0.3,
+                    "details": f"Score: {scan.facial_distress:.2f}" if scan.facial_distress > 0 else None
+                },
+                "environmental_hazards": {
+                    "detected": scan.overall_risk in ("HIGH", "CRITICAL"),
+                    "details": scan.notes
+                },
+                # Structured spatial payload — normalized [ymin, xmin, ymax, xmax] coordinates
+                # Consumed by HugoVisionView.vue to draw per-label medical HUD bounding boxes
+                "spatial_targets": scan_dict.get("spatial_targets", []),
+                # Cognitive context — user activity + clinical assessment string
+                "cognitive_insights": scan_dict.get("cognitive_insights", {}),
+                # Top-level scan metadata for frontend status panels
+                "overall_risk": scan.overall_risk,
+                "confidence": round(float(scan.confidence), 2),
+                "posture_risk": scan.posture_risk,
+                "scan_duration_ms": scan.scan_duration_ms,
+            }
+            str_msg = String()
+            str_msg.data = json.dumps(clinical_data, ensure_ascii=False)
+
+            if rclpy.ok():
+                self.clinical_pub.publish(str_msg)
+                if self.mqtt_client:
                     try:
-                        self.get_logger().warning(
-                            f"[RTOS_WATCHDOG] Heartbeat cycle exceeded budget: {cycle_ms:.1f}ms (target: 100ms)"
-                        )
-                    except Exception:
-                        pass
-                    _last_warn_ts = now
-
-            # Precise sleep to maintain 10Hz — subtract actual cycle time
-            sleep_s = max(0.0, _HEARTBEAT_INTERVAL_S - (time.perf_counter() - t_cycle_start))
-            time.sleep(sleep_s)
+                        self.mqtt_client.publish("hk07/perception/clinical", str_msg.data, qos=0)
+                    except Exception as mqtt_err:
+                        self.get_logger().warning(f"[VLM_WORKER] Failed to publish clinical to MQTT: {mqtt_err}")
+                self.get_logger().info(
+                    f"[VLM_WORKER] Published 1Hz VLM scan: risk={scan.overall_risk} "
+                    f"targets={len(clinical_data['spatial_targets'])} "
+                    f"conf={scan.confidence * 100:.0f}% "
+                    f"dur={scan.scan_duration_ms:.0f}ms"
+                )
+        except Exception as e:
+            self.get_logger().error(f"[VLM_WORKER] Error in VLM scan callback: {e}")
 
     def publish_telemetry(self):
         """Legacy ROS timer callback — kept for compatibility but RTOS watchdog is authoritative."""
-        pass  # Heartbeat is now owned by _rtos_watchdog_heartbeat
+        pass  # Heartbeat is now owned by _rtos_watchdog_timer_callback
 
 
     def extract_forehead_roi(self, frame, landmarks, mp_pose):
@@ -346,6 +464,16 @@ class Hk07SensorFusionNode(Node):
                         with self.state_lock:
                             self.latest_frame = frame.copy()
 
+                        # Push to frame_queue ring buffer (bounded size 1)
+                        try:
+                            self.frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            self.frame_queue.put_nowait(frame.copy())
+                        except queue.Full:
+                            pass
+
                         # Save latest frame on disk for agent consumption
                         try:
                             save_dir = os.path.join(agent_dir, "latest_frame.jpg") if agent_dir else "latest_frame.jpg"
@@ -446,82 +574,27 @@ class Hk07SensorFusionNode(Node):
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2.0, max_reconnect_delay)
 
-    def _snapshot_analyzer_worker(self):
-        while rclpy.ok():
-            time.sleep(5.0)
-            with self.state_lock:
-                if self.latest_frame is None:
-                    continue
-                frame_to_analyze = self.latest_frame.copy()
 
-            # Submit to async loop thread
-            asyncio.run_coroutine_threadsafe(
-                self.analyze_frame_with_vision(frame_to_analyze), 
-                self.async_loop
-            )
 
-    async def analyze_frame_with_vision(self, frame):
-        if LLMClient is None:
-            return
+    def destroy_node(self):
+        if hasattr(self, 'mqtt_client') and self.mqtt_client:
+            try:
+                self.mqtt_client.loop_stop()
+                self.mqtt_client.disconnect()
+                self.get_logger().info("[MQTT] Client stopped and disconnected successfully.")
+            except Exception as e:
+                self.get_logger().error(f"[MQTT] Error disconnecting Client: {e}")
+        super().destroy_node()
 
-        try:
-            _, buffer = cv2.imencode('.jpg', frame)
-            base64_image = base64.b64encode(buffer).decode('utf-8')
-
-            prompt = (
-                "Analyze the patient in the frame. "
-                "You must look for: \n"
-                "1. Visible injuries (e.g., cuts, bruises, bleeding, wounds).\n"
-                "2. Facial distress/pallor (e.g., pain expression, sweating, extreme paleness).\n"
-                "3. Environmental hazards (e.g., sharp objects nearby, wet floor, clutter, fall risks).\n\n"
-                "Return ONLY a pure JSON object conforming to this schema, with no markdown code block tags or extra explanation:\n"
-                "{\n"
-                '  "visible_injuries": {"detected": boolean, "details": "string or null"},\n'
-                '  "facial_distress": {"detected": boolean, "details": "string or null"},\n'
-                '  "environmental_hazards": {"detected": boolean, "details": "string or null"}\n'
-                "}"
-            )
-
-            result_str, provider = await LLMClient.generate_vision_completion(
-                prompt=prompt,
-                tiers=VISION_TIERS,
-                image_base64=base64_image,
-                system_prompt="You are a clinical assistant vision model. You must analyze the frame and return pure JSON.",
-                max_tokens=256,
-                temperature=0.1
-            )
-
-            if result_str:
-                cleaned_str = result_str.strip()
-                if cleaned_str.startswith("```"):
-                    lines = cleaned_str.split("\n")
-                    if lines[0].startswith("```"):
-                        lines = lines[1:]
-                    if lines[-1].strip() == "```":
-                        lines = lines[:-1]
-                    cleaned_str = "\n".join(lines).strip()
-                
-                # Verify JSON correctness before publishing
-                json.loads(cleaned_str)
-
-                str_msg = String()
-                str_msg.data = cleaned_str
-
-                try:
-                    if rclpy.ok():
-                        self.clinical_pub.publish(str_msg)
-                        self.get_logger().info(f"[LLM_VISION_PERCEPTION] Published clinical analysis")
-                except Exception:
-                    pass
-
-        except Exception as e:
-            self.get_logger().error(f"Error in snapshot clinical analysis: {e}")
+from rclpy.executors import MultiThreadedExecutor
 
 def main(args=None):
     rclpy.init(args=args)
     node = Hk07SensorFusionNode()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

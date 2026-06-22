@@ -34,6 +34,25 @@
       <div class="scanlines-overlay"></div>
       <!-- Teal tint wash (very subtle, like Baymax optical filter) -->
       <div class="vision-tint"></div>
+      <!-- ── SPATIAL BBOX OVERLAY — medical HUD bounding boxes ─── -->
+      <div class="spatial-bbox-layer" v-if="spatialBoxes.length > 0">
+        <div
+          v-for="(box, i) in spatialBoxes"
+          :key="i"
+          class="spatial-bbox"
+          :style="box.style"
+        >
+          <!-- Corner reticles -->
+          <span class="bbox-corner tl"/><span class="bbox-corner tr"/>
+          <span class="bbox-corner bl"/><span class="bbox-corner br"/>
+          <!-- Label tag -->
+          <div class="bbox-label mono" :style="{ color: box.color }">
+            {{ box.label.replace('_', ' ').toUpperCase() }}
+            <span v-if="box.expression" class="bbox-expr"> / {{ box.expression.toUpperCase() }}</span>
+            <span class="bbox-conf"> {{ (box.confidence * 100).toFixed(0) }}%</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── HUD OVERLAY LAYER ────────────────────────────────────────────────── -->
@@ -53,11 +72,11 @@
         </div>
         <div class="header-right mono">
           <span class="dim">HR:</span>
-          <span :class="vitalsStore.isEmergency ? 'text-crit' : 'text-em'">{{ heartRate }}</span>
+          <span :class="vitalsStore.isEmergency ? 'text-crit' : 'text-em'">{{ heartRateDisplay }}</span>
           <span class="dim ml-2">SpO₂:</span>
-          <span :class="spo2 < 95 ? 'text-crit' : 'text-em'">{{ spo2 }}%</span>
+          <span :class="isSpo2Low ? 'text-crit' : 'text-em'">{{ spo2Display }}</span>
           <span class="dim ml-2">TEMP:</span>
-          <span :class="temperature > 38.5 ? 'text-crit' : 'text-em'">{{ temperature }}°C</span>
+          <span :class="isTempHigh ? 'text-crit' : 'text-em'">{{ tempDisplay }}</span>
         </div>
       </header>
 
@@ -219,7 +238,8 @@
 
               <!-- NEUROTRANSMITTERS -->
               <template v-else-if="rightPanel === 1">
-                <div class="panel-tag cyan">[ NEUROTRANSMITTER_LEVELS ]</div>
+                <div class="panel-tag cyan">[ ESTIMATED_STRESS_REFLEX_NEURO ]</div>
+                <div class="dim mono text-[9px] text-center my-1">(ESTIMATED VIA COMPUTER VISION / RPPG REFLEXES)</div>
                 <div class="neuro-list">
                   <div class="neuro-row">
                     <div class="nr-labels"><span>DOP (DOPAMINE)</span><span class="text-em">{{ dopVal }} pg/mL</span></div>
@@ -241,7 +261,7 @@
                   </div>
                 </div>
                 <div class="diag-divider"></div>
-                <div class="panel-tag cyan mt-2">[ HORMONES_BLOOD_ASSAY ]</div>
+                <div class="panel-tag cyan mt-2">[ ESTIMATED_STRESS_REFLEX_HORMONE ]</div>
                 <div class="hormones-grid">
                   <div class="horm-item"><span class="dim text-xs">GnRH</span><span class="mono text-sm text-em">{{ gnrhVal }}</span></div>
                   <div class="horm-item"><span class="dim text-xs">LH</span><span class="mono text-sm text-em">{{ lhVal }}</span></div>
@@ -340,6 +360,7 @@ import { useSensorTelemetryStore } from '../stores/sensorTelemetry.ts';
 import { useKinematicsStore } from '../stores/kinematics.ts';
 import { useDeviceConfigStore } from '../stores/deviceConfig.ts';
 import { useVisionStore } from '../stores/vision.ts';
+import { useSafetyStore } from '../stores/safety.ts';
 import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue';
 import api from '../services/api.ts';
 
@@ -348,6 +369,7 @@ const sensorStore = useSensorTelemetryStore();
 const kinematicsStore = useKinematicsStore();
 const cfg = useDeviceConfigStore();
 const visionStore = useVisionStore();
+const safetyStore = useSafetyStore();
 const cameraIp = computed(() => cfg.phoneIp);
 
 // ── Panel cycle state ──────────────────────────────────────────────────────
@@ -387,26 +409,83 @@ const trackerStyle = computed(() => {
   };
 });
 
+// ── Spatial Target Bounding Boxes (from clinical WebSocket topic) ──────────
+// Converts normalized [ymin, xmin, ymax, xmax] from PerceptionScan to CSS%
+const BBOX_COLORS: Record<string, string> = {
+  subject_face: '#00E5FF',
+  subject_body: '#00FF66',
+  hematoma:     '#FF3333',
+  user_face:    '#00E5FF',
+  user_body:    '#00FF66',
+}
+const spatialBoxes = computed(() => {
+  return safetyStore.spatialTargets.map((t: any) => {
+    const [ymin, xmin, ymax, xmax] = t.coordinates || t.bounding_box || [0, 0, 0, 0]
+    const color = BBOX_COLORS[t.label] || '#FFB000'
+    return {
+      label: t.label,
+      expression: t.expression ?? null,
+      confidence: t.confidence ?? 0,
+      color,
+      style: {
+        top:    `${(ymin * 100).toFixed(2)}%`,
+        left:   `${(xmin * 100).toFixed(2)}%`,
+        width:  `${((xmax - xmin) * 100).toFixed(2)}%`,
+        height: `${((ymax - ymin) * 100).toFixed(2)}%`,
+        borderColor: color,
+        '--bbox-color': color,
+      }
+    }
+  })
+});
+
 // ── Vitals ─────────────────────────────────────────────────────────────────
 const heartRate = computed(() => {
-  if (cameraOnline.value && kinematicsStore.rppgHeartRate > 0) {
-    return Math.round(kinematicsStore.rppgHeartRate);
-  }
-  return vitalsStore.current.heartRate || 74;
+  const val = cameraOnline.value && kinematicsStore.rppgHeartRate > 0
+    ? kinematicsStore.rppgHeartRate
+    : vitalsStore.current.heartRate;
+  return (!val || isNaN(Number(val)) || Number(val) <= 0) ? NaN : Number(val);
 });
-const spo2 = computed(() => vitalsStore.current.spo2 || 98);
+const spo2 = computed(() => {
+  const val = vitalsStore.current.spo2;
+  return (!val || isNaN(Number(val)) || Number(val) <= 0) ? NaN : Number(val);
+});
 const temperature = computed(() => {
-  if (cameraOnline.value && kinematicsStore.thermalTemperature > 0) {
-    return parseFloat(kinematicsStore.thermalTemperature.toFixed(1));
-  }
-  return vitalsStore.current.bodyTemperature || 36.6;
+  const val = cameraOnline.value && kinematicsStore.thermalTemperature > 0
+    ? kinematicsStore.thermalTemperature
+    : vitalsStore.current.bodyTemperature;
+  return (!val || isNaN(Number(val)) || Number(val) <= 0) ? NaN : Number(val);
 });
 const steps = computed(() => sensorStore.activity?.pedometer_steps || 1420);
 
+const heartRateDisplay = computed(() => {
+  const hr = heartRate.value;
+  return isNaN(hr) ? 'N/A' : `${Math.round(hr)}`;
+});
+const spo2Display = computed(() => {
+  const o2 = spo2.value;
+  return isNaN(o2) ? 'N/A' : `${Math.round(o2)}%`;
+});
+const tempDisplay = computed(() => {
+  const temp = temperature.value;
+  return isNaN(temp) ? 'N/A' : `${temp.toFixed(1)}°C`;
+});
+const isSpo2Low = computed(() => {
+  const o2 = spo2.value;
+  return !isNaN(o2) && o2 < 95;
+});
+const isTempHigh = computed(() => {
+  const temp = temperature.value;
+  return !isNaN(temp) && temp > 38.5;
+});
+
 // ── Stress index ───────────────────────────────────────────────────────────
 const stressIndex = computed(() => {
-  const hrDev = Math.max(0, heartRate.value - 75) / 55;
-  const o2Dev = Math.max(0, 97 - spo2.value) / 7;
+  const hr = heartRate.value;
+  const o2 = spo2.value;
+  if (isNaN(hr) || isNaN(o2)) return 0.0;
+  const hrDev = Math.max(0, hr - 75) / 55;
+  const o2Dev = Math.max(0, 97 - o2) / 7;
   return Math.min(1, Math.max(0, (hrDev * 1.3 + o2Dev * 0.7) / 2));
 });
 
@@ -524,7 +603,9 @@ async function triggerPerceptionScan() {
   try {
     const res = await api.post('/agents/perception/scan', {}, { timeout: 30000 });
     const data = res.data?.data;
-    if (data?.status === 'ok') latestScan.value = data.scan;
+    if (data?.status === 'ok' || data?.status === 'SUCCESS') {
+      visionStore.updatePerceptionScan(data.scan);
+    }
   } catch (e) { console.warn('[VISION] Scan error:', e); }
   finally { scanning.value = false; }
 }
@@ -532,7 +613,9 @@ async function fetchLatestScan() {
   try {
     const res = await api.get('/agents/perception/latest');
     const data = res.data?.data;
-    if (data?.status === 'ok') latestScan.value = data.scan;
+    if (data?.status === 'ok' || data?.status === 'SUCCESS') {
+      visionStore.updatePerceptionScan(data.scan);
+    }
   } catch (e) { /* silent */ }
 }
 
@@ -650,6 +733,38 @@ onUnmounted(() => {
   background: rgba(0, 229, 255, 0.04);
   z-index: 2;
 }
+
+/* ── SPATIAL BBOX OVERLAY ───────────────────────────────────────────────── */
+.spatial-bbox-layer {
+  position: absolute; inset: 0; pointer-events: none; z-index: 5;
+}
+.spatial-bbox {
+  position: absolute;
+  border: 1.5px solid var(--bbox-color, #00E5FF);
+  filter: drop-shadow(0 0 6px var(--bbox-color, #00E5FF));
+  box-sizing: border-box;
+}
+/* Corner reticle marks */
+.bbox-corner {
+  position: absolute; width: 8px; height: 8px;
+  border-color: var(--bbox-color, #00E5FF);
+  border-style: solid;
+}
+.bbox-corner.tl { top: -2px; left: -2px; border-width: 2px 0 0 2px; }
+.bbox-corner.tr { top: -2px; right: -2px; border-width: 2px 2px 0 0; }
+.bbox-corner.bl { bottom: -2px; left: -2px; border-width: 0 0 2px 2px; }
+.bbox-corner.br { bottom: -2px; right: -2px; border-width: 0 2px 2px 0; }
+/* Label tag */
+.bbox-label {
+  position: absolute; top: -18px; left: -1px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 1px 5px; white-space: nowrap;
+  line-height: 1.5;
+}
+.bbox-expr { opacity: 0.75; }
+.bbox-conf { opacity: 0.6; font-size: 9px; }
+
 
 /* ── HUD OVERLAY ─────────────────────────────────────────────────────────── */
 .hud-overlay {

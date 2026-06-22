@@ -316,19 +316,22 @@ class RouterAgentV2:
         Main orchestration entry point.
         """
         # 1. Try centralized LLM client for tool calling fallback
-        result, provider = await LLMClient.generate_tool_call(
-            prompt=user_message,
-            tiers=ROUTER_TIERS,
-            tools=TOOLS_SCHEMA,
-            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
-            temperature=0.1,
-            max_tokens=512,
-            timeout=8
-        )
-        if result:
-            self.last_provider_used = provider
-            result["provider"] = provider
-            return result
+        try:
+            result, provider = await LLMClient.generate_tool_call(
+                prompt=user_message,
+                tiers=ROUTER_TIERS,
+                tools=TOOLS_SCHEMA,
+                system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+                temperature=0.1,
+                max_tokens=512,
+                timeout=8
+            )
+            if result:
+                self.last_provider_used = provider
+                result["provider"] = provider
+                return result
+        except Exception as e:
+            log.warning("[ROUTER_V2] LLM client tool call failed (%s). Activating local rules fallback.", e)
 
         # 2. Rule-based local fallback (zero-dependency, deterministic)
         result = self._local_classify_and_route(user_message)

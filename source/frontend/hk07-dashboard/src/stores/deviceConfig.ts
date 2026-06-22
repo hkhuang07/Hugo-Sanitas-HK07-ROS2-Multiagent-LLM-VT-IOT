@@ -31,13 +31,13 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
   const phoneIp = ref(localStorage.getItem(LS_PHONE_IP) || _oldIp || '')
   const pcIp = ref(localStorage.getItem(LS_PC_IP) || '')
   const cameraPort = ref(localStorage.getItem(LS_PORT_CAM) || '8080')
-  const sensorPort = ref(localStorage.getItem(LS_PORT_SENSOR) || '5007')
+  const sensorPort = ref(localStorage.getItem(LS_PORT_SENSOR) || '5005')
 
   /** draft edited by the form — only committed on confirmIp() */
   const draftPhoneIp = ref(phoneIp.value || '')
   const draftPcIp = ref(pcIp.value || '')
   const draftCameraPort = ref(cameraPort.value || '8080')
-  const draftSensorPort = ref(sensorPort.value || '5007')
+  const draftSensorPort = ref(sensorPort.value || '5005')
 
   /** last confirmation timestamp — watchers in views react to this */
   const confirmedAt = ref(0)
@@ -52,7 +52,7 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
 
   // ── Computed URLs ───────────────────────────────────────────────────────────
   // Camera:  http://<PHONE_IP>:8080/video   (IP Webcam Android app)
-  // Sensor:  http://<PC_IP>:5007/data        (hk07_sensor_fusion.py / SensorLogs destination)
+  // Sensor:  http://<PC_IP>:5005/data        (hk07_sensor_fusion.py / SensorLogs destination)
   const cameraUrl = computed(() => `http://${phoneIp.value}:${cameraPort.value}/video`)
   const sensorBridgeUrl = computed(() => `http://${pcIp.value}:${sensorPort.value}/data`)
 
@@ -146,7 +146,7 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
           const { phoneIp: apiPhoneIp, wifiIp: apiWifiIp } = result.data
           if (apiPhoneIp) draftPhoneIp.value = apiPhoneIp
           if (apiWifiIp) draftPcIp.value = apiWifiIp
-          
+
           await confirmIp()
           console.log(`[CONFIG] Automatically configured and established phone IP: ${phoneIp.value}, PC IP: ${pcIp.value}`)
           isConfigLoaded.value = true

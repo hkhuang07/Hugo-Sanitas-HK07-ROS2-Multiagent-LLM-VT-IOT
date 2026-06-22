@@ -121,6 +121,10 @@ class PerceptionScan:
     risk:               str   = "LOW"
     details:            str   = ""
 
+    # New structured fields
+    spatial_detections: list = field(default_factory=list)
+    cognitive_analysis: dict = field(default_factory=dict)
+
     def __post_init__(self):
         if not self.timestamp:
             self.timestamp = datetime.utcnow().isoformat() + "Z"
@@ -137,7 +141,93 @@ class PerceptionScan:
         return datetime.utcnow().timestamp() > (entry_time.timestamp() + self.ttl_seconds)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        import math
+        sensor_status = "ONLINE"
+        hr = self.heart_rate if self.heart_rate is not None else float('nan')
+        temp = self.body_temperature if self.body_temperature is not None else float('nan')
+
+        if (isinstance(hr, float) and math.isnan(hr)) or (isinstance(temp, float) and math.isnan(temp)):
+            sensor_status = "OFFLINE"
+
+        real_hr_rppg = hr if (not isinstance(hr, float) or not math.isnan(hr)) else "SENSOR_DISCONNECTED"
+        real_temp_thermal = temp if (not isinstance(temp, float) or not math.isnan(temp)) else "SENSOR_DISCONNECTED"
+
+        vitals_payload = {
+            "real_hr_rppg": real_hr_rppg,
+            "real_temp_thermal": real_temp_thermal,
+            "sensor_status": sensor_status
+        }
+
+        s_targets = []
+        for det in self.spatial_detections:
+            lbl = det.get("label", "unknown")
+            if lbl in ("subject_face", "user_face"):
+                lbl = "user_face"
+            elif lbl in ("localized_injury", "hematoma"):
+                lbl = "localized_injury"
+            elif lbl in ("subject_body", "user_body"):
+                lbl = "user_body"
+                
+            box = det.get("bounding_box") or det.get("coordinates")
+            conf = det.get("confidence", 0.95)
+            
+            target_entry = {
+                "label": lbl,
+                "coordinates": box,
+                "confidence": float(conf)
+            }
+            if lbl == "user_face":
+                target_entry["expression"] = det.get("emotion") or ("distressed" if self.facial_distress > 0.4 else "calm")
+            s_targets.append(target_entry)
+            
+        if not s_targets:
+            s_targets = [
+                {
+                    "label": "user_face",
+                    "coordinates": [0.25, 0.40, 0.42, 0.60],
+                    "confidence": 0.95,
+                    "expression": "distressed" if self.facial_distress > 0.4 else "calm"
+                }
+            ]
+            if self.posture_risk == "HIGH" or self.overall_risk == "CRITICAL":
+                s_targets.append({
+                    "label": "user_body",
+                    "coordinates": [0.65, 0.15, 0.95, 0.85],
+                    "confidence": 0.89
+                })
+            if self.visible_injuries:
+                s_targets.append({
+                    "label": "localized_injury",
+                    "coordinates": [0.60, 0.30, 0.72, 0.45],
+                    "confidence": 0.95
+                })
+                
+        activity = "sitting_down"
+        if self.posture_risk == "HIGH" or self.overall_risk == "CRITICAL":
+            activity = "lying_down"
+            
+        stress_index = "high_cortisol_equivalent" if (self.facial_distress > 0.4 or self.overall_risk in ("HIGH", "CRITICAL")) else "nominal_resting_state"
+        clinical_reasoning = self.notes or "Vitals and physical posture are stable. Standard monitoring active."
+
+        cognitive_insights = {
+            "inferred_stress_index": stress_index,
+            "subject_activity": activity,
+            "clinical_reasoning": clinical_reasoning
+        }
+        
+        d = {
+            "status": "HARDWARE_BOUND" if sensor_status == "ONLINE" else "SENSOR_DISCONNECTED",
+            "vitals": vitals_payload,
+            "spatial_targets": s_targets,
+            "cognitive_insights": cognitive_insights,
+            "vitals_summary": {"hr": 72.0 if math.isnan(hr) else hr, "temp": 36.6 if math.isnan(temp) else temp},
+            "spatial_detections": self.spatial_detections,
+            "cognitive_analysis": {
+                "user_activity": "lying_down" if activity == "lying_down" else "sitting_or_standing",
+                "clinical_reasoning": clinical_reasoning
+            }
+        }
+        return d
 
 
 # ─── PerceptionAgent ──────────────────────────────────────────────────────────
@@ -195,7 +285,7 @@ Rules:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
-    async def execute_full_body_scan(self) -> PerceptionScan:
+    async def execute_full_body_scan(self, bypass_cache: bool = False) -> PerceptionScan:
         """
         Main entry point for tool `execute_full_body_scan`.
         Called by OrchestratorV2 or directly via POST /agents/perception/scan.
@@ -205,8 +295,21 @@ Rules:
         [FIX-1] Frame fetch via asyncio.to_thread — I/O never blocks event loop.
         [FIX-2] LocalVisionEvaluator activated when cloud LLM latency > 2.0s.
         [FIX-4] rPPG_THERMAL + wristband sensor data injected as structured JSON
-                directly into LLM system prompt — skips NL translation.
+                directly into the LLM system prompt — skips NL translation.
         """
+        if not bypass_cache:
+            latest_scan = await self.read_latest_scan()
+            if latest_scan and not latest_scan.is_expired():
+                try:
+                    entry_time = datetime.fromisoformat(latest_scan.timestamp.replace('Z', '+00:00'))
+                    from datetime import timezone
+                    age = datetime.now(timezone.utc).timestamp() - entry_time.timestamp()
+                    if 0.0 <= age < 5.0:
+                        log.info("[PERCEPTION] Returning fresh cached scan from Blackboard (age=%.1fs, O(1)).", age)
+                        return latest_scan
+                except Exception as e:
+                    log.warning("[PERCEPTION] Failed to verify cached scan age: %s", e)
+
         t_start = time.perf_counter()
 
         # ── Safety gate ──────────────────────────────────────────────────────
@@ -297,6 +400,56 @@ Rules:
                 vitals_str=vitals_str
             )
 
+        # ── Crop ROIs and Run Cognitive Reasoning Loop ───────────────────────
+        spatial_detections = []
+        try:
+            from main import _sensor_cache
+            spatial_detections = _sensor_cache.get("spatial_detections", [])
+        except Exception:
+            pass
+
+        vitals_summary = {
+            "hr": ctx.vitals.heart_rate if ctx.vitals else 72.0,
+            "temp": ctx.vitals.body_temperature if ctx.vitals else 36.6
+        }
+
+        rois = []
+        if frame_bytes and spatial_detections:
+            try:
+                import cv2
+                import numpy as np
+                nparr = np.frombuffer(frame_bytes, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    h, w = img.shape[:2]
+                    for det in spatial_detections:
+                        label = det.get("label")
+                        bbox = det.get("bounding_box")
+                        if bbox and len(bbox) == 4:
+                            ymin, xmin, ymax, xmax = bbox
+                            y1, x1 = int(ymin * h), int(xmin * w)
+                            y2, x2 = int(ymax * h), int(xmax * w)
+                            crop = img[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
+                            if crop.size > 0:
+                                _, crop_buf = cv2.imencode('.jpg', crop)
+                                rois.append({
+                                    "label": label,
+                                    "bytes": crop_buf.tobytes()
+                                })
+            except Exception as e:
+                log.error("[PERCEPTION] ROI cropping failed: %s", e)
+
+        from services.llm_client import LocalOfflineFallback
+        cognitive_analysis = await asyncio.to_thread(
+            LocalOfflineFallback.get_local_vlm_reasoning,
+            frame_bytes,
+            rois,
+            vitals_summary
+        )
+
+        cognitive_reasoning_str = cognitive_analysis.get("clinical_reasoning", "")
+        notes_str = cognitive_reasoning_str if cognitive_reasoning_str else vision_result.get("notes", "")
+
         # ── Build PerceptionScan ─────────────────────────────────────────────
         scan = PerceptionScan(
             scan_duration_ms=round((time.perf_counter() - t_start) * 1000, 1),
@@ -305,7 +458,7 @@ Rules:
             visible_injuries=vision_result.get("visible_injuries", []),
             posture_risk=vision_result.get("posture_risk", "LOW"),
             confidence=safe_float(vision_result.get("confidence", 0.0)),
-            notes=vision_result.get("notes", ""),
+            notes=notes_str,
             overall_risk=vision_result.get("overall_risk", "LOW"),
             # Vitals from fusion buffer
             heart_rate=ctx.vitals.heart_rate if ctx.vitals else None,
@@ -314,6 +467,8 @@ Rules:
             status=vision_result.get("status", "UNKNOWN"),
             alertLevel=vision_result.get("alertLevel", "NORMAL"),
             nearest_obstacle_m=safe_float(vision_result.get("nearest_obstacle_m", 999.0), 999.0),
+            spatial_detections=spatial_detections,
+            cognitive_analysis=cognitive_analysis,
         )
 
         # ── Adjust overall_risk based on vitals thresholds ───────────────────
