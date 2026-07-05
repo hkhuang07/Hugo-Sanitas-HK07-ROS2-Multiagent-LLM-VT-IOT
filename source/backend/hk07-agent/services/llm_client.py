@@ -59,22 +59,47 @@ except ImportError:
     LiteLLMRateLimitError = Exception
     log.warning("[LLM_CLIENT] litellm not installed — fallbacks will be limited!")
 
-# Import llama-cpp-python for local quantized SLM support
+# Ollama Local SLM Configuration
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+log.info(f"[LLM_CLIENT] Offline fallback configured via Ollama at {OLLAMA_BASE_URL}")
+
 try:
     import llama_cpp
     LLAMA_CPP_AVAILABLE = True
 except ImportError:
     LLAMA_CPP_AVAILABLE = False
-    log.warning("[LLM_CLIENT] llama-cpp-python not installed — local SLM offline fallback will be rule-based!")
 
 # ─── API keys from environment ────────────────────────────────────────────────
 _GROQ_KEY        = os.getenv("GROQ_API_KEY", "")
 _OPENAI_KEY      = os.getenv("OPENAI_API_KEY", "")
-_GEMINI_KEY      = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", ""))
+_GEMINI_KEY      = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_GENERATIVEAI_API_KEY", os.getenv("GOOGLE_API_KEY", "")))
 _MISTRAL_KEY     = os.getenv("MISTRAL_API_KEY", "")
 _COHERE_KEY      = os.getenv("COHERE_API_KEY", "")
 _OPENROUTER_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 _HF_KEY          = os.getenv("HUGGINGFACE_API_KEY", "")
+
+# ─── Gemini AQ. key compatibility bridge ────────────────────────────────────
+# google.generativeai has been DEPRECATED (June 2026). Replaced by google-genai.
+# LiteLLM >= 1.89.3 internally uses google-genai and reads GEMINI_API_KEY.
+# We set all env aliases so both old litellm paths and new google-genai find the key.
+if _GEMINI_KEY:
+    os.environ["GEMINI_API_KEY"] = _GEMINI_KEY
+    os.environ.setdefault("GOOGLE_API_KEY", _GEMINI_KEY)
+    os.environ.setdefault("GOOGLE_GENERATIVEAI_API_KEY", _GEMINI_KEY)
+
+# Suppress FutureWarning from deprecated google.generativeai package (safe to ignore —
+# LiteLLM routes through google-genai SDK internally, not google.generativeai directly)
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="All support for the `google.generativeai` package has ended",
+    category=FutureWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message="You are using a Python version.*Google will stop supporting",
+    category=FutureWarning,
+)
 
 import threading
 
@@ -242,7 +267,9 @@ def _get_execution_chain(is_vision: bool = False) -> List[Dict[str, Any]]:
         chain = [
             {
                 "provider": "groq",
-                "model": "groq/llama-3.3-70b-versatile",
+                # llama-3.3-70b-versatile deprecated June 2026. Using stable llama-3.1-70b-versatile.
+                # Fallback: llama3-groq-70b-8192-tool-use-preview for tool-calling paths.
+                "model": "groq/llama-3.1-70b-versatile",
                 "api_key": groq_key,
                 "label": "GROQ_TIER_1",
                 "enabled": bool(groq_key),
@@ -469,6 +496,27 @@ class LocalOfflineFallback:
     _model_instance = None
 
     @classmethod
+    def get_model(cls):
+        if not LLAMA_CPP_AVAILABLE:
+            return None
+        if cls._model_instance is not None:
+            return cls._model_instance
+        model_path = os.getenv("LOCAL_SLM_MODEL_PATH", "models/phi-3-mini-4k-instruct-q4.gguf")
+        if not os.path.exists(model_path):
+            return None
+        try:
+            import llama_cpp
+            cls._model_instance = llama_cpp.Llama(
+                model_path=model_path,
+                n_ctx=2048,
+                n_threads=4,
+                verbose=False
+            )
+            return cls._model_instance
+        except Exception:
+            return None
+
+    @classmethod
     def _call_ollama_text_sync(cls, prompt: str, system_prompt: Optional[str] = None) -> Optional[str]:
         import httpx
         import os
@@ -489,12 +537,23 @@ class LocalOfflineFallback:
                 candidates.insert(0, env_url)
                 
         winning_url = None
+        resolved_model = model_name
         for url in candidates:
             try:
                 with httpx.Client(timeout=1.0) as client:
                     resp = client.get(f"{url}/api/tags")
                     if resp.status_code == 200:
                         winning_url = url
+                        try:
+                            models = [m.get("name", "") for m in resp.json().get("models", [])]
+                            # If exact model_name is not in models, look for a substring match
+                            if model_name not in models:
+                                for m in models:
+                                    if model_name in m:
+                                        resolved_model = m
+                                        break
+                        except Exception:
+                            pass
                         break
             except Exception:
                 continue
@@ -503,7 +562,7 @@ class LocalOfflineFallback:
             return None
             
         payload = {
-            "model": model_name,
+            "model": resolved_model,
             "prompt": prompt,
             "system": system_prompt or "",
             "stream": False,
@@ -515,7 +574,7 @@ class LocalOfflineFallback:
                 if resp.status_code == 200:
                     text = resp.json().get("response", "").strip()
                     if text:
-                        log.info(f"[OLLAMA_TEXT] Direct Ollama text generation succeeded using model {model_name} on {winning_url}.")
+                        log.info(f"[OLLAMA_TEXT] Direct Ollama text generation succeeded using model {resolved_model} on {winning_url}.")
                         return text
         except Exception as exc:
             log.warning(f"[OLLAMA_TEXT] Ollama text generation failed on {winning_url}: {exc}")
@@ -566,34 +625,6 @@ class LocalOfflineFallback:
         return None
 
     @classmethod
-    def get_model(cls):
-        if not LLAMA_CPP_AVAILABLE:
-            return None
-        
-        if cls._model_instance is not None:
-            return cls._model_instance
-            
-        model_path = os.getenv("LOCAL_SLM_MODEL_PATH", "models/phi-3-mini-4k-instruct-q4.gguf")
-        if not os.path.exists(model_path):
-            log.warning(f"[LOCAL_SLM] Quantized model file not found at: {model_path}. Please download the GGUF model. Falling back to rule-based fallback.")
-            return None
-            
-        try:
-            log.info(f"[LOCAL_SLM] Loading quantized SLM model from: {model_path}")
-            import llama_cpp
-            cls._model_instance = llama_cpp.Llama(
-                model_path=model_path,
-                n_ctx=2048,
-                n_threads=4,
-                verbose=False
-            )
-            log.info("[LOCAL_SLM] Quantized SLM model loaded successfully.")
-            return cls._model_instance
-        except Exception as e:
-            log.error(f"[LOCAL_SLM] Failed to load local SLM model: {e}")
-            return None
-
-    @classmethod
     def get_completion_fallback(cls, prompt: str, system_prompt: Optional[str] = None) -> str:
         # 1. Try local Ollama text endpoint first
         try:
@@ -603,86 +634,53 @@ class LocalOfflineFallback:
         except Exception as e:
             log.warning(f"[LOCAL_FALLBACK] Ollama text check failed: {e}")
 
-        # 2. Try llama-cpp-python local model
+        # 2. Try local GGUF
         model = cls.get_model()
-        if model is None:
-            # Try to pass vitals context if cached to make the fallback dynamic
-            vitals_context = None
+        if model is not None:
+            model_path = os.getenv("LOCAL_SLM_MODEL_PATH", "models/phi-3-mini-4k-instruct-q4.gguf").lower()
+            if "phi" in model_path:
+                formatted_prompt = f"<|system|>\n{system_prompt or ''}<|end|>\n<|user|>\n{prompt}<|end|>\n<|assistant|>\n"
+            elif "llama" in model_path:
+                formatted_prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt or ''}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+            else:
+                formatted_prompt = f"System: {system_prompt or ''}\nUser: {prompt}\nAssistant: "
+
             try:
-                from main import _sensor_cache
-                vitals = _sensor_cache.get("vitals")
-                fall = _sensor_cache.get("fall_detected", False)
-                fever = _sensor_cache.get("fever_alert", False)
-                if vitals:
-                    import math
-                    hr = vitals.get("hr")
-                    temp = vitals.get("temp")
-                    hr_val = hr if (hr is not None and not (isinstance(hr, float) and math.isnan(hr))) else 0
-                    temp_val = temp if (temp is not None and not (isinstance(temp, float) and math.isnan(temp))) else 0
-                    vitals_context = {
-                        "hr":            hr_val if hr_val > 0 else float('nan'),
-                        "temp":          temp_val if temp_val > 0 else float('nan'),
-                        "spo2":          vitals.get("spo2"),
-                        "fever":         fever,
-                        "tachycardia":   hr_val >= 100,
-                        "fall_detected": fall,
-                    }
-            except Exception:
-                pass
-            return cls._rule_based_completion(prompt, system_prompt, vitals_context=vitals_context)
+                response = model(
+                    formatted_prompt,
+                    max_tokens=300,
+                    temperature=0.3,
+                    stop=["<|end|>", "<|eot_id|>", "User:", "System:"],
+                    echo=False
+                )
+                return response["choices"][0]["text"].strip()
+            except Exception as e:
+                log.error(f"[LOCAL_SLM] Local SLM text generation failed: {e}")
 
-        model_path = os.getenv("LOCAL_SLM_MODEL_PATH", "models/phi-3-mini-4k-instruct-q4.gguf").lower()
-        system = system_prompt or (
-            "You are Hugo or Sanitas or HK-07, the personal robot healthcare companion assistant. "
-            "You are operating in local offline fallback mode. "
-            "Respond clinically and concisely."
-        )
-        
-        if "phi" in model_path:
-            formatted_prompt = f"<|system|>\n{system}<|end|>\n<|user|>\n{prompt}<|end|>\n<|assistant|>\n"
-        elif "llama" in model_path:
-            formatted_prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-        else:
-            formatted_prompt = f"System: {system}\nUser: {prompt}\nAssistant: "
-
+        # 3. Fall back directly to rule-based completion if Ollama and GGUF are not available
+        vitals_context = None
         try:
-            log.info("[LOCAL_SLM] Generating text completion via local GGUF SLM (1.5s limit)...")
-            import threading
-            class SLMThread(threading.Thread):
-                def __init__(self):
-                    super().__init__(name="slm-gguf-worker", daemon=True)
-                    self.result = None
-                    self.exception = None
-                def run(self):
-                    try:
-                        self.result = model(
-                            formatted_prompt,
-                            max_tokens=128,
-                            temperature=0.3,
-                            stop=["<|end|>", "<|eot_id|>", "User:", "System:"],
-                            echo=False
-                        )
-                    except Exception as ex:
-                        self.exception = ex
-            
-            thr = SLMThread()
-            thr.start()
-            thr.join(timeout=1.5)
-            
-            if thr.is_alive():
-                log.warning("[LOCAL_SLM] Quantized SLM execution exceeded 1.5s window! Falling back to rule-based completion.")
-                return cls._rule_based_completion(prompt, system_prompt)
-            
-            if thr.exception:
-                raise thr.exception
-                
-            response = thr.result
-            text = response["choices"][0]["text"].strip()
-            log.info("[LOCAL_SLM] Text generation succeeded.")
-            return text
-        except Exception as e:
-            log.error(f"[LOCAL_SLM] Local SLM generation failed: {e}. Falling back to rule-based completion.")
-            return cls._rule_based_completion(prompt, system_prompt)
+            from main import _sensor_cache
+            vitals = _sensor_cache.get("vitals")
+            fall = _sensor_cache.get("fall_detected", False)
+            fever = _sensor_cache.get("fever_alert", False)
+            if vitals:
+                import math
+                hr = vitals.get("hr")
+                temp = vitals.get("temp")
+                hr_val = hr if (hr is not None and not (isinstance(hr, float) and math.isnan(hr))) else 0
+                temp_val = temp if (temp is not None and not (isinstance(temp, float) and math.isnan(temp))) else 0
+                vitals_context = {
+                    "hr":            hr_val if hr_val > 0 else float('nan'),
+                    "temp":          temp_val if temp_val > 0 else float('nan'),
+                    "spo2":          vitals.get("spo2"),
+                    "fever":         fever,
+                    "tachycardia":   hr_val >= 100,
+                    "fall_detected": fall,
+                }
+        except Exception:
+            pass
+        return cls._rule_based_completion(prompt, system_prompt, vitals_context=vitals_context)
 
 
     @classmethod
@@ -1095,9 +1093,9 @@ class LocalOfflineFallback:
             from llama_cpp.llama_chat_format import MoondreamChatHandler, Llava15ChatHandler
             
             if "moondream" in model_path.lower():
-                cls._vlm_chat_handler = MoondreamChatHandler(mmproj_path=mmproj_path)
+                cls._vlm_chat_handler = MoondreamChatHandler(clip_model_path=mmproj_path)
             else:
-                cls._vlm_chat_handler = Llava15ChatHandler(mmproj_path=mmproj_path)
+                cls._vlm_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_path)
                 
             cls._vlm_model_instance = llama_cpp.Llama(
                 model_path=model_path,
@@ -1326,8 +1324,10 @@ class LocalOfflineFallback:
                 injury_desc = "prominent localized contusion/hematoma"
         
         # 4. Generate overall clinical reasoning
-        hr = vitals_summary.get("hr", 72.0)
-        temp = vitals_summary.get("temp", 36.6)
+        hr = vitals_summary.get("hr")
+        hr = hr if hr is not None else 72.0
+        temp = vitals_summary.get("temp")
+        temp = temp if temp is not None else 36.6
         
         reasoning_parts = []
         if fall_active:
@@ -1922,6 +1922,30 @@ class LLMClient:
             provider_label examples: "OPENAI_VISION_T2", "GEMINI_VISION_T2", "OLLAMA_TIER_3",
                                      "RULE_BASED_TIER4", "LOCAL_FALLBACK"
         """
+        # Check if video channel is locked by Safety Agent alert mode
+        try:
+            from services.blackboard_service import get_blackboard
+            bb = get_blackboard()
+            alert_mode_cached = bb._in_memory_store.get("safety:alert_mode")
+            alert_mode = False
+            if alert_mode_cached and time.time() <= alert_mode_cached.get("expiry", 0.0):
+                alert_mode = alert_mode_cached.get("value", False)
+            if alert_mode:
+                log.warning("[BEHAVIOR_COORDINATOR] Vision channel locked by Safety Agent alert mode. Returning lock state.")
+                locked_payload = {
+                    "skin_tone_note": "",
+                    "facial_distress": 0.0,
+                    "visible_injuries": [],
+                    "posture_risk": "LOW",
+                    "overall_risk": "LOW",
+                    "confidence": 0.0,
+                    "notes": "[LOCKED] Vision channel locked by Safety Agent alert mode.",
+                    "status": "LOCKED"
+                }
+                return json.dumps(locked_payload, ensure_ascii=False), "LOCKED"
+        except Exception as e:
+            log.warning("[BEHAVIOR_COORDINATOR] Failed to check safety:alert_mode in llm_client: %s", e)
+
         if not _circuit_breaker.allow_request():
             log.warning("[VISION_GROUPED] Global circuit OPEN — routing directly to Local Edge VLM.")
             res = await asyncio.to_thread(LocalOfflineFallback.get_local_vision_completion, prompt, image_bytes, system_prompt)
@@ -2039,10 +2063,10 @@ class LLMClient:
                 for t in tier2_tasks:
                     if not t.done():
                         t.cancel()
-                        try:
-                            await t
-                        except asyncio.CancelledError:
-                            pass
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
         else:
             log.warning("[VISION_GROUPED/T2] No TIER 2 providers available — jumping straight to TIER 3.")

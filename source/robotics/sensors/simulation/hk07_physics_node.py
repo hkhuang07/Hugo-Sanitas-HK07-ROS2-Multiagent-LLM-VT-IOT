@@ -56,15 +56,27 @@ class Hk07PhysicsNode(Node):
         
         # Publishers
         self.joint_pub = self.create_publisher(JointState, '/telemetry/joint_states', 10)
-        self.imu_pub = self.create_publisher(Imu, '/telemetry/imu', 10)
         
         # Timer (50Hz)
         self.timer = self.create_timer(0.02, self.physics_step)
+        
+        # Phone IMU tracking to prioritize real telemetry
+        self.last_phone_imu_time = 0.0
         
         log.info("=== HK07 PHYSICS & IK SOLVER NODE STARTED ===")
 
     def target_callback(self, msg):
         with self.state_lock:
+            now = time.time()
+            is_phone = (msg.header.frame_id == "imu_sensor_link")
+            
+            if is_phone:
+                self.last_phone_imu_time = now
+            
+            # Reject base_link (simulation) targets if the phone has been active within the last 3.0 seconds
+            if not is_phone and (now - self.last_phone_imu_time < 3.0):
+                return
+                
             # Target position packed in angular_velocity
             self.target_pos = {
                 "x": msg.angular_velocity.x,
@@ -153,15 +165,10 @@ class Hk07PhysicsNode(Node):
             fy = spring_k * (t_pos["y"] - self.phys_pos["y"]) - damping * self.phys_vel["y"]
             fz = spring_k * (t_pos["z"] - self.phys_pos["z"]) - damping * self.phys_vel["z"]
             
-            # 3. Integrate Equations of Motion
+            # 3. Integrate Equations of Motion (Single damping harmonically correct)
             self.phys_vel["x"] += (fx / mass) * dt
             self.phys_vel["y"] += (fy / mass) * dt
             self.phys_vel["z"] += (fz / mass) * dt
-            
-            # Apply air resistance damping
-            self.phys_vel["x"] *= 0.88
-            self.phys_vel["y"] *= 0.88
-            self.phys_vel["z"] *= 0.88
             
             self.phys_pos["x"] += self.phys_vel["x"] * dt
             self.phys_pos["y"] += self.phys_vel["y"] * dt
@@ -189,24 +196,20 @@ class Hk07PhysicsNode(Node):
             joint_msg.effort = [0.0, 0.0, 0.0]
             self.joint_pub.publish(joint_msg)
             
-            # 6. Compile and Publish Resolved IMU Telemetry
-            imu_msg = Imu()
-            imu_msg.header.stamp = stamp
-            imu_msg.header.frame_id = "imu_link"
-            imu_msg.orientation.w = round(self.phys_rot["qw"], 5)
-            imu_msg.orientation.x = round(self.phys_rot["qx"], 5)
-            imu_msg.orientation.y = round(self.phys_rot["qy"], 5)
-            imu_msg.orientation.z = round(self.phys_rot["qz"], 5)
-            
-            imu_msg.linear_acceleration.x = round(fx, 4)
-            imu_msg.linear_acceleration.y = round(fy, 4)
-            imu_msg.linear_acceleration.z = round(fz, 4)
-            
-            # Pack physical position in angular_velocity
-            imu_msg.angular_velocity.x = round(self.phys_pos["x"], 3)
-            imu_msg.angular_velocity.y = round(self.phys_pos["y"], 3)
-            imu_msg.angular_velocity.z = round(self.phys_pos["z"], 3)
-            self.imu_pub.publish(imu_msg)
+            # Publish PoseStamped for physics visualizer to avoid IMU topic hacking
+            from geometry_msgs.msg import PoseStamped
+            pose_msg = PoseStamped()
+            pose_msg.header.stamp = stamp
+            pose_msg.header.frame_id = "odom"
+            pose_msg.pose.position.x = round(self.phys_pos["x"], 3)
+            pose_msg.pose.position.y = round(self.phys_pos["y"], 3)
+            pose_msg.pose.position.z = round(self.phys_pos["z"], 3)
+            pose_msg.pose.orientation.w = round(self.phys_rot["qw"], 5)
+            pose_msg.pose.orientation.x = round(self.phys_rot["qx"], 5)
+            pose_msg.pose.orientation.y = round(self.phys_rot["qy"], 5)
+            pose_msg.pose.orientation.z = round(self.phys_rot["qz"], 5)
+            self.pose_pub = getattr(self, 'pose_pub', None) or self.create_publisher(PoseStamped, '/telemetry/physics/pose', 10)
+            self.pose_pub.publish(pose_msg)
             
         except Exception as loop_error:
             log.error(f"Error in physics calculation cycle: {loop_error}")

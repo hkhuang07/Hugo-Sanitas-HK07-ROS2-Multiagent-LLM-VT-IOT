@@ -26,6 +26,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final WristbandConfigRepository wristbandConfigRepository;
+    private final com.hk07.domain.health.service.HealthService healthService;
 
     @Transactional(readOnly = true)
     public UserDto getById(UUID userId) {
@@ -54,7 +55,7 @@ public class UserService {
         }
 
         WristbandConfigEntity config = wristbandConfigRepository
-                .findByUserId(userId)
+                .findByUserIdAndDeviceId(userId, dto.getDeviceId())
                 .orElse(WristbandConfigEntity.builder().user(user).build());
 
         config.setDeviceId(dto.getDeviceId());
@@ -66,6 +67,7 @@ public class UserService {
         config.setStrokeAlertEnabled(dto.isStrokeAlertEnabled());
 
         wristbandConfigRepository.save(config);
+        healthService.clearConfigCache();
         log.info("[USER_WRISTBAND_CONFIG] userId={} deviceId={}", userId, dto.getDeviceId());
 
         return toWristbandDto(config);
@@ -73,7 +75,8 @@ public class UserService {
 
     // ─── Mappers ─────────────────────────────────────────────────────────────
     private UserDto toDto(UserEntity u) {
-        WristbandConfigDto wb = u.getWristbandConfig() != null ? toWristbandDto(u.getWristbandConfig()) : null;
+        WristbandConfigDto wb = (u.getWristbandConfigs() != null && !u.getWristbandConfigs().isEmpty()) 
+                ? toWristbandDto(u.getWristbandConfigs().get(0)) : null;
         return UserDto.builder()
                 .id(u.getId()).displayName(u.getDisplayName())
                 .email(u.getEmail()).role(u.getRole())

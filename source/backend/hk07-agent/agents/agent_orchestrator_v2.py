@@ -17,7 +17,7 @@ from typing import TypedDict, List, Dict, Any, Optional
 
 from agents.router_agent_v2 import RouterAgentV2
 from agents.safety_agent import SafetyAgent
-from agents.medical_agent import MedicalAgent
+from agents.care_agent import CareAgent
 from agents.empathetic_agent import EmpatheticAgent
 from agents.perception_agent import PerceptionAgent
 from agents.action_agent import ActionAgent
@@ -45,7 +45,8 @@ class AgentOrchestratorV2:
     def __init__(self, memory=None, arbitrator=None):
         self.router_agent = RouterAgentV2()
         self.safety_agent = SafetyAgent(arbitrator)
-        self.medical_agent = MedicalAgent(memory, arbitrator)
+        self.care_agent = CareAgent(memory, arbitrator)
+        self.medical_agent = self.care_agent  # backward-compatibility alias
         self.empathetic_agent = EmpatheticAgent(memory, arbitrator)
         self.perception_agent = PerceptionAgent(arbitrator)
         self.action_agent = ActionAgent(arbitrator)
@@ -443,14 +444,19 @@ class AgentOrchestratorV2:
                 self.arbitrator.inhibit("MEDICAL", duration_s=30)
                 self.arbitrator.inhibit("EMPATHETIC", duration_s=30)
                 
-                log.critical("[SOS_PROTOCOL] Emergency activated: %s", reason)
-                return "[緊急対応開始]\n救急車を呼んでいます。位置情報を送信しています。"
+                log.warning("[SOS_PROTOCOL] Health warning activated: %s", reason)
+                return (
+                    "[CẢNH BÁO SỨC KHỎE] Tôi phát hiện chỉ số bất thường nguy hại hoặc bạn đã kích hoạt nút cảnh báo. "
+                    "Là robot đồng hành chăm sóc sức khỏe, tôi khuyên bạn nên ngồi nghỉ ngơi hoặc nằm xuống thư giãn, uống một chút nước ấm. "
+                    "Tôi đã gửi thông báo cảnh báo đến người thân/người giám hộ để họ kiểm tra sức khỏe của bạn. "
+                    "Vui lòng liên hệ nhân viên y tế nếu bạn cảm thấy cần thiết."
+                )
 
             elif tool_name == "execute_full_body_scan":
                 # Tier 0.5: Perception Agent full-body scan
                 # Silent — writes to Blackboard, returns brief summary for orchestrator
                 log.info("[ORCHESTRATOR_V2] Triggering PerceptionAgent full-body scan")
-                scan = await self.perception_agent.execute_full_body_scan()
+                scan = await self.perception_agent.execute_full_body_scan(explicit_request=True)
                 if getattr(scan, "status", "NOMINAL") == "SYSTEM_ERROR_BLIND":
                     return json.dumps({
                         "status": "SYSTEM_ERROR_BLIND",
@@ -598,7 +604,52 @@ class AgentOrchestratorV2:
                     log.error(f"Failed to write vision telemetry to blackboard: {ex}")
                 return json.dumps(res, ensure_ascii=False)
 
+            elif tool_name == "propose_care_action":
+                # [HUGO] CareDecisionRouter tool handler
+                # Called when the LLM detects owner activity/mood and proposes care
+                observed_activity = parameters.get("observed_activity", "unknown")
+                observed_expression = parameters.get("observed_expression", "unknown")
+                care_action_type = parameters.get("care_action_type", "COMPANION_CHAT")
+                reason = parameters.get("reason", "")
+
+                # Run CareDecisionRouter
+                try:
+                    from services.care_decision_router import get_care_decision_router, get_care_conversation_starter
+                    care_router = get_care_decision_router(mqtt_client=None)
+                    care_action = care_router.decide(
+                        activity=observed_activity,
+                        expression=observed_expression,
+                        distress_score=0.6 if observed_expression in ("sad", "stressed", "pain", "fearful") else 0.2,
+                        vitals=vitals,
+                        user_id=user_id or "default",
+                    )
+                    starter = get_care_conversation_starter(care_action.action_type)
+
+                    # Update EmpatheticAgent care context for LLM prompt enrichment
+                    care_context = (
+                        f"[CARE_CONTEXT] activity={observed_activity} | "
+                        f"expression={observed_expression} | "
+                        f"care_action={care_action.action_type} | "
+                        f"gesture={care_action.robot_gesture} | "
+                        f"hint={care_action.conversation_hint}"
+                    )
+                    if hasattr(self.empathetic_agent, "_last_care_context"):
+                        self.empathetic_agent._last_care_context = care_context
+
+                    log.info(
+                        "[ORCHESTRATOR_V2] propose_care_action: activity=%s expr=%s → %s",
+                        observed_activity, observed_expression, care_action.action_type,
+                    )
+                    return f"[CARE_ACTION={care_action.action_type}] {starter}"
+                except Exception as care_err:
+                    log.warning("[ORCHESTRATOR_V2] propose_care_action failed: %s", care_err)
+                    return f"[CARE_ACTION=COMPANION_CHAT] Hugo ở đây cùng bạn. {reason}"
+
             else:
+                from services.plugin_manager import get_plugin_manager
+                pm = get_plugin_manager()
+                if tool_name in pm.tools:
+                    return await pm.execute_plugin_tool(tool_name, parameters, vitals, user_id or "default")
                 return f"[Unknown tool: {tool_name}]"
 
         except Exception as e:

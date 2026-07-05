@@ -353,8 +353,11 @@ watch(() => kinematicsStore.jointStates, (newStates) => {
 // ── skeletal bone arm assembly (Procedural Fallback Rig) ──────────────────
 function buildRightArmSkeleton() {
   const dummyGeo = new THREE.BufferGeometry()
+  const positions = new Float32Array([0, 0, 0])
+  dummyGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   const dummyMat = new THREE.MeshBasicMaterial({ visible: false })
   const skinnedMesh = new THREE.SkinnedMesh(dummyGeo, dummyMat)
+  skinnedMesh.frustumCulled = false
   humanoidGroup.add(skinnedMesh)
 
   const rootBone = new THREE.Bone()

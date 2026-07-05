@@ -23,6 +23,12 @@ class TestProactiveHugo(unittest.IsolatedAsyncioTestCase):
         self.arbitrator = Arbitrator()
         self.blackboard = get_blackboard()
         self.blackboard._in_memory_store.clear()
+        # Flush Redis keys that pollute across test runs
+        try:
+            await self.blackboard._redis_client.delete("blackboard:empathy:stress_processed_trend")
+            await self.blackboard._redis_client.delete("blackboard:clinical:stress_history")
+        except Exception:
+            pass
         
         # Patch MQTT in MedicalAgent
         with patch('paho.mqtt.client.Client') as mock_mqtt:

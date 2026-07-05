@@ -7,7 +7,7 @@ export interface LidarScanSnapshot {
   timestampMs: number
   scanHz: number
   threatLevel: ThreatLevel
-  baymaxHint: string
+  hugoHint: string
   live: boolean
   sectorCount?: number
 }

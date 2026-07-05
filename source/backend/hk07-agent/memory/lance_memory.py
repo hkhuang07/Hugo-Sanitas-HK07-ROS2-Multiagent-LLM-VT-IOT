@@ -6,7 +6,7 @@ Cache size limited to 256MB per hardware constraints.
 All writes are batched — never continuous I/O to avoid Disk Thrashing.
 
 [HẠNCHẾ-#15 FIX] Vector Compaction Background Task:
-  - compact_old_vectors() deletes all records older than 24 hours.
+  - compact_old_vectors() deletes all records older than 72 hours.
   - Triggered hourly via asyncio.create_task() from main.py lifespan.
   - Uses asyncio.to_thread() so the LanceDB delete call never blocks the event loop.
   - After deletion, calls self._db.compact_files() to reclaim disk space.
@@ -21,7 +21,7 @@ log = logging.getLogger("hk07.lance_memory")
 
 # ── Compaction Config ────────────────────────────────────────────────────────
 COMPACTION_INTERVAL_SEC = 3600   # 1 hour between compaction runs
-MAX_VECTOR_AGE_MS       = 86_400_000  # 24 hours in milliseconds
+MAX_VECTOR_AGE_MS       = 259_200_000  # 72 hours in milliseconds
 
 
 class LanceMemory:
@@ -136,7 +136,7 @@ class LanceMemory:
         Background asyncio task — runs forever, waking every COMPACTION_INTERVAL_SEC.
 
         Each cycle:
-          1. Delete all records with timestamp_ms older than MAX_VECTOR_AGE_MS (24h)
+          1. Delete all records with timestamp_ms older than MAX_VECTOR_AGE_MS (72h)
           2. Compact LanceDB files on disk to reclaim freed space
           3. Log how many vectors were pruned and current table size
 
@@ -182,7 +182,7 @@ class LanceMemory:
             # Compact files to reclaim disk space (merge delta files into base)
             try:
                 await asyncio.to_thread(self._table.compact_files)
-                log.info("[LANCE_COMPACT] Pruned %d vectors (>24h old). Remaining: %d. Disk compacted.",
+                log.info("[LANCE_COMPACT] Pruned %d vectors (>72h old). Remaining: %d. Disk compacted.",
                          pruned, count_after)
             except AttributeError:
                 # compact_files requires lancedb >= 0.5 — degrade gracefully
@@ -394,6 +394,55 @@ class LanceMemory:
                 log.error("[LANCE_MEMORY_SEARCH_ERROR] %s", ex)
                 return []
 
+    async def _crawl_and_ingest_guidelines(self, query: str) -> None:
+        import urllib.parse
+        import httpx
+        import re
+        from services.knowledge_ingestion import KnowledgeIngestionService
+        
+        search_query = f"site:who.int OR site:cdc.gov OR site:moh.gov.vn {query}"
+        encoded = urllib.parse.quote_plus(search_query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded}"
+        
+        log.info("[LANCE_MEMORY_CRAWLER] Triggering DuckDuckGo query: %s", search_query)
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    log.warning("[LANCE_MEMORY_CRAWLER] DDG request failed with status: %d", resp.status_code)
+                    return
+                html = resp.text
+                
+                # Extract uddg target links
+                matches = re.findall(r'uddg=([^&"\']+)', html)
+                urls = []
+                for m in matches:
+                    decoded_url = urllib.parse.unquote(m)
+                    if any(domain in decoded_url for domain in ["who.int", "cdc.gov", "moh.gov.vn"]):
+                        if decoded_url not in urls:
+                            urls.append(decoded_url)
+                
+                if not urls:
+                    log.info("[LANCE_MEMORY_CRAWLER] No whitelisted URLs found in search results.")
+                    return
+                    
+                log.info("[LANCE_MEMORY_CRAWLER] Found whitelisted URLs: %s", urls[:3])
+                
+                ingestion_service = KnowledgeIngestionService(self)
+                for target_url in urls[:2]:
+                    try:
+                        res = await ingestion_service.ingest_url(target_url)
+                        log.info("[LANCE_MEMORY_CRAWLER] Ingested URL: %s, result: %s", target_url, res)
+                    except Exception as ingest_err:
+                        log.warning("[LANCE_MEMORY_CRAWLER] Ingestion of %s failed: %s", target_url, ingest_err)
+        except Exception as e:
+            log.error("[LANCE_MEMORY_CRAWLER] Background crawl error: %s", e)
+
     async def search_medical_guidelines(self, query: str, limit: int = 3) -> list[dict]:
         """
         Search for similar patterns in medical guidelines using text-based matching.
@@ -402,12 +451,11 @@ class LanceMemory:
         if not self._initialized or not hasattr(self, "_guidelines_table") or self._guidelines_table is None:
             log.warning("[LANCE_MEMORY] Skipped search_medical_guidelines — guidelines table not initialized")
             return []
-        try:
+            
+        async def _perform_search():
             keywords = [kw for kw in query.lower().split() if len(kw) > 1]
             if not keywords:
                 return []
-                
-            # Optimize: Select only needed metadata columns, completely omitting large list 'embedding' from read payload
             records = await asyncio.to_thread(
                 lambda: self._guidelines_table.search()
                 .select(["id", "source", "title", "content", "timestamp_ms"])
@@ -416,7 +464,6 @@ class LanceMemory:
             )
             if not records:
                 return []
-                
             scored_records = []
             for r in records:
                 title = (r.get("title") or "").lower()
@@ -431,43 +478,24 @@ class LanceMemory:
                     r_copy = r.copy()
                     r_copy["score"] = score
                     scored_records.append(r_copy)
-
             if not scored_records:
                 return []
-
             scored_records.sort(key=lambda x: (x["score"], x.get("timestamp_ms", 0)), reverse=True)
             return scored_records[:limit]
+
+        try:
+            results = await _perform_search()
+            if not results:
+                log.info("[LANCE_MEMORY] Guidelines query yielded empty results. Crawling WHO/CDC/MOH for: %s", query)
+                await self._crawl_and_ingest_guidelines(query)
+                results = await _perform_search()
+            return results
         except Exception as e:
             log.warning("[LANCE_MEMORY] Optimized guidelines search failed: %s. Falling back to full scan.", e)
             try:
-                records = await asyncio.to_thread(lambda: self._guidelines_table.to_arrow().to_pylist())
-                if not records:
-                    return []
-                
-                keywords = [kw for kw in query.lower().split() if len(kw) > 1]
-                if not keywords:
-                    return []
-                    
-                scored_records = []
-                for r in records:
-                    title = (r.get("title") or "").lower()
-                    content = (r.get("content") or "").lower()
-                    score = 0
-                    for kw in keywords:
-                        if kw in title:
-                            score += 2
-                        if kw in content:
-                            score += 1
-                    if score > 0:
-                        r_copy = r.copy()
-                        r_copy["score"] = score
-                        scored_records.append(r_copy)
-
-                if not scored_records:
-                    return []
-
-                scored_records.sort(key=lambda x: (x["score"], x.get("timestamp_ms", 0)), reverse=True)
-                return scored_records[:limit]
+                await self._crawl_and_ingest_guidelines(query)
+                results = await _perform_search()
+                return results
             except Exception as ex:
                 log.error("[LANCE_MEMORY_GUIDELINE_SEARCH_ERROR] %s", ex)
                 return []

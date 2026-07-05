@@ -43,10 +43,10 @@ public class AgentLogController {
 
     // ── Stream timeout constants (tunable via env) ──────────────────────────
     private static final Duration INTERACT_TIMEOUT    = Duration.ofSeconds(10); // LLM can be slow - tuned to 10s to fail fast under agent starvation
-    private static final Duration PLAN_POLL_TIMEOUT   = Duration.ofMillis(2500); // High-freq poll — fail fast
+    private static final Duration PLAN_POLL_TIMEOUT   = Duration.ofSeconds(15); // High-freq poll — 15s timeout for devmode
     private static final Duration CONFIRM_TIMEOUT     = Duration.ofSeconds(10);
     private static final Duration SCAN_TIMEOUT        = Duration.ofSeconds(30);
-    private static final Duration PERCEPTION_TIMEOUT  = Duration.ofMillis(2500); // Background poll
+    private static final Duration PERCEPTION_TIMEOUT  = Duration.ofSeconds(15); // Background poll — 15s timeout for devmode
 
     // ── Safe fallback state objects (injected on empty/timeout) ────────────
     private static final Map<String, Object> SAFE_PLAN_STATE = Map.of(

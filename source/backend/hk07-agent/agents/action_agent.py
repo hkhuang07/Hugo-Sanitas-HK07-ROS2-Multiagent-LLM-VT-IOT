@@ -38,7 +38,10 @@ class ActionAgent:
         # Initialize MQTT client for publishing actions
         broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
         broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-        self._mqtt = mqtt.Client(client_id="action-agent", protocol=mqtt.MQTTv311)
+        if hasattr(mqtt, "CallbackAPIVersion"):
+            self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="action-agent", protocol=mqtt.MQTTv311)
+        else:
+            self._mqtt = mqtt.Client(client_id="action-agent", protocol=mqtt.MQTTv311)
         mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
         mqtt_pass = os.getenv("MQTT_PASSWORD", "")
         if mqtt_user:
@@ -154,6 +157,18 @@ class ActionAgent:
         step_type = step.get("type")
         topic = step.get("mqtt_topic")
         payload = step.get("payload", {})
+
+        # Central Behavior Coordinator: Suppress normal TTS during alert mode
+        if topic == "hk07/agents/action/tts":
+            try:
+                from services.blackboard_service import get_blackboard
+                bb = get_blackboard()
+                alert_mode = await bb.read_value("safety:alert_mode") or False
+                if alert_mode:
+                    log.warning("[BEHAVIOR_COORDINATOR] TTS channel locked by Safety Agent alert mode. Blocking message: %s", payload)
+                    return
+            except Exception as e:
+                log.warning("[BEHAVIOR_COORDINATOR] Failed to check safety:alert_mode in ActionAgent: %s", e)
 
         # 1. Publish to MQTT for low-latency robotics interface
         if topic:

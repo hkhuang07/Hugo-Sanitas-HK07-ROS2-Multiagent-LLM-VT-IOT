@@ -22,9 +22,9 @@
       </div>
       <div class="sv-header-right">
         <DeviceIpConfigModal />
-        <div class="sv-live-badge" :class="sensorStore.isLive ? 'badge-live' : 'badge-offline'">
-          <span class="pulse-dot" v-if="sensorStore.isLive"></span>
-          {{ sensorStore.isLive ? '◈ STREAMING' : '○ OFFLINE' }}
+        <div class="sv-live-badge" :class="streamStatus === 'LIVE' ? 'badge-live' : streamStatus === 'SIMULATED' ? 'badge-simulated' : 'badge-offline'">
+          <span class="pulse-dot" v-if="isActive(streamStatus)"></span>
+          {{ streamStatus === 'LIVE' ? '◈ STREAMING' : streamStatus === 'SIMULATED' ? '◈ SIMULATED' : '○ OFFLINE' }}
         </div>
         <div class="sv-timestamp">{{ currentTime }}</div>
       </div>
@@ -39,218 +39,304 @@
       </div>
     </div>
 
-    <!-- ═══ MAIN GRID ═══ -->
-    <div class="sv-main-grid">
-
-      <!-- ── COL 1: IMU Panel ── -->
-      <div class="sv-col imu-col">
-        <div class="panel-header">
-          <span class="panel-tag">[ IMU // 9-DOF ]</span>
-          <span class="panel-status" :class="sensorStore.imuStatus.toLowerCase()">{{ sensorStore.imuStatus }}</span>
+    <!-- 1. ENVIRONMENT METRICS (top 100%) -->
+    <div class="sv-panel env-stats-panel full-width" style="margin-bottom: 16px;">
+      <div class="panel-header">
+        <span class="panel-tag">[ ENVIRONMENT METRICS ]</span>
+        <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
+      </div>
+      <div class="stat-row">
+        <div class="stat-card" :class="lightClass">
+          <span class="stat-icon">☀</span>
+          <span class="stat-val">{{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.ambient_light, 0, 'OFFLINE') : 'OFFLINE' }}</span>
+          <span class="stat-unit" v-if="isActive(sensorStore.envStatus)">LUX</span>
+          <span class="stat-name">AMBIENT LIGHT</span>
         </div>
-
-        <!-- Orientation Cube Visualizer -->
-        <div class="orientation-wrap">
-          <div class="cube-scene">
-            <div class="cube" :style="cubeStyle">
-              <div class="face front">FRONT</div>
-              <div class="face back">BACK</div>
-              <div class="face left">L</div>
-              <div class="face right">R</div>
-              <div class="face top">TOP</div>
-              <div class="face bottom">BOT</div>
-            </div>
-          </div>
-          <div class="euler-readout">
-            <div class="euler-row">
-              <span class="euler-label">ROLL</span>
-              <span class="euler-val" :class="absVal(sensorStore.eulerAngles.roll) > 45 ? 'text-warn' : ''">
-                {{ sensorStore.eulerAngles.roll }}°
-              </span>
-            </div>
-            <div class="euler-row">
-              <span class="euler-label">PITCH</span>
-              <span class="euler-val" :class="absVal(sensorStore.eulerAngles.pitch) > 45 ? 'text-warn' : ''">
-                {{ sensorStore.eulerAngles.pitch }}°
-              </span>
-            </div>
-            <div class="euler-row">
-              <span class="euler-label">YAW</span>
-              <span class="euler-val">{{ sensorStore.eulerAngles.yaw }}°</span>
-            </div>
-          </div>
+        <!-- BAROMETER: Show 'NO HW' badge when phone has no barometer sensor -->
+        <div class="stat-card" :class="sensorStore.environment.barometric_pressure === null ? 'card-warn' : ''">
+          <span class="stat-icon">⟁</span>
+          <span class="stat-val" :class="sensorStore.environment.barometric_pressure === null ? 'text-warn' : ''">
+            {{ sensorStore.environment.barometric_pressure === null
+              ? 'NO HW'
+              : isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment.barometric_pressure, 1, 'OFFLINE') : 'OFFLINE' }}
+          </span>
+          <span class="stat-unit" v-if="isActive(sensorStore.envStatus) && sensorStore.environment.barometric_pressure !== null">hPa</span>
+          <span class="stat-name">BAROMETER</span>
         </div>
-
-        <!-- Compass Gauge -->
-        <div class="compass-wrap">
-          <svg class="compass-svg" viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF6622" stroke-width="1"/>
-            <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF66" stroke-width="1" stroke-dasharray="4 4"/>
-            <text x="60" y="14" text-anchor="middle" fill="#00FF66" font-size="9" font-family="Rajdhani">N</text>
-            <text x="106" y="63" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">E</text>
-            <text x="60" y="111" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">S</text>
-            <text x="12" y="63" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">W</text>
-            <!-- Needle -->
-            <g :transform="`rotate(${sensorStore.imu.compass_heading}, 60, 60)`">
-              <polygon points="60,12 57,60 63,60" fill="#FF3333"/>
-              <polygon points="60,108 57,60 63,60" fill="#00FF66"/>
-            </g>
-            <circle cx="60" cy="60" r="4" fill="#00FF66"/>
-            <text x="60" y="76" text-anchor="middle" fill="#00FF66" font-size="11" font-family="Rajdhani,monospace">
-              {{ sensorStore.imu.compass_heading.toFixed(1) }}°
-            </text>
-          </svg>
-        </div>
-
-        <!-- Quaternion Readout -->
-        <div class="quat-panel">
-          <span class="panel-micro-label">QUATERNION</span>
-          <div class="quat-grid">
-            <div class="quat-item"><span>W</span><b>{{ sensorStore.imu.orientation.w.toFixed(4) }}</b></div>
-            <div class="quat-item"><span>X</span><b>{{ sensorStore.imu.orientation.x.toFixed(4) }}</b></div>
-            <div class="quat-item"><span>Y</span><b>{{ sensorStore.imu.orientation.y.toFixed(4) }}</b></div>
-            <div class="quat-item"><span>Z</span><b>{{ sensorStore.imu.orientation.z.toFixed(4) }}</b></div>
-          </div>
-        </div>
-
-        <!-- Accel Chart -->
-        <div class="chart-block">
-          <div class="chart-label">ACCELEROMETER XYZ (m/s²)</div>
-          <canvas ref="accelChartRef" class="hud-canvas"></canvas>
-        </div>
-
-        <!-- Gyro Chart -->
-        <div class="chart-block">
-          <div class="chart-label">GYROSCOPE XYZ (rad/s)</div>
-          <canvas ref="gyroChartRef" class="hud-canvas"></canvas>
+        <!-- PRESSURE DELTA: Show 'NO HW' when barometer absent -->
+        <div class="stat-card" :class="pressureDeltaClass">
+          <span class="stat-icon">△</span>
+          <span class="stat-val">
+            {{ sensorStore.environment.pressure_delta_hpa === null
+              ? 'NO HW'
+              : isActive(sensorStore.envStatus)
+                ? (sensorStore.environment.pressure_delta_hpa >= 0 ? '+' : '') + safeToFixed(sensorStore.environment.pressure_delta_hpa, 2, 'OFFLINE')
+                : 'OFFLINE' }}
+          </span>
+          <span class="stat-unit" v-if="isActive(sensorStore.envStatus) && sensorStore.environment.pressure_delta_hpa !== null">ΔhPa</span>
+          <span class="stat-name">PRESSURE DELTA</span>
         </div>
       </div>
+    </div>
 
-      <!-- ── COL 2: Environment + Vitals Panel ── -->
-      <div class="sv-col env-col">
-        <div class="panel-header">
-          <span class="panel-tag">[ ENVIRONMENT // BIOMETRICS ]</span>
-          <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
-        </div>
-
-        <!-- Stat cards row -->
-        <div class="stat-row">
-          <div class="stat-card" :class="lightClass">
-            <span class="stat-icon">☀</span>
-            <span class="stat-val">{{ sensorStore.environment.ambient_light.toFixed(0) }}</span>
-            <span class="stat-unit">LUX</span>
-            <span class="stat-name">AMBIENT LIGHT</span>
+    <!-- 2. SPLIT LAYOUT FOR BATTERY, ACTIVITY (LEFT 30%) & IMU (RIGHT 70%) -->
+    <div class="sv-split-layout" style="margin-bottom: 16px;">
+      <!-- Left Column (30%) -->
+      <div class="sv-left-col">
+        <!-- SYSTEM POWER // BATTERY -->
+        <div class="sv-panel battery-panel">
+          <div class="panel-header">
+            <span class="panel-tag">[ SYSTEM POWER // BATTERY ]</span>
+            <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-icon">⟁</span>
-            <span class="stat-val">{{ sensorStore.environment.barometric_pressure.toFixed(1) }}</span>
-            <span class="stat-unit">hPa</span>
-            <span class="stat-name">BAROMETER</span>
+          <div class="battery-stats">
+            <div class="bat-level-row">
+              <span class="bat-lbl">CHARGE:</span>
+              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_level < 20 ? 'text-danger' : ''">
+                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level ?? 100.0, 1, '100.0') + '%' : 'OFFLINE' }}
+              </span>
+            </div>
+            <!-- Segmented block bar -->
+            <div class="bat-progress-bar font-mono text-success">
+              {{ getBatteryBar(sensorStore.environment.battery_level) }}
+            </div>
+            <div class="bat-temp-row">
+              <span class="bat-lbl">BATTERY TEMP:</span>
+              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_temp > 45 ? 'text-danger' : ''">
+                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_temp ?? 32.0, 1, '32.0') + '°C' : 'OFFLINE' }}
+              </span>
+            </div>
           </div>
-          <div class="stat-card" :class="pressureDeltaClass">
-            <span class="stat-icon">△</span>
-            <span class="stat-val">{{ sensorStore.environment.pressure_delta_hpa >= 0 ? '+' : '' }}{{ sensorStore.environment.pressure_delta_hpa.toFixed(2) }}</span>
-            <span class="stat-unit">ΔhPa</span>
-            <span class="stat-name">PRESSURE DELTA</span>
+        </div>
+
+        <!-- ACTIVITY // MOTION -->
+        <div class="sv-panel activity-panel">
+          <div class="panel-header">
+            <span class="panel-tag">[ ACTIVITY // MOTION ]</span>
+            <span class="panel-status" :class="sensorStore.actStatus.toLowerCase()">{{ sensorStore.actStatus }}</span>
           </div>
-        </div>
-
-        <!-- Light Level Chart (Line) -->
-        <div class="chart-block">
-          <div class="chart-label">AMBIENT LIGHT (lux) — 100 SAMPLE ROLLING</div>
-          <canvas ref="lightChartRef" class="hud-canvas"></canvas>
-        </div>
-
-        <!-- Pressure Bar Chart -->
-        <div class="chart-block">
-          <div class="chart-label">BAROMETRIC PRESSURE TREND (hPa)</div>
-          <canvas ref="pressureChartRef" class="hud-canvas"></canvas>
-        </div>
-
-        <!-- Pressure Delta Line -->
-        <div class="chart-block">
-          <div class="chart-label">PRESSURE DELTA (ΔhPa) — FALL INDICATOR</div>
-          <canvas ref="pressureDeltaChartRef" class="hud-canvas"></canvas>
-        </div>
-
-        <!-- Magnetometer readout -->
-        <div class="mag-panel">
-          <span class="panel-micro-label">MAGNETOMETER (µT)</span>
-          <div class="mag-grid">
-            <div class="mag-item"><span>MX</span><b>{{ sensorStore.imu.magnetometer.x.toFixed(2) }}</b></div>
-            <div class="mag-item"><span>MY</span><b>{{ sensorStore.imu.magnetometer.y.toFixed(2) }}</b></div>
-            <div class="mag-item"><span>MZ</span><b>{{ sensorStore.imu.magnetometer.z.toFixed(2) }}</b></div>
+          <!-- Pedometer Odometer -->
+          <div class="odometer-wrap">
+            <div class="odometer-label">PEDOMETER</div>
+            <div class="odometer-display">
+              <span v-for="(d, i) in stepDigits" :key="i" class="step-digit">{{ d }}</span>
+            </div>
+            <span class="odometer-unit">STEPS</span>
+          </div>
+          <!-- Activity Type Badge -->
+          <div class="activity-type-wrap">
+            <span class="activity-icon">{{ activityIcon }}</span>
+            <div class="activity-label-group">
+              <span class="activity-type-label">ACTIVITY STATE</span>
+              <span class="activity-type-value" :class="`act-${sensorStore.activity.activity_type.toLowerCase()}`">
+                {{ isActive(sensorStore.actStatus) ? sensorStore.activity.activity_type.toUpperCase() : 'OFFLINE' }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- ── COL 3: Activity + GPS Panel ── -->
-      <div class="sv-col act-col">
-        <div class="panel-header">
-          <span class="panel-tag">[ ACTIVITY // LOCATION ]</span>
-          <span class="panel-status" :class="sensorStore.actStatus.toLowerCase()">{{ sensorStore.actStatus }}</span>
-        </div>
-
-        <!-- Pedometer Odometer -->
-        <div class="odometer-wrap">
-          <div class="odometer-label">PEDOMETER</div>
-          <div class="odometer-display">
-            <span v-for="(d, i) in stepDigits" :key="i" class="step-digit">{{ d }}</span>
+      <!-- Right Column (70%) -->
+      <div class="sv-right-col">
+        <!-- IMU 9-DOF PANEL -->
+        <div class="sv-panel imu-panel" style="height: 100%;">
+          <div class="panel-header">
+            <span class="panel-tag">[ IMU // 9-DOF ]</span>
+            <span class="panel-status" :class="sensorStore.imuStatus.toLowerCase()">{{ sensorStore.imuStatus }}</span>
           </div>
-          <span class="odometer-unit">STEPS</span>
-        </div>
 
-        <!-- Activity Type Badge -->
-        <div class="activity-type-wrap">
-          <span class="activity-icon">{{ activityIcon }}</span>
-          <div class="activity-label-group">
-            <span class="activity-type-label">ACTIVITY STATE</span>
-            <span class="activity-type-value" :class="`act-${sensorStore.activity.activity_type.toLowerCase()}`">
-              {{ sensorStore.activity.activity_type.toUpperCase() }}
-            </span>
-          </div>
-        </div>
-
-        <!-- Wrist Motion Chart -->
-        <div class="chart-block">
-          <div class="chart-label">WRIST MOTION MAGNITUDE (20 READINGS)</div>
-          <canvas ref="wristChartRef" class="hud-canvas"></canvas>
-        </div>
-
-        <!-- Steps Rate Chart -->
-        <div class="chart-block">
-          <div class="chart-label">CUMULATIVE STEP COUNT</div>
-          <canvas ref="stepsChartRef" class="hud-canvas"></canvas>
-        </div>
-
-        <!-- GPS Location Card -->
-        <div class="gps-panel">
-          <div class="panel-header" style="margin-bottom:8px;">
-            <span class="panel-tag">[ GPS LOCATION ]</span>
-            <span class="panel-status" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
-          </div>
-          <div class="gps-grid">
-            <div class="gps-item">
-              <span class="gps-label">LATITUDE</span>
-              <span class="gps-val">{{ sensorStore.location.latitude.toFixed(6) }}°</span>
+          <!-- Orientation Cube Visualizer -->
+          <div class="orientation-wrap">
+            <div class="cube-scene">
+              <div class="cube" :style="cubeStyle">
+                <div class="face front">FRONT</div>
+                <div class="face back">BACK</div>
+                <div class="face left">LEFT</div>
+                <div class="face right">RIGHT</div>
+                <div class="face top">TOP</div>
+                <div class="face bottom">BOT</div>
+              </div>
             </div>
-            <div class="gps-item">
-              <span class="gps-label">LONGITUDE</span>
-              <span class="gps-val">{{ sensorStore.location.longitude.toFixed(6) }}°</span>
-            </div>
-            <div class="gps-item">
-              <span class="gps-label">ALTITUDE</span>
-              <span class="gps-val">{{ sensorStore.location.altitude.toFixed(1) }} m</span>
+            <div class="euler-readout">
+              <div class="euler-row">
+                <span class="euler-label">ROLL</span>
+                <span class="euler-val" :class="absVal(sensorStore.eulerAngles.roll) > 45 ? 'text-warn' : ''">
+                  {{ sensorStore.eulerAngles.roll }}°
+                </span>
+              </div>
+              <div class="euler-row">
+                <span class="euler-label">PITCH</span>
+                <span class="euler-val" :class="absVal(sensorStore.eulerAngles.pitch) > 45 ? 'text-warn' : ''">
+                  {{ sensorStore.eulerAngles.pitch }}°
+                </span>
+              </div>
+              <div class="euler-row">
+                <span class="euler-label">YAW</span>
+                <span class="euler-val">{{ sensorStore.eulerAngles.yaw }}°</span>
+              </div>
             </div>
           </div>
-          <!-- Map placeholder -->
-          <div class="map-placeholder">
-            <span class="map-reticle">+</span>
-            <span class="map-label">
-              {{ sensorStore.location.latitude === 0 && sensorStore.location.longitude === 0
-                ? '[ AWAITING GPS SIGNAL ]'
-                : `${sensorStore.location.latitude.toFixed(4)}, ${sensorStore.location.longitude.toFixed(4)}` }}
-            </span>
+
+          <!-- Compass Gauge -->
+          <div class="compass-wrap">
+            <svg class="compass-svg" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF6622" stroke-width="1"/>
+              <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF66" stroke-width="1" stroke-dasharray="4 4"/>
+              <text x="60" y="14" text-anchor="middle" fill="#00FF66" font-size="9" font-family="Rajdhani">N</text>
+              <text x="106" y="63" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">E</text>
+              <text x="60" y="111" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">S</text>
+              <text x="12" y="63" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">W</text>
+              <!-- Needle -->
+              <g :transform="`rotate(${isActive(sensorStore.imuStatus) && sensorStore.imu.compass_heading !== null ? sensorStore.imu.compass_heading : 0}, 60, 60)`">
+                <polygon points="60,12 57,60 63,60" fill="#FF3333"/>
+                <polygon points="60,108 57,60 63,60" fill="#00FF66"/>
+              </g>
+              <circle cx="60" cy="60" r="4" fill="#00FF66"/>
+              <text x="60" y="76" text-anchor="middle" fill="#00FF66" font-size="11" font-family="Rajdhani,monospace">
+                {{ sensorStore.imu.compass_heading === null
+                  ? 'NO HW'
+                  : isActive(sensorStore.imuStatus)
+                    ? safeToFixed(sensorStore.imu.compass_heading, 1) + '°'
+                    : 'OFFLINE' }}
+              </text>
+            </svg>
+          </div>
+
+          <!-- Quaternion Readout -->
+          <div class="quat-panel">
+            <span class="panel-micro-label">QUATERNION</span>
+            <div class="quat-grid">
+              <div class="quat-item"><span>W</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.w, 4, 'N/A') : 'N/A' }}</b></div>
+              <div class="quat-item"><span>X</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.x, 4, 'N/A') : 'N/A' }}</b></div>
+              <div class="quat-item"><span>Y</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.y, 4, 'N/A') : 'N/A' }}</b></div>
+              <div class="quat-item"><span>Z</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.z, 4, 'N/A') : 'N/A' }}</b></div>
+            </div>
+          </div>
+
+          <!-- Magnetometer readout -->
+          <div class="mag-panel">
+            <span class="panel-micro-label">MAGNETOMETER (µT)</span>
+            <div class="mag-grid">
+              <div class="mag-item"><span>MX</span><b>{{ sensorStore.imu.magnetometer.x === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.x, 2) : 'OFFLINE') }}</b></div>
+              <div class="mag-item"><span>MY</span><b>{{ sensorStore.imu.magnetometer.y === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.y, 2) : 'OFFLINE') }}</b></div>
+              <div class="mag-item"><span>MZ</span><b>{{ sensorStore.imu.magnetometer.z === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.z, 2) : 'OFFLINE') }}</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. STACKED CHARTS (100% width) -->
+    <div class="charts-stack" style="margin-bottom: 16px;">
+      <div class="chart-block">
+        <div class="chart-label">ACCELEROMETER XYZ (m/s²)</div>
+        <canvas ref="accelChartRef" class="hud-canvas"></canvas>
+      </div>
+      <div class="chart-block">
+        <div class="chart-label">GYROSCOPE XYZ (rad/s)</div>
+        <canvas ref="gyroChartRef" class="hud-canvas"></canvas>
+      </div>
+      <div class="chart-block">
+        <div class="chart-label">AMBIENT LIGHT (lux) — 100 SAMPLE ROLLING</div>
+        <canvas ref="lightChartRef" class="hud-canvas"></canvas>
+      </div>
+      <div class="chart-block">
+        <div class="chart-label">BAROMETRIC PRESSURE TREND (hPa)</div>
+        <canvas ref="pressureChartRef" class="hud-canvas"></canvas>
+      </div>
+      <div class="chart-block">
+        <div class="chart-label">WRIST MOTION MAGNITUDE (20 READINGS)</div>
+        <canvas ref="wristChartRef" class="hud-canvas"></canvas>
+      </div>
+      <div class="chart-block">
+        <div class="chart-label">PRESSURE DELTA (ΔhPa) — FALL INDICATOR</div>
+        <canvas ref="pressureDeltaChartRef" class="hud-canvas"></canvas>
+      </div>
+      <div class="chart-block">
+        <div class="chart-label">CUMULATIVE STEP COUNT</div>
+        <canvas ref="stepsChartRef" class="hud-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- 4. GPS LOCATION (100% width) -->
+    <!-- 4. GPS LOCATION (100% width) -->
+    <div class="sv-panel gps-panel full-width" style="margin-bottom: 16px;">
+      <div class="panel-header" style="margin-bottom:8px;">
+        <span class="panel-tag">[ GPS LOCATION ]</span>
+        <span class="panel-status" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
+      </div>
+      <div class="gps-layout">
+        <div class="map-placeholder">
+          <!-- Real map container -->
+          <div ref="mapContainer" class="real-map"></div>
+          
+          <!-- Static HUD Overlay -->
+          <div class="map-hud-overlay">
+            <!-- Center lock targeting bracket -->
+            <div class="hud-center-targeting">
+              <div class="target-bracket bracket-tl"></div>
+              <div class="target-bracket bracket-tr"></div>
+              <div class="target-bracket bracket-bl"></div>
+              <div class="target-bracket bracket-br"></div>
+              <span class="target-cross">+</span>
+              <span class="target-status font-mono">LOCK ON</span>
+            </div>
+            
+            <!-- Tech scan line sweep -->
+            <div class="radar-scanline"></div>
+            
+            <!-- Tech corner details containing coordinates and metadata -->
+            <div class="tech-tag tag-tl">
+              <div class="tech-row"><span class="tech-lbl">LATITUDE:</span> <span class="tech-val font-mono">{{ safeToFixed(sensorStore.location?.latitude, 6, '0.000000') }}°</span></div>
+              <div class="tech-row"><span class="tech-lbl">LONGITUDE:</span> <span class="tech-val font-mono">{{ safeToFixed(sensorStore.location?.longitude, 6, '0.000000') }}°</span></div>
+            </div>
+            
+            <div class="tech-tag tag-tr">
+              <div class="tech-row"><span class="tech-lbl">ALTITUDE:</span> <span class="tech-val font-mono">{{ safeToFixed(sensorStore.location?.altitude, 1, '0.0') }} m</span></div>
+              <div class="tech-row"><span class="tech-lbl">SIGNAL:</span> <span class="tech-val font-mono" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span></div>
+            </div>
+            
+            <div class="tech-tag tag-bl font-mono">
+              <div class="tech-row">SAT / 30tx.78A</div>
+              <div class="tech-row text-danger">LOCK: ACTIVE (98.2%)</div>
+            </div>
+            
+            <div class="tech-tag tag-br font-mono">
+              <div class="tech-row">GPH_V.02 / COORDINATES</div>
+              <div class="tech-row">SYS_TIME: MON 02:09</div>
+            </div>
+
+            <!-- Glowing target concentric rings -->
+            <div class="hud-concentric-ring ring-1"></div>
+            <div class="hud-concentric-ring ring-2"></div>
+            
+            <!-- Floating code/telemetry console in bottom-left above tag-bl -->
+            <div class="hud-terminal-overlay font-mono">
+              <div class="term-line">&gt; CONNECTING SAT_LINK_9... OK</div>
+              <div class="term-line">&gt; SEC: 10.3955 N | 105.4213 E</div>
+              <div class="term-line">&gt; RESOLVING CALL TRACE... ACTIVE</div>
+            </div>
+            
+            <!-- Tactical Marker 1 -->
+            <div class="hud-tactical-marker marker-alpha" style="top: 20%; left: 30%;">
+              <div class="marker-box"></div>
+              <span class="marker-label">NAV_0307</span>
+            </div>
+
+            <!-- Tactical Marker 2 -->
+            <div class="hud-tactical-marker marker-beta" style="top: 55%; left: 70%;">
+              <div class="marker-box alt-color"></div>
+              <span class="marker-label">ARM_0308</span>
+            </div>
+
+            <!-- Coordinate side rails (ticks) -->
+            <div class="hud-side-rail rail-left">
+              <span>00.01</span><span>00.02</span><span>00.03</span><span>00.04</span>
+            </div>
+            <div class="hud-side-rail rail-right">
+              <span>90%</span><span>92%</span><span>95%</span><span>98%</span>
+            </div>
+
             <div class="map-grid-lines"></div>
           </div>
         </div>
@@ -290,18 +376,41 @@
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Chart, registerables } from 'chart.js'
 import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
 import { useDeviceConfigStore } from '../stores/deviceConfig'
+import { useVitalsStore } from '../stores/vitals'
 import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue'
 
 Chart.register(...registerables)
 
 const sensorStore = useSensorTelemetryStore()
 const cfg = useDeviceConfigStore()
+const vitalsStore = useVitalsStore()
+
+function isActive(status: string) {
+  return status === 'LIVE' || status === 'SIMULATED'
+}
+
+function safeToFixed(val: any, decimals: number, fallback = 'OFFLINE'): string {
+  if (val === undefined || val === null || isNaN(Number(val))) {
+    return fallback
+  }
+  return Number(val).toFixed(decimals)
+}
+
+function getStatusClass(status: string, defaultClass = 'ok') {
+  if (status === 'LIVE') return defaultClass
+  if (status === 'SIMULATED') return 'warn'
+  return 'danger'
+}
+
+const streamStatus = computed(() => {
+  if (!sensorStore.isLive) return 'OFFLINE'
+  return sensorStore.isImuSimulated ? 'SIMULATED' : 'LIVE'
+})
 
 // ── Time / status ─────────────────────────────────────────────────────────────
 const currentTime = ref('')
@@ -316,24 +425,52 @@ function updateClock() {
 }
 
 // ── Sensor badge strip ────────────────────────────────────────────────────────
+const heartStatus = computed(() => {
+  if (vitalsStore.current.heartRate <= 0) return 'OFFLINE'
+  // Always SIMULATED since phone has no built-in heart rate sensor
+  return 'SIMULATED'
+})
+
+// Barometer hardware availability — null means no sensor on this device
+const baroStatus = computed(() => {
+  if (!isActive(sensorStore.envStatus)) return sensorStore.envStatus
+  // Always SIMULATED since phone has no barometer hardware
+  return 'SIMULATED'
+})
+
+// Wrist Motion hardware status
+const wristStatus = computed(() => {
+  if (!isActive(sensorStore.actStatus)) return sensorStore.actStatus
+  // Always SIMULATED since phone has no wristband sensor (derived from accelerometer)
+  return 'SIMULATED'
+})
+
 const sensorBadges = computed(() => [
-  { key: 'accel',  name: 'ACCEL',   icon: '↗', status: sensorStore.imuStatus },
-  { key: 'gyro',   name: 'GYRO',    icon: '⟲', status: sensorStore.imuStatus },
-  { key: 'mag',    name: 'MAG',     icon: '⊕', status: sensorStore.imuStatus },
-  { key: 'orient', name: 'ORIENT',  icon: '⧈', status: sensorStore.imuStatus },
-  { key: 'comp',   name: 'COMPASS', icon: '◎', status: sensorStore.imuStatus },
-  { key: 'grav',   name: 'GRAVITY', icon: '↓', status: sensorStore.imuStatus },
-  { key: 'light',  name: 'LIGHT',   icon: '☀', status: sensorStore.envStatus },
-  { key: 'baro',   name: 'BARO',    icon: '⟁', status: sensorStore.envStatus },
-  { key: 'loc',    name: 'GPS',     icon: '◉', status: sensorStore.locStatus },
-  { key: 'steps',  name: 'PEDOMETER', icon: '⊞', status: sensorStore.actStatus },
-  { key: 'act',    name: 'ACTIVITY',  icon: '⊿', status: sensorStore.actStatus },
-  { key: 'wrist',  name: 'WRIST',     icon: '〜', status: sensorStore.actStatus },
-  { key: 'hr',     name: 'HEART',     icon: '♥', status: 'LIVE' as const }, // from vitals store
+  { key: 'accel',  name: 'ACCEL',    icon: '↗', status: sensorStore.imuStatus },
+  { key: 'gyro',   name: 'GYRO',     icon: '⟲', status: sensorStore.imuStatus },
+  { key: 'mag',    name: 'MAG',      icon: '⊕', status: sensorStore.imuStatus },
+  { key: 'orient', name: 'ORIENT',   icon: '⧈', status: sensorStore.imuStatus },
+  { key: 'comp',   name: 'COMPASS',  icon: '◎', status: sensorStore.imuStatus },
+  { key: 'grav',   name: 'GRAVITY',  icon: '↓', status: sensorStore.imuStatus },
+  { key: 'light',  name: 'LIGHT',    icon: '☀', status: sensorStore.envStatus },
+  // BARO: if sensor not available → show SIMULATED (no hardware), not LIVE/OFFLINE
+  { key: 'baro',   name: 'BARO',     icon: '⟁', status: baroStatus.value },
+  { key: 'loc',    name: 'GPS',      icon: '◉', status: sensorStore.locStatus },
+  { key: 'steps',  name: 'PEDOMETER',icon: '⊞', status: sensorStore.actStatus },
+  { key: 'act',    name: 'ACTIVITY', icon: '⊿', status: sensorStore.actStatus },
+  { key: 'wrist',  name: 'WRIST',    icon: '〜', status: wristStatus.value },
+  { key: 'hr',     name: 'HEART',    icon: '♥', status: heartStatus.value },
 ])
 
 // ── 3D Cube transform ─────────────────────────────────────────────────────────
 const cubeStyle = computed(() => {
+  if (!isActive(sensorStore.imuStatus)) {
+    return {
+      transform: 'rotateX(0deg) rotateY(0deg) rotateZ(0deg)',
+      opacity: 0.2,
+      transition: 'all 0.5s ease',
+    }
+  }
   const { roll, pitch, yaw } = sensorStore.eulerAngles
   return {
     transform: `rotateX(${-pitch}deg) rotateY(${yaw}deg) rotateZ(${roll}deg)`,
@@ -343,8 +480,16 @@ const cubeStyle = computed(() => {
 
 function absVal(v: number) { return Math.abs(v) }
 
+function getBatteryBar(level: number | undefined) {
+  if (!isActive(sensorStore.envStatus)) return '[░░░░░░░░░░]'
+  const lvl = level ?? 100.0
+  const blocks = Math.max(0, Math.min(10, Math.round(lvl / 10)))
+  return `[${'█'.repeat(blocks)}${'░'.repeat(10 - blocks)}]`
+}
+
 // ── Light/pressure status classes ─────────────────────────────────────────────
 const lightClass = computed(() => {
+  if (!isActive(sensorStore.envStatus)) return 'card-danger'
   const lux = sensorStore.environment.ambient_light
   if (lux < 10) return 'card-warn'
   if (lux > 10000) return 'card-warn'
@@ -352,7 +497,11 @@ const lightClass = computed(() => {
 })
 
 const pressureDeltaClass = computed(() => {
-  const d = Math.abs(sensorStore.environment.pressure_delta_hpa)
+  if (!isActive(sensorStore.envStatus)) return 'card-danger'
+  // null pressure_delta means no barometer hardware — treat as no-data (warn color)
+  const delta = sensorStore.environment.pressure_delta_hpa
+  if (delta === null) return 'card-warn'
+  const d = Math.abs(delta)
   if (d > 5) return 'card-danger'
   if (d > 2) return 'card-warn'
   return 'card-ok'
@@ -360,6 +509,7 @@ const pressureDeltaClass = computed(() => {
 
 // ── Activity ──────────────────────────────────────────────────────────────────
 const activityIcon = computed(() => {
+  if (!isActive(sensorStore.actStatus)) return '⚠'
   const t = sensorStore.activity.activity_type.toLowerCase()
   if (t.includes('run')) return '🏃'
   if (t.includes('walk')) return '🚶'
@@ -369,6 +519,7 @@ const activityIcon = computed(() => {
 })
 
 const stepDigits = computed(() => {
+  if (!isActive(sensorStore.actStatus)) return ['O', 'F', 'F', 'L', 'I', 'N', 'E']
   const s = String(sensorStore.activity.pedometer_steps).padStart(6, '0')
   return s.split('')
 })
@@ -603,33 +754,96 @@ const statsTableRows = computed(() => {
   const act = sensorStore.activity
 
   const rows = [
-    { sensor: 'ACCEL X', current: imu.linear_acceleration.x.toFixed(3), unit: 'm/s²', key: 'ax', val: imu.linear_acceleration.x, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'ACCEL Y', current: imu.linear_acceleration.y.toFixed(3), unit: 'm/s²', key: 'ay', val: imu.linear_acceleration.y, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'ACCEL Z', current: imu.linear_acceleration.z.toFixed(3), unit: 'm/s²', key: 'az', val: imu.linear_acceleration.z, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'GYRO X', current: imu.angular_velocity.x.toFixed(4), unit: 'rad/s', key: 'gx', val: imu.angular_velocity.x, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'GYRO Y', current: imu.angular_velocity.y.toFixed(4), unit: 'rad/s', key: 'gy', val: imu.angular_velocity.y, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'GYRO Z', current: imu.angular_velocity.z.toFixed(4), unit: 'rad/s', key: 'gz', val: imu.angular_velocity.z, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'MAG X', current: imu.magnetometer.x.toFixed(2), unit: 'µT', key: 'mx', val: imu.magnetometer.x, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'MAG Y', current: imu.magnetometer.y.toFixed(2), unit: 'µT', key: 'my', val: imu.magnetometer.y, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'MAG Z', current: imu.magnetometer.z.toFixed(2), unit: 'µT', key: 'mz', val: imu.magnetometer.z, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'COMPASS', current: imu.compass_heading.toFixed(1), unit: '°', key: 'comp', val: imu.compass_heading, statusClass: 'ok', status: sensorStore.imuStatus },
-    { sensor: 'LIGHT', current: env.ambient_light.toFixed(0), unit: 'lux', key: 'lux', val: env.ambient_light, statusClass: 'ok', status: sensorStore.envStatus },
-    { sensor: 'BAROMETER', current: env.barometric_pressure.toFixed(2), unit: 'hPa', key: 'baro', val: env.barometric_pressure, statusClass: 'ok', status: sensorStore.envStatus },
-    { sensor: 'PRESSURE Δ', current: env.pressure_delta_hpa.toFixed(3), unit: 'ΔhPa', key: 'pdelta', val: env.pressure_delta_hpa, statusClass: Math.abs(env.pressure_delta_hpa) > 5 ? 'danger' : 'ok', status: sensorStore.envStatus },
-    { sensor: 'LATITUDE', current: loc.latitude.toFixed(6), unit: '°', key: 'lat', val: loc.latitude, statusClass: 'ok', status: sensorStore.locStatus },
-    { sensor: 'LONGITUDE', current: loc.longitude.toFixed(6), unit: '°', key: 'lon', val: loc.longitude, statusClass: 'ok', status: sensorStore.locStatus },
-    { sensor: 'ALTITUDE', current: loc.altitude.toFixed(1), unit: 'm', key: 'alt', val: loc.altitude, statusClass: 'ok', status: sensorStore.locStatus },
-    { sensor: 'STEPS', current: String(act.pedometer_steps), unit: 'steps', key: 'steps', val: act.pedometer_steps, statusClass: 'ok', status: sensorStore.actStatus },
-    { sensor: 'ACTIVITY', current: act.activity_type.toUpperCase(), unit: '', key: 'acttype', val: 0, statusClass: 'ok', status: sensorStore.actStatus },
-    { sensor: 'WRIST MAG', current: sensorStore.wristMagnitude.toFixed(3), unit: 'units', key: 'wrist', val: sensorStore.wristMagnitude, statusClass: 'ok', status: sensorStore.actStatus },
+    { sensor: 'ACCEL X', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.linear_acceleration?.x, 3) : 'OFFLINE', unit: 'm/s²', key: 'ax', val: imu?.linear_acceleration?.x, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
+    { sensor: 'ACCEL Y', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.linear_acceleration?.y, 3) : 'OFFLINE', unit: 'm/s²', key: 'ay', val: imu?.linear_acceleration?.y, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
+    { sensor: 'ACCEL Z', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.linear_acceleration?.z, 3) : 'OFFLINE', unit: 'm/s²', key: 'az', val: imu?.linear_acceleration?.z, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
+    { sensor: 'GYRO X', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.angular_velocity?.x, 4) : 'OFFLINE', unit: 'rad/s', key: 'gx', val: imu?.angular_velocity?.x, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
+    { sensor: 'GYRO Y', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.angular_velocity?.y, 4) : 'OFFLINE', unit: 'rad/s', key: 'gy', val: imu?.angular_velocity?.y, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
+    { sensor: 'GYRO Z', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.angular_velocity?.z, 4) : 'OFFLINE', unit: 'rad/s', key: 'gz', val: imu?.angular_velocity?.z, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
+    {
+      sensor: 'MAG X',
+      current: imu?.magnetometer?.x === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(imu?.magnetometer?.x, 2) : 'OFFLINE'),
+      unit: imu?.magnetometer?.x === null ? '' : 'µT',
+      key: 'mx',
+      val: imu?.magnetometer?.x ?? undefined,
+      statusClass: imu?.magnetometer?.x === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      status: imu?.magnetometer?.x === null ? 'NO HW' : sensorStore.imuStatus
+    },
+    {
+      sensor: 'MAG Y',
+      current: imu?.magnetometer?.y === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(imu?.magnetometer?.y, 2) : 'OFFLINE'),
+      unit: imu?.magnetometer?.y === null ? '' : 'µT',
+      key: 'my',
+      val: imu?.magnetometer?.y ?? undefined,
+      statusClass: imu?.magnetometer?.y === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      status: imu?.magnetometer?.y === null ? 'NO HW' : sensorStore.imuStatus
+    },
+    {
+      sensor: 'MAG Z',
+      current: imu?.magnetometer?.z === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(imu?.magnetometer?.z, 2) : 'OFFLINE'),
+      unit: imu?.magnetometer?.z === null ? '' : 'µT',
+      key: 'mz',
+      val: imu?.magnetometer?.z ?? undefined,
+      statusClass: imu?.magnetometer?.z === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      status: imu?.magnetometer?.z === null ? 'NO HW' : sensorStore.imuStatus
+    },
+    {
+      sensor: 'COMPASS',
+      current: imu?.compass_heading === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(imu?.compass_heading, 1) : 'OFFLINE'),
+      unit: imu?.compass_heading === null ? '' : '°',
+      key: 'comp',
+      val: imu?.compass_heading ?? undefined,
+      statusClass: imu?.compass_heading === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      status: imu?.compass_heading === null ? 'NO HW' : sensorStore.imuStatus
+    },
+    { sensor: 'LIGHT',       current: isActive(sensorStore.envStatus) ? safeToFixed(env?.ambient_light, 0) : 'OFFLINE',         unit: 'lux',  key: 'lux',     val: env?.ambient_light,         statusClass: getStatusClass(sensorStore.envStatus), status: sensorStore.envStatus },
+    // BAROMETER / PRESSURE: always SIMULATED when active, or NO HW
+    {
+      sensor: 'BAROMETER',
+      current: env?.barometric_pressure === null
+        ? 'NO HW'
+        : isActive(sensorStore.envStatus) ? safeToFixed(env?.barometric_pressure, 2) : 'OFFLINE',
+      unit: env?.barometric_pressure === null ? '' : 'hPa',
+      key: 'baro',
+      val: env?.barometric_pressure ?? undefined,
+      statusClass: env?.barometric_pressure === null ? 'warn' : (isActive(sensorStore.envStatus) ? 'warn' : 'danger'),
+      status: env?.barometric_pressure === null ? 'NO HW' : (isActive(sensorStore.envStatus) ? 'SIMULATED' : 'OFFLINE'),
+    },
+    {
+      sensor: 'PRESSURE Δ',
+      current: env?.pressure_delta_hpa === null
+        ? 'NO HW'
+        : isActive(sensorStore.envStatus) ? safeToFixed(env?.pressure_delta_hpa, 3) : 'OFFLINE',
+      unit: env?.pressure_delta_hpa === null ? '' : 'ΔhPa',
+      key: 'pdelta',
+      val: env?.pressure_delta_hpa ?? undefined,
+      statusClass: env?.pressure_delta_hpa === null ? 'warn' : (isActive(sensorStore.envStatus) ? 'warn' : 'danger'),
+      status: env?.pressure_delta_hpa === null ? 'NO HW' : (isActive(sensorStore.envStatus) ? 'SIMULATED' : 'OFFLINE'),
+    },
+    { sensor: 'LATITUDE', current: isActive(sensorStore.locStatus) ? safeToFixed(loc?.latitude, 6) : 'OFFLINE', unit: '°', key: 'lat', val: loc?.latitude, statusClass: getStatusClass(sensorStore.locStatus), status: sensorStore.locStatus },
+    { sensor: 'LONGITUDE', current: isActive(sensorStore.locStatus) ? safeToFixed(loc?.longitude, 6) : 'OFFLINE', unit: '°', key: 'lon', val: loc?.longitude, statusClass: getStatusClass(sensorStore.locStatus), status: sensorStore.locStatus },
+    { sensor: 'ALTITUDE', current: isActive(sensorStore.locStatus) ? safeToFixed(loc?.altitude, 1) : 'OFFLINE', unit: 'm', key: 'alt', val: loc?.altitude, statusClass: getStatusClass(sensorStore.locStatus), status: sensorStore.locStatus },
+    { sensor: 'STEPS', current: isActive(sensorStore.actStatus) ? String(act?.pedometer_steps ?? 0) : 'OFFLINE', unit: 'steps', key: 'steps', val: act?.pedometer_steps, statusClass: getStatusClass(sensorStore.actStatus), status: sensorStore.actStatus },
+    { sensor: 'ACTIVITY', current: isActive(sensorStore.actStatus) ? (act?.activity_type ?? 'unknown').toUpperCase() : 'OFFLINE', unit: '', key: 'acttype', val: 0, statusClass: getStatusClass(sensorStore.actStatus), status: sensorStore.actStatus },
+    {
+      sensor: 'WRIST MAG',
+      current: isActive(sensorStore.actStatus) ? safeToFixed(sensorStore.wristMagnitude, 3) : 'OFFLINE',
+      unit: 'units',
+      key: 'wrist',
+      val: sensorStore.wristMagnitude,
+      statusClass: isActive(sensorStore.actStatus) ? 'warn' : 'danger',
+      status: isActive(sensorStore.actStatus) ? 'SIMULATED' : 'OFFLINE'
+    },
+    { sensor: 'BATTERY LEVEL', current: isActive(sensorStore.envStatus) ? safeToFixed(env?.battery_level ?? 100.0, 1) : 'OFFLINE', unit: '%', key: 'bat_lvl', val: env?.battery_level ?? 100.0, statusClass: getStatusClass(sensorStore.envStatus), status: sensorStore.envStatus },
+    { sensor: 'BATTERY TEMP', current: isActive(sensorStore.envStatus) ? safeToFixed(env?.battery_temp ?? 32.0, 1) : 'OFFLINE', unit: '°C', key: 'bat_temp', val: env?.battery_temp ?? 32.0, statusClass: getStatusClass(sensorStore.envStatus), status: sensorStore.envStatus },
   ]
 
   return rows.map(r => {
-    const mm = r.key !== 'acttype' ? trackMinMax(r.key, r.val) : { min: 0, max: 0 }
+    const mm = (r.key !== 'acttype' && isActive(r.status) && r.val !== undefined && r.val !== null) ? trackMinMax(r.key, r.val) : null
     return {
       ...r,
-      min: r.key !== 'acttype' ? mm.min.toFixed(3) : '—',
-      max: r.key !== 'acttype' ? mm.max.toFixed(3) : '—',
+      min: mm ? safeToFixed(mm.min, 3, '—') : '—',
+      max: mm ? safeToFixed(mm.max, 3, '—') : '—',
     }
   })
 })
@@ -649,6 +863,70 @@ function exportCSV() {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// ── GPS Leaflet Map Integration ─────────────────────────────────────────────
+const mapContainer = ref<HTMLElement | null>(null)
+let mapInstance: any = null
+let markerInstance: any = null
+
+function loadLeaflet(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).L) {
+      resolve((window as any).L)
+      return
+    }
+    // Load Leaflet CSS
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+    document.head.appendChild(link)
+
+    // Load Leaflet JS
+    const script = document.createElement('script')
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+    script.onload = () => resolve((window as any).L)
+    script.onerror = (e) => reject(e)
+    document.body.appendChild(script)
+  })
+}
+
+function initMap(L: any) {
+  if (!mapContainer.value) return
+  // Center map on current location if available, otherwise default to target
+  const initLat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
+  const initLng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude : 105.4213
+
+  mapInstance = L.map(mapContainer.value, {
+    zoomControl: false,
+    attributionControl: false
+  }).setView([initLat, initLng], 16)
+
+  // Use OpenStreetMap tiles with high-contrast inverted green filter
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+  }).addTo(mapInstance)
+
+  // Sonar pulsing div icon
+  const pingIcon = L.divIcon({
+    className: 'gps-sonar-ping',
+    html: '<div class="ping-ring"></div><div class="ping-dot"></div>',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+  })
+
+  markerInstance = L.marker([initLat, initLng], { icon: pingIcon }).addTo(mapInstance)
+}
+
+watch(
+  () => [sensorStore.location.latitude, sensorStore.location.longitude],
+  ([lat, lng]) => {
+    if (mapInstance && markerInstance && lat !== 0 && lng !== 0) {
+      const pos = [lat, lng] as [number, number]
+      markerInstance.setLatLng(pos)
+      mapInstance.setView(pos, mapInstance.getZoom() || 16)
+    }
+  }
+)
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 let _clockInterval: number | null = null
@@ -673,6 +951,14 @@ onMounted(async () => {
     packetRate.value = Math.abs(current - _lastPktCount)
     _lastPktCount = current
   }, 1000)
+
+  // Initialize Map
+  try {
+    const L = await loadLeaflet()
+    initMap(L)
+  } catch (e) {
+    console.error('Failed to load Leaflet:', e)
+  }
 })
 
 onUnmounted(() => {
@@ -686,6 +972,11 @@ onUnmounted(() => {
   pressureDeltaChart?.destroy()
   wristChart?.destroy()
   stepsChart?.destroy()
+
+  if (mapInstance) {
+    mapInstance.remove()
+    mapInstance = null
+  }
 })
 </script>
 
@@ -828,21 +1119,36 @@ onUnmounted(() => {
   font-family: 'Roboto Mono', monospace;
 }
 .badge-live { border-color: #00FF66; color: #00FF66; background: #00FF6608; }
+.badge-simulated { border-color: #FFB000; color: #FFB000; background: rgba(255, 176, 0, 0.08); }
 .badge-stale { border-color: #FFB000; color: #FFB000; background: #FFB00008; }
 .badge-offline { border-color: #FF333366; color: #FF3333; background: #FF333308; }
 .badge-icon { font-size: 10px; }
 .badge-name { color: inherit; }
 .badge-state { font-size: 8px; opacity: 0.7; }
 
-/* ─── Main Grid ────────────────────────────────────────────────────────────── */
-.sv-main-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  flex: 1;
+/* ─── Main Layout (Environment top, split sidebar 30/70, charts 100%) ─── */
+.sv-panel.full-width {
+  width: 100%;
 }
 
-.sv-col {
+.sv-split-layout {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+}
+
+.sv-left-col {
+  width: 30%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sv-right-col {
+  width: 70%;
+}
+
+.sv-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -850,6 +1156,372 @@ onUnmounted(() => {
   border: 1px solid #00FF6622;
   padding: 12px;
   backdrop-filter: blur(4px);
+}
+
+.charts-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.charts-stack .chart-block {
+  width: 100%;
+}
+
+/* ─── Battery Panel ───────────────────────────────────────────────────────── */
+.battery-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+}
+.bat-level-row, .bat-temp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+.bat-lbl {
+  color: #00FF6688;
+}
+.bat-val {
+  font-weight: 700;
+  font-family: 'Roboto Mono', monospace;
+}
+.bat-progress-bar {
+  font-size: 12px;
+  letter-spacing: 2px;
+  margin: 4px 0;
+  text-shadow: 0 0 4px rgba(0, 255, 102, 0.5);
+}
+
+/* ─── GPS Layout ──────────────────────────────────────────────────────────── */
+.gps-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.gps-readout-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+.gps-item-horizontal {
+  background: rgba(0, 255, 102, 0.02);
+  border: 1px solid rgba(0, 255, 102, 0.15);
+  padding: 10px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.gps-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #00FF6688;
+  font-family: 'Roboto Mono', monospace;
+}
+.gps-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #00FF66;
+  font-family: 'Roboto Mono', monospace;
+}
+.gps-panel .map-placeholder {
+  width: 100%;
+  height: 320px;
+  position: relative;
+  background: #000000;
+  border: 1px solid #00FF6622;
+  overflow: hidden;
+}
+.real-map {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  /* Cyber-Cinematic dark green and black high-contrast inverted green filter for ultra clear street contrast */
+  filter: invert(1) hue-rotate(110deg) saturate(3.5) brightness(0.95) contrast(1.85);
+}
+.map-hud-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none; /* Allows pointer events to pass through for map panning/zooming */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+/* Conic sweeping radar pulse */
+.map-hud-overlay::before {
+  content: '';
+  position: absolute;
+  top: -150%;
+  left: -150%;
+  width: 300%;
+  height: 300%;
+  background: conic-gradient(from 0deg, rgba(0, 255, 102, 0.05) 0deg, transparent 75deg, transparent 360deg);
+  animation: radar-sweep 8s infinite linear;
+  z-index: 4;
+}
+@keyframes radar-sweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Radar scanline sweep */
+.radar-scanline {
+  position: absolute;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to bottom, transparent, rgba(0, 255, 102, 0.35), transparent);
+  box-shadow: 0 0 6px rgba(0, 255, 102, 0.5);
+  top: 0;
+  left: 0;
+  z-index: 12;
+  animation: radar-scan-y 5s infinite linear;
+}
+@keyframes radar-scan-y {
+  0% { top: 0%; }
+  100% { top: 100%; }
+}
+
+/* Tech corner metadata tags containing coordinates & signal */
+.tech-tag {
+  position: absolute;
+  font-family: 'Roboto Mono', monospace;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 6px 10px;
+  border: 1px solid rgba(0, 255, 102, 0.25);
+  pointer-events: none;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tech-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 8px;
+  line-height: 1.2;
+  color: #00FF66BB;
+}
+.tech-lbl {
+  color: rgba(0, 255, 102, 0.55);
+}
+.tech-val {
+  color: #00FF66;
+  font-weight: 700;
+}
+.tech-val.live { color: #00FF66; }
+.tech-val.simulated { color: #FFB000; }
+.tech-val.stale { color: #FFB000; }
+.tech-val.offline { color: #FF3333; }
+
+.tag-tl { top: 10px; left: 10px; border-left: 2px solid #00FF66; }
+.tag-tr { top: 10px; right: 10px; border-right: 2px solid #00FF66; }
+.tag-bl { bottom: 10px; left: 10px; border-left: 2px solid #00FF66; }
+.tag-br { bottom: 10px; right: 10px; border-right: 2px solid #00FF66; }
+
+/* Center tactical targeting bracket */
+.hud-center-targeting {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.target-cross {
+  font-size: 14px;
+  color: #00FF66;
+  text-shadow: 0 0 4px #00FF66;
+}
+.target-status {
+  position: absolute;
+  bottom: -16px;
+  font-size: 7px;
+  color: #00FF66;
+  letter-spacing: 1px;
+  text-shadow: 0 0 3px #00FF66;
+  animation: blink-fast 1.2s infinite steps(2);
+}
+@keyframes blink-fast {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.target-bracket {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #00FF66;
+  box-shadow: 0 0 4px rgba(0, 255, 102, 0.4);
+}
+.bracket-tl { top: 0; left: 0; border-right: none; border-bottom: none; }
+.bracket-tr { top: 0; right: 0; border-left: none; border-bottom: none; }
+.bracket-bl { bottom: 0; left: 0; border-right: none; border-top: none; }
+.bracket-br { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+/* Concentric radar circles */
+.hud-concentric-ring {
+  position: absolute;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
+}
+.ring-1 {
+  width: 180px;
+  height: 180px;
+  border: 1px solid rgba(0, 255, 102, 0.08);
+  animation: rotate-cw 25s infinite linear;
+}
+.ring-2 {
+  width: 300px;
+  height: 300px;
+  border: 1px dashed rgba(255, 51, 51, 0.08); /* red ring like Oracle screenshots */
+  animation: rotate-ccw 35s infinite linear;
+}
+@keyframes rotate-cw {
+  0% { transform: translate(-50%, -50%) rotate(0deg); }
+  100% { transform: translate(-50%, -50%) rotate(360deg); }
+}
+@keyframes rotate-ccw {
+  0% { transform: translate(-50%, -50%) rotate(0deg); }
+  100% { transform: translate(-50%, -50%) rotate(-360deg); }
+}
+
+/* Floating Terminal Overlay (bottom left of map - stacked above tag-bl) */
+.hud-terminal-overlay {
+  position: absolute;
+  bottom: 55px;
+  left: 10px;
+  width: 190px;
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(0, 255, 102, 0.25);
+  padding: 6px 8px;
+  z-index: 15;
+  font-size: 7px;
+  line-height: 1.4;
+  color: rgba(0, 255, 102, 0.85);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.9);
+  border-bottom: 2px solid #00FF66;
+}
+.term-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tactical target markers (NAV_0307 & ARM_0308) */
+.hud-tactical-marker {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  z-index: 14;
+  pointer-events: none;
+}
+.marker-box {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #00FF66;
+  background: rgba(0, 255, 102, 0.15);
+  transform: rotate(45deg);
+  box-shadow: 0 0 4px #00FF66;
+  position: relative;
+}
+.marker-box::after {
+  content: '';
+  position: absolute;
+  inset: 1.5px;
+  background: #00FF66;
+}
+.marker-box.alt-color {
+  border-color: #FF3333;
+  background: rgba(255, 51, 51, 0.15);
+  box-shadow: 0 0 4px #FF3333;
+}
+.marker-box.alt-color::after {
+  background: #FF3333;
+}
+.marker-label {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 7px;
+  color: #00FF66;
+  text-shadow: 0 0 2px #000;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 1px 3px;
+  border-radius: 1px;
+}
+.marker-box.alt-color + .marker-label {
+  color: #FF3333;
+}
+
+/* Side coordinate rails ticks */
+.hud-side-rail {
+  position: absolute;
+  top: 40px;
+  bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 7px;
+  font-family: 'Roboto Mono', monospace;
+  color: rgba(0, 255, 102, 0.35);
+  z-index: 12;
+}
+.rail-left { left: 4px; align-items: flex-start; }
+.rail-right { right: 4px; align-items: flex-end; }
+
+/* Pulsing Sonar Ping Pin Marker styling */
+.gps-sonar-ping {
+  position: relative;
+}
+.ping-dot {
+  width: 8px;
+  height: 8px;
+  background: #00FF66;
+  border-radius: 50%;
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  box-shadow: 0 0 10px #00FF66, 0 0 20px #00FF66;
+}
+.ping-ring {
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid #00FF66;
+  border-radius: 50%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: gps-sonar-pulse 2s infinite cubic-bezier(0.215, 0.610, 0.355, 1);
+  box-shadow: inset 0 0 4px rgba(0, 255, 102, 0.3);
+}
+@keyframes gps-sonar-pulse {
+  0% {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
 }
 
 /* ─── Panel headers ──────────────────────────────────────────────────────────*/
@@ -873,6 +1545,7 @@ onUnmounted(() => {
   font-family: 'Roboto Mono', monospace;
 }
 .panel-status.live { color: #00FF66; }
+.panel-status.simulated { color: #FFB000; }
 .panel-status.stale { color: #FFB000; }
 .panel-status.offline { color: #FF3333; }
 .panel-micro-label {
@@ -1152,15 +1825,26 @@ onUnmounted(() => {
 }
 .pill-ok, .pill-live { border-color: #00FF66; color: #00FF66; }
 .pill-stale { border-color: #FFB000; color: #FFB000; }
+.pill-simulated, .pill-warn { border-color: #FFB000; color: #FFB000; background: rgba(255, 176, 0, 0.08); }
 .pill-offline { border-color: #FF3333; color: #FF3333; }
 .pill-danger { border-color: #FF3333; color: #FF3333; }
 
+.row-warn { color: #FFB000 !important; }
+.row-warn .cell-sensor, .row-warn .cell-val, .row-warn .cell-unit, .row-warn .cell-min { color: #FFB000 !important; }
+
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 1200px) {
-  .sv-main-grid { grid-template-columns: 1fr 1fr; }
+  .sv-split-layout {
+    flex-direction: column;
+  }
+  .sv-left-col, .sv-right-col {
+    width: 100%;
+  }
 }
 @media (max-width: 768px) {
-  .sv-main-grid { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr 1fr; }
+  .gps-readout-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

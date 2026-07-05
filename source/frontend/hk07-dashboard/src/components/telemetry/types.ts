@@ -1,5 +1,5 @@
 /**
- * BAYMAX BIO-TELEMETRY PAYLOAD TYPE DEFINITIONS
+ * HUGO BIO-TELEMETRY PAYLOAD TYPE DEFINITIONS
  * Cyber-cinematic real-time sensor fusion interface
  */
 
@@ -62,7 +62,7 @@ export interface WidgetTheme {
   dangerRed: string;            // #FF3333
 }
 
-export const BAYMAX_THEME: WidgetTheme = {
+export const HUGO_THEME: WidgetTheme = {
   backgroundColor: '#000000',
   textPrimary: '#F0F8FF',
   borderCyan: '#00FFCC',
@@ -70,3 +70,5 @@ export const BAYMAX_THEME: WidgetTheme = {
   warningOrange: '#FF6600',
   dangerRed: '#FF3333'
 };
+
+export const BAYMAX_THEME = HUGO_THEME;

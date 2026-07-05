@@ -225,16 +225,16 @@
           <div class="spec-grid font-mono text-[10px] mb-2">
             <div class="spec-row">
               <span class="label">rPPG HEART RATE:</span>
-              <span :class="['val font-bold', rppgHrClass]">{{ kinematicsStore.rppgHeartRate ? kinematicsStore.rppgHeartRate.toFixed(1) + ' BPM' : 'ANALYZING...' }}</span>
+              <span :class="['val font-bold', rppgHrClass]">{{ kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? kinematicsStore.rppgHeartRate.toFixed(1) + ' BPM' : 'ANALYZING...') : 'OFFLINE' }}</span>
             </div>
             <div class="spec-row">
               <span class="label">THERMAL TEMP:</span>
-              <span :class="['val font-bold', thermalTempClass]">{{ kinematicsStore.thermalTemperature ? kinematicsStore.thermalTemperature.toFixed(2) + ' °C' : 'MEASURING...' }}</span>
+              <span :class="['val font-bold', thermalTempClass]">{{ kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? kinematicsStore.thermalTemperature.toFixed(2) + ' °C' : 'MEASURING...') : 'OFFLINE' }}</span>
             </div>
             <div class="spec-row">
               <span class="label">FEVER ALERT:</span>
-              <span :class="['val font-bold', kinematicsStore.feverAlert ? 'text-red animate-pulse' : 'text-green']">
-                {{ kinematicsStore.feverAlert ? '⚠ FEVER DETECTED' : '✓ NORMAL' }}
+              <span :class="['val font-bold', kinematicsStore.isLive && kinematicsStore.feverAlert ? 'text-red animate-pulse' : 'text-green']">
+                {{ kinematicsStore.isLive ? (kinematicsStore.feverAlert ? '⚠ FEVER DETECTED' : '✓ NORMAL') : 'OFFLINE' }}
               </span>
             </div>
           </div>
@@ -457,6 +457,7 @@ const spo2Class = computed(() => {
 })
 
 const rppgHrClass = computed(() => {
+  if (!kinematicsStore.isLive) return 'text-dim'
   const hr = kinematicsStore.rppgHeartRate
   if (!hr) return 'text-dim'
   if (hr < 50 || hr > 120) return 'text-red'
@@ -465,6 +466,7 @@ const rppgHrClass = computed(() => {
 })
 
 const thermalTempClass = computed(() => {
+  if (!kinematicsStore.isLive) return 'text-dim'
   const t = kinematicsStore.thermalTemperature
   if (!t) return 'text-dim'
   if (t >= 38.0) return 'text-red'

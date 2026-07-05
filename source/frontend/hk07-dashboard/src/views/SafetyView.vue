@@ -17,9 +17,9 @@
           <canvas ref="radarCanvas" :width="RADAR_SIZE" :height="RADAR_SIZE"></canvas>
           <div class="radar-center-label hud text-dim">HK-07</div>
         </div>
-        <div class="baymax-hint mono">
-          <span class="baymax-tag hud text-cyan">HK07_SCAN</span>
-          {{ safetyStore.baymaxHint }}
+        <div class="hugo-hint mono">
+          <span class="hugo-tag hud text-cyan">HK07_SCAN</span>
+          {{ safetyStore.hugoHint }}
         </div>
         <div class="radar-legend mono text-dim">
           <span>VISION TARGET TRACKER ACTIVE</span>
@@ -247,13 +247,13 @@ watch(() => agentsStore.subsumptionActive, (active) => {
 .radar-header-row { display: flex; justify-content: space-between; align-items: center; }
 .radar-meta { display: flex; justify-content: space-between; font-size: 9px; padding: 0 4px 6px; letter-spacing: 0.08em; }
 .data-link { font-size: 8px; letter-spacing: 0.2em; }
-.baymax-hint {
+.hugo-hint {
   font-size: 10px; line-height: 1.5; padding: 8px 10px; margin-top: 6px;
   border-left: 2px solid var(--color-accent-cyan, #00e5ff);
   background: rgba(0, 229, 255, 0.04);
   color: var(--color-text-primary);
 }
-.baymax-tag { font-size: 8px; display: block; margin-bottom: 4px; letter-spacing: 0.15em; }
+.hugo-tag { font-size: 8px; display: block; margin-bottom: 4px; letter-spacing: 0.15em; }
 .radar-legend { font-size: 9px; text-align: center; margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
 .legend-bubble { font-size: 8px; opacity: 0.75; }
 .radar-critical { border-color: rgba(255, 51, 51, 0.6) !important; }

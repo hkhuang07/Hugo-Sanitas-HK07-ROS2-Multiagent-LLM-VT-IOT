@@ -16,8 +16,7 @@ except ImportError:
     print("=================================================================================")
     sys.exit(1)
 
-from sensor_msgs.msg import Imu
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped
 from std_msgs.msg import String
 
 # Setup logger
@@ -45,15 +44,15 @@ class NavigationAgent(Node):
         
         # Subscriptions
         self.target_sub = self.create_subscription(
-            Imu,
-            '/sensors/imu/target',
+            PoseStamped,
+            '/control/motion/target_pose',
             self.target_callback,
             10
         )
-        self.telemetry_imu_sub = self.create_subscription(
-            Imu,
-            '/telemetry/imu',
-            self.telemetry_imu_callback,
+        self.pose_sub = self.create_subscription(
+            PoseStamped,
+            '/telemetry/pose',
+            self.pose_callback,
             10
         )
         self.inhibit_sub = self.create_subscription(
@@ -66,7 +65,7 @@ class NavigationAgent(Node):
         # Publishers
         self.cmd_vel_pub = self.create_publisher(
             Twist,
-            '/control/motion/cmd_vel',
+            '/control/motion/nav_cmd_vel',
             10
         )
         
@@ -78,19 +77,17 @@ class NavigationAgent(Node):
         log.info("Subscribing to current position, target waypoint, and PointCloud2 costmap...")
 
     def target_callback(self, msg):
-        # Target position is packed inside angular_velocity
         self.target_pos = {
-            "x": msg.angular_velocity.x,
-            "y": msg.angular_velocity.y,
-            "z": msg.angular_velocity.z
+            "x": msg.pose.position.x,
+            "y": msg.pose.position.y,
+            "z": msg.pose.position.z
         }
 
-    def telemetry_imu_callback(self, msg):
-        # Current position is packed inside angular_velocity
+    def pose_callback(self, msg):
         self.current_pos = {
-            "x": msg.angular_velocity.x,
-            "y": msg.angular_velocity.y,
-            "z": msg.angular_velocity.z
+            "x": msg.pose.position.x,
+            "y": msg.pose.position.y,
+            "z": msg.pose.position.z
         }
 
     def inhibit_callback(self, msg):

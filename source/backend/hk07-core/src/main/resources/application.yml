@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    default: dev
   application:
     name: hk07-core
   mvc:
@@ -24,9 +26,9 @@ spring:
       maximum-pool-size: 30
       minimum-idle: 10
       connection-timeout: 20000
-      idle-timeout: 300000
-      keepalive-time: 60000         # Prevent idle connection drops
-      max-lifetime: 600000
+      idle-timeout: 120000          # Reduced to avoid keeping idle connections closed by DB
+      keepalive-time: 30000         # Check idle connections more frequently (must be < idle-timeout)
+      max-lifetime: 180000          # Shortened to 3 minutes to stay below DB's wait_timeout (approx. 5 minutes)
       data-source-properties:
         rewriteBatchedStatements: true  # Enable true JDBC batch execution for vitals bursts
   jpa:
@@ -64,7 +66,8 @@ spring:
           max-idle: 2
 
 server:
-  port: 8888
+  port: ${PORT:8888}
+  address: 127.0.0.1
   tomcat:
     threads:
       max: 5                        # Virtual Threads handle the actual work; carrier pool is tiny
@@ -112,3 +115,25 @@ logging:
     rollingpolicy:
       max-file-size: 1MB            # Hard cap per hardware constraint (no Disk Thrashing)
       max-history: 3
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  jpa:
+    show-sql: true
+logging:
+  level:
+    com.hk07: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  jpa:
+    show-sql: false
+logging:
+  level:
+    com.hk07: INFO

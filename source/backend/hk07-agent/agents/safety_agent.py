@@ -64,7 +64,10 @@ class SafetyAgent:
         try:
             broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
             broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-            self._mqtt = mqtt.Client(client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
+            if hasattr(mqtt, "CallbackAPIVersion"):
+                self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
+            else:
+                self._mqtt = mqtt.Client(client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
             mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
             mqtt_pass = os.getenv("MQTT_PASSWORD", "")
             if mqtt_user:
@@ -211,7 +214,7 @@ class SafetyAgent:
                             self._freefall_ended_time = None
                             
                     if not danger:
-                        log.info(f"[SAFETY_WORKER] Normalized G-force: {normalized_g_force:.2f}g - Status: CLEAR")
+                        log.debug(f"[SAFETY_WORKER] Normalized G-force: {normalized_g_force:.2f}g - Status: CLEAR")
                 else:
                     # Reset freefall tracking if IMU data is not available (disconnected)
                     self._freefall_start_time = None
@@ -236,6 +239,12 @@ class SafetyAgent:
                     trigger = SafetyTrigger.NONE
                     msg = ""
 
+                # Fall risk and Owner Emergency safety triggers disabled per user request
+                if trigger in (SafetyTrigger.FALL_RISK, SafetyTrigger.OWNER_EMERGENCY):
+                    danger = False
+                    trigger = SafetyTrigger.NONE
+                    msg = ""
+
                 if danger and not self._subsumption_active:
                     elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
                     log.warning("[SAFETY_INHIBIT_TRIGGERED] Trigger: %s | Msg: %s | Latency: %.2fms", trigger.value, msg, elapsed_ms)
@@ -244,8 +253,9 @@ class SafetyAgent:
                     await bb.write_value("safety:tripped", True)
                     await bb.write_value("safety:reason", msg)
 
-                    self.arbitrator.inhibit("EMPATHETIC", duration_s=3)
-                    self.arbitrator.inhibit("MEDICAL", duration_s=3)
+                    # Conversation agents are never inhibited for companion wellness robot
+                    # self.arbitrator.inhibit("EMPATHETIC", duration_s=3)
+                    # self.arbitrator.inhibit("MEDICAL", duration_s=3)
 
                     if self._mqtt:
                         try:
@@ -275,6 +285,49 @@ class SafetyAgent:
 
                     asyncio.create_task(reset_safety_after_delay())
 
+                # ─── SOS ESCALATION PROTOCOL (TASK 3) ───
+                if not getattr(self, "_in_alert_mode", False):
+                    # Get activity state
+                    latest_scan = await bb.read_value("sensor:perception:latest_scan") or {}
+                    activity = "unknown"
+                    if isinstance(latest_scan, dict):
+                        activity = latest_scan.get("activity") or latest_scan.get("cognitive_insights", {}).get("subject_activity") or "unknown"
+                    
+                    # Get heart rate
+                    hr = None
+                    import math
+                    latest_vitals = await fusion_buf.latest_vitals()
+                    if latest_vitals:
+                        hr = latest_vitals.heart_rate
+                    if hr is None or math.isnan(hr):
+                        vitals_data = await bb.read_value("sensor:vitals:latest") or {}
+                        if isinstance(vitals_data, dict):
+                            hr = vitals_data.get("heart_rate") or vitals_data.get("hr") or vitals_data.get("heartRate")
+                    
+                    try:
+                        if hr is not None:
+                            hr = float(hr)
+                    except (ValueError, TypeError):
+                        hr = None
+
+                    is_fall = (activity == "falling") or fall_state
+                    active_states = {"walking", "running", "exercising", "stretching", "reaching_up"}
+                    is_resting = (activity not in active_states)
+
+                    trigger_alert = False
+                    trigger_reason = ""
+                    if is_fall:
+                        trigger_alert = True
+                        trigger_reason = "FALL"
+                    elif hr is not None and hr > 120.0 and is_resting:
+                        trigger_alert = True
+                        trigger_reason = "RESTING_HIGH_HR"
+
+                    if trigger_alert:
+                        self._in_alert_mode = True
+                        log.warning(f"[SAFETY_SOS] Anomaly detected: {trigger_reason} (HR={hr}, Activity={activity}). Initiating Alert Mode...")
+                        asyncio.create_task(self._trigger_sos_escalation_protocol(trigger_reason, hr, activity, bb, fusion_buf))
+
                 await asyncio.sleep(0.05)  # 20Hz loop check
         except asyncio.CancelledError:
             log.info("[SAFETY_AGENT] Shutdown")
@@ -284,6 +337,85 @@ class SafetyAgent:
                     self._mqtt.loop_stop()
                 except Exception:
                     pass
+
+    async def _trigger_sos_escalation_protocol(self, trigger_reason: str, hr: Optional[float], activity: str, bb, fusion_buf):
+        log.warning(f"[SAFETY_ALERT_PROTOCOL] Starting verification loop for trigger: {trigger_reason}")
+        
+        # 1. Ask the user via TTS
+        alert_msg = "Cảnh báo sức khỏe: Tôi phát hiện chỉ số sinh tồn của bạn bất thường. Hãy nghỉ ngơi, uống một chút nước ấm. Tôi đã gửi thông tin cho người thân."
+        if self._mqtt:
+            try:
+                self._mqtt.publish("hk07/agents/action/tts", json.dumps({"message": alert_msg}), qos=1)
+                log.info("[SAFETY_ALERT] Published TTS warning request: %s", alert_msg)
+            except Exception as e:
+                log.error("[SAFETY_ALERT] Failed to publish TTS warning request: %s", e)
+        
+        # Write alert state to blackboard
+        await bb.write_value("safety:alert_mode", True)
+        await bb.write_value("safety:alert_reason", trigger_reason)
+        
+        # Record initial interaction timestamp
+        init_ts = await bb.read_value("last_interaction_timestamp")
+        
+        # Wait 10 seconds, polling for verbal or physical interaction
+        interaction_detected = False
+        start_time = time.time()
+        while time.time() - start_time < 10.0:
+            # Check verbal interaction (change in last_interaction_timestamp)
+            curr_ts = await bb.read_value("last_interaction_timestamp")
+            if curr_ts is not None and curr_ts != init_ts:
+                interaction_detected = True
+                log.info("[SAFETY_ALERT] Verbal interaction detected during alert countdown.")
+                break
+                
+            # Check physical interaction (active state or high wrist motion)
+            latest_scan = await bb.read_value("sensor:perception:latest_scan") or {}
+            act = "unknown"
+            if isinstance(latest_scan, dict):
+                act = latest_scan.get("activity") or latest_scan.get("cognitive_insights", {}).get("subject_activity") or "unknown"
+            wrist_motion = await bb.read_value("sensor:vitals:wrist_motion_magnitude") or 0.0
+            
+            active_states = {"walking", "running", "exercising", "stretching", "reaching_up", "typing", "writing", "phone_use", "eating", "drinking"}
+            if act in active_states or wrist_motion > 1.0:
+                interaction_detected = True
+                log.info("[SAFETY_ALERT] Physical interaction detected during alert countdown (activity=%s, wrist_motion=%.2f).", act, wrist_motion)
+                break
+                
+            await asyncio.sleep(0.1)
+            
+        # 2. Timeout Fallback
+        if not interaction_detected:
+            log.warning("[SAFETY_ALERT] No interaction detected within 10 seconds! Escalating to healthcare warning alert.")
+            
+            # Fetch last known location
+            location = await bb.read_value("sensor:vitals:location") or await bb.read_value("sensor:location:latest") or "Living Room"
+            
+            # Construct warning payload
+            warning_payload = {
+                "timestamp_ms": int(time.time() * 1000),
+                "last_known_location": location,
+                "trigger_reason": trigger_reason,
+                "heart_rate": hr,
+                "activity": activity,
+                "message": f"Healthcare warning: Patient failed to respond to companion alert. Trigger: {trigger_reason} at location {location}."
+            }
+            
+            if self._mqtt:
+                try:
+                    self._mqtt.publish("hk07/system/alerts/warning", json.dumps(warning_payload, ensure_ascii=False), qos=2)
+                    log.warning("[SAFETY_ALERT] Warning alert payload successfully published to hk07/system/alerts/warning.")
+                except Exception as e:
+                    log.error("[SAFETY_ALERT] Failed to publish warning alert payload to MQTT: %s", e)
+            else:
+                log.error("[SAFETY_ALERT] MQTT client unavailable. Warning alert not published to MQTT.")
+                
+            log.info("[SAFETY_ALERT] Companion advisor mode: medical emergency REST escalation bypassed.")
+        else:
+            log.info("[SAFETY_ALERT] Owner verified OK. Warning escalation aborted.")
+            
+        # Clear alert state on blackboard and class instance
+        await bb.write_value("safety:alert_mode", False)
+        self._in_alert_mode = False
 
     async def process_text_interaction(self, user_message: str) -> str:
         """

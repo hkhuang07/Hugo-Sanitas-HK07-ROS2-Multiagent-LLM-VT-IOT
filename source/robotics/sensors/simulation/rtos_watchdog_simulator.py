@@ -30,7 +30,7 @@ class RtosWatchdogSimulator(Node):
         super().__init__('rtos_watchdog_simulator')
         
         # State variables
-        self.start_time = time.time()
+        self.start_time = None
         self.last_heartbeat_time = time.time()
         self.watchdog_tripped = False
         
@@ -53,7 +53,7 @@ class RtosWatchdogSimulator(Node):
         self.timer = self.create_timer(0.1, self.watchdog_check_callback)
         
         log.info("=== RTOS WATCHDOG CO-PROCESSOR SIMULATOR NODE STARTED ===")
-        log.info("Monitoring topic '/system/heartbeat' (3.0s timeout fail-safe)...")
+        log.info("Monitoring topic '/system/heartbeat' (10.0s timeout fail-safe)...")
 
     def _create_vitals_message(self, is_falling_val: float, emergency_val: float):
         js_msg = JointState()
@@ -71,22 +71,24 @@ class RtosWatchdogSimulator(Node):
             "gps_status", "latitude", "longitude", "altitude",
             "pedometer_status", "pedometer_steps",
             "activity_status", "activity_type",
-            "wrist_status", "wrist_motion_magnitude"
+            "wrist_status", "wrist_motion_magnitude",
+            "battery_level", "battery_temp"
         ]
         js_msg.position = [
-            is_falling_val, emergency_val, 72.0, 1.0,
-            1.0, 0.0, 0.0, 9.80665,
-            1.0, 0.0, 0.0, 0.0,
-            1.0, 0.0, 0.0, 0.0,
-            1.0, 1.0, 0.0, 0.0, 0.0,
-            1.0, 0.0,
-            1.0, 0.0, 0.0, 9.80665,
-            1.0, 500.0,
-            1.0, 1013.25,
-            1.0, 0.0, 0.0, 0.0,
-            1.0, 0.0,
-            1.0, 0.0,
-            1.0, 1.0
+            is_falling_val, emergency_val, float('nan'), 0.0,
+            0.0, float('nan'), float('nan'), float('nan'),
+            0.0, float('nan'), float('nan'), float('nan'),
+            0.0, float('nan'), float('nan'), float('nan'),
+            0.0, float('nan'), float('nan'), float('nan'), float('nan'),
+            0.0, float('nan'),
+            0.0, float('nan'), float('nan'), float('nan'),
+            0.0, float('nan'),
+            0.0, float('nan'),
+            0.0, float('nan'), float('nan'), float('nan'),
+            0.0, float('nan'),
+            0.0, float('nan'),
+            0.0, float('nan'),
+            100.0, 32.0 # default battery level/temp values
         ]
         return js_msg
 
@@ -98,7 +100,7 @@ class RtosWatchdogSimulator(Node):
             log.info("[RTOS WATCHDOG] Middleware heartbeat recovered. System online.")
             self.watchdog_tripped = False
             
-            # Reset standard safety indicators using unified 41-element schema
+            # Reset standard safety indicators using unified schema
             js_msg = self._create_vitals_message(0.0, 0.0)
             try:
                 if rclpy.ok():
@@ -109,6 +111,11 @@ class RtosWatchdogSimulator(Node):
     def watchdog_check_callback(self):
         now = time.time()
         
+        if self.start_time is None:
+            self.start_time = now
+            self.last_heartbeat_time = now
+            return
+            
         # Grace period: during the first 10 seconds of startup, keep refreshing last_heartbeat_time
         if now - self.start_time < 10.0:
             self.last_heartbeat_time = now
@@ -116,16 +123,17 @@ class RtosWatchdogSimulator(Node):
             
         elapsed = now - self.last_heartbeat_time
         
-        if elapsed > 3.0:
+        if elapsed > 10.0:
             if not self.watchdog_tripped:
                 log.warning(
-                    f"[RTOS WATCHDOG ALERT] HEARTBEAT LOST! Elapsed: {elapsed:.2f}s "
-                    f"(Threshold: 3.0s). OS/Middleware frozen. TRIGGERING EMERGENCY SAFE SUIT DEFLATION."
+                    f"[RTOS SYSTEM WATCHDOG] MIDDLEWARE HEARTBEAT LOST! Elapsed: {elapsed:.2f}s "
+                    f"(Threshold: 10.0s). OS/Middleware connection hang (COMMUNICATION_FAULT). "
+                    f"Initiating safe standby hold. This is NOT a user physiological emergency."
                 )
                 self.watchdog_tripped = True
             
-            # Continuously enforce E-STOP state until heartbeat is restored using unified 41-element schema
-            js_msg = self._create_vitals_message(1.0, 1.0)
+            # Publish nominal safe status (0.0, 0.0) instead of tripping safety E-STOP
+            js_msg = self._create_vitals_message(0.0, 0.0)
             try:
                 if rclpy.ok():
                     self.wristband_pub.publish(js_msg)

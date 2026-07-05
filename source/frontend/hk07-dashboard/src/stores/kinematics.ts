@@ -90,6 +90,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
   const timestampMs = ref(0)
   const isLive = ref(false)
   const lastUpdateMs = ref(0)
+  const isSimulated = ref(true)
 
   function touch() {
     lastUpdateMs.value = Date.now()
@@ -169,6 +170,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
 
   function updateKinematics(data: any) {
     touch()
+    isSimulated.value = data.is_simulated ?? true
     if (data.orientation) {
       rotation.value.qw = data.orientation.w ?? data.orientation.qw ?? 1.0
       rotation.value.qx = data.orientation.x ?? data.orientation.qx ?? 0.0
@@ -222,8 +224,9 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     jointStates.value = data
   }
 
-  function updatePneumatic(data: Partial<PneumaticData>) {
+  function updatePneumatic(data: any) {
     touch()
+    isSimulated.value = data.is_simulated ?? true
     if (data.press_L !== undefined) pressureL.value = data.press_L
     if (data.press_R !== undefined) pressureR.value = data.press_R
     if (data.pump_active !== undefined) pumpActive.value = data.pump_active
@@ -236,17 +239,23 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     if (data.flex_rate !== undefined) flexRate.value = data.flex_rate
   }
 
-  function updatePmu(data: Partial<PmuData>) {
+  function updatePmu(data: any) {
     touch()
+    isSimulated.value = data.is_simulated ?? true
     if (data.voltage !== undefined) pmu.value.voltage = data.voltage
     if (data.current !== undefined) pmu.value.current = data.current
     if (data.soc !== undefined) pmu.value.soc = data.soc
     if (data.temp !== undefined) pmu.value.temp = data.temp
   }
 
-  function updateJoints(data: JointData[]) {
+  function updateJoints(data: any) {
     touch()
-    joints.value = data
+    if (Array.isArray(data)) {
+      joints.value = data
+    } else if (data && Array.isArray(data.joints)) {
+      joints.value = data.joints
+      isSimulated.value = data.is_simulated ?? true
+    }
   }
 
   function updateThermalRppg(data: any) {
@@ -288,6 +297,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     }
     joints.value = []
     jointStates.value = { name: [], position: [] }
+    isSimulated.value = true
   }
 
   return {
@@ -295,6 +305,7 @@ export const useKinematicsStore = defineStore('kinematics', () => {
     rotation,
     timestampMs,
     isLive,
+    isSimulated,
     avoidanceVector,
     pressureL,
     pressureR,

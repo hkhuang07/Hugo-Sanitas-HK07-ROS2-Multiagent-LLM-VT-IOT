@@ -15,13 +15,13 @@
           <div class="env-metric">
             <div class="env-label">AMBIENT LIGHT</div>
             <div class="env-value">
-              <span>{{ formatNumber(telemetry.light) }}</span>
+              <span>{{ formatNumber(telemetry.light, 0, telemetry.sensorStatus.lightValid) }}</span>
               <span class="env-unit">lx</span>
             </div>
             <div class="env-bar">
               <div
                 class="bar-fill"
-                :style="{ width: `${Math.min((telemetry.light / 5000) * 100, 100)}%` }"
+                :style="{ width: `${telemetry.sensorStatus.lightValid ? Math.min((telemetry.light / 5000) * 100, 100) : 0}%` }"
               />
             </div>
           </div>
@@ -30,13 +30,13 @@
           <div class="env-metric">
             <div class="env-label">PRESSURE</div>
             <div class="env-value">
-              <span>{{ formatNumber(telemetry.pressure, 1) }}</span>
+              <span>{{ formatNumber(telemetry.pressure, 1, telemetry.sensorStatus.pressureValid) }}</span>
               <span class="env-unit">hPa</span>
             </div>
             <div class="env-bar">
               <div
                 class="bar-fill"
-                :style="{ width: `${Math.max(Math.min(((telemetry.pressure - 950) / 75) * 100, 100), 0)}%` }"
+                :style="{ width: `${telemetry.sensorStatus.pressureValid ? Math.max(Math.min(((telemetry.pressure - 950) / 75) * 100, 100), 0) : 0}%` }"
               />
             </div>
           </div>
@@ -46,7 +46,7 @@
             <div class="env-label">PRESSURE DELTA</div>
             <div class="env-value">
               <span :style="{ color: telemetry.pressureDelta < 0 ? '#FF3333' : '#00FF66' }">
-                {{ formatNumber(telemetry.pressureDelta, 2) }}
+                {{ formatNumber(telemetry.pressureDelta, 2, telemetry.sensorStatus.pressureValid) }}
               </span>
               <span class="env-unit">hPa</span>
             </div>
@@ -61,11 +61,11 @@
           <!-- YAW ANGLE -->
           <div class="imu-metric">
             <div class="imu-label">HEADING</div>
-            <div class="imu-value">{{ formatNumber(telemetry.yaw, 1) }}°</div>
+            <div class="imu-value">{{ formatNumber(telemetry.yaw, 1, telemetry.sensorStatus.yawValid) }}<span v-if="telemetry.sensorStatus.yawValid">°</span></div>
             <div class="compass-dial">
               <div
                 class="compass-needle"
-                :style="{ transform: `rotate(${telemetry.yaw}deg)` }"
+                :style="{ transform: `rotate(${telemetry.sensorStatus.yawValid ? telemetry.yaw : 0}deg)` }"
               />
               <div class="compass-center" />
             </div>
@@ -74,13 +74,13 @@
           <!-- PITCH -->
           <div v-if="telemetry.pitch !== undefined" class="imu-metric">
             <div class="imu-label">PITCH</div>
-            <div class="imu-value">{{ formatNumber(telemetry.pitch, 1) }}°</div>
+            <div class="imu-value">{{ formatNumber(telemetry.pitch, 1, telemetry.sensorStatus.yawValid) }}<span v-if="telemetry.sensorStatus.yawValid">°</span></div>
           </div>
 
           <!-- ROLL -->
           <div v-if="telemetry.roll !== undefined" class="imu-metric">
             <div class="imu-label">ROLL</div>
-            <div class="imu-value">{{ formatNumber(telemetry.roll, 1) }}°</div>
+            <div class="imu-value">{{ formatNumber(telemetry.roll, 1, telemetry.sensorStatus.yawValid) }}<span v-if="telemetry.sensorStatus.yawValid">°</span></div>
           </div>
         </div>
       </div>
@@ -93,35 +93,35 @@
             <div class="axis-display">
               <span class="axis-label">X:</span>
               <span class="axis-value" :style="{ color: getAxisColor(telemetry.rawAccel.x, 'x') }">
-                {{ formatNumber(telemetry.rawAccel.x, 2) }}
+                {{ formatNumber(telemetry.rawAccel.x, 2, telemetry.sensorStatus.accelValid) }}
               </span>
-              <span class="axis-unit">m/s²</span>
+              <span class="axis-unit" v-if="telemetry.sensorStatus.accelValid">m/s²</span>
             </div>
             <div class="axis-display">
               <span class="axis-label">Y:</span>
               <span class="axis-value" :style="{ color: getAxisColor(telemetry.rawAccel.y, 'y') }">
-                {{ formatNumber(telemetry.rawAccel.y, 2) }}
+                {{ formatNumber(telemetry.rawAccel.y, 2, telemetry.sensorStatus.accelValid) }}
               </span>
-              <span class="axis-unit">m/s²</span>
+              <span class="axis-unit" v-if="telemetry.sensorStatus.accelValid">m/s²</span>
             </div>
             <div class="axis-display">
               <span class="axis-label">Z:</span>
               <span class="axis-value" :style="{ color: getAxisColor(telemetry.rawAccel.z, 'z') }">
-                {{ formatNumber(telemetry.rawAccel.z, 2) }}
+                {{ formatNumber(telemetry.rawAccel.z, 2, telemetry.sensorStatus.accelValid) }}
               </span>
-              <span class="axis-unit">m/s²</span>
+              <span class="axis-unit" v-if="telemetry.sensorStatus.accelValid">m/s²</span>
             </div>
           </div>
 
           <!-- G-FORCE MAGNITUDE -->
           <div class="gmag-display">
             <div class="gmag-label">G-MAGNITUDE</div>
-            <div class="gmag-value">{{ formatNumber(calculateGMagnitude(), 2) }}</div>
+            <div class="gmag-value">{{ formatNumber(calculateGMagnitude(), 2, telemetry.sensorStatus.accelValid) }}</div>
             <div class="gmag-bar">
               <div
                 class="bar-fill"
                 :style="{ 
-                  width: `${Math.min((calculateGMagnitude() / 30) * 100, 100)}%`,
+                  width: `${telemetry.sensorStatus.accelValid ? Math.min((calculateGMagnitude() / 30) * 100, 100) : 0}%`,
                   backgroundColor: getGMagnitudeColor()
                 }"
               />
@@ -164,19 +164,25 @@ let animationFrameId: number | null = null;
 const themeConfig = computed(() => props.theme);
 
 // Format number utility
-function formatNumber(value: number, decimals: number = 0): string {
-  if (decimals === 0) {
-    return Math.round(value).toString().padStart(3, ' ');
+function formatNumber(value: any, decimals: number = 0, isValid = true): string {
+  if (!isValid || value === undefined || value === null || isNaN(value)) {
+    return ' N/A';
   }
-  return value.toFixed(decimals).padStart(6, ' ');
+  const val = Number(value);
+  if (decimals === 0) {
+    return Math.round(val).toString().padStart(3, ' ');
+  }
+  return val.toFixed(decimals).padStart(6, ' ');
 }
 
 function calculateGMagnitude(): number {
+  if (!props.telemetry.sensorStatus.accelValid) return 0;
   const { x, y, z } = props.telemetry.rawAccel;
   return Math.sqrt(x * x + y * y + z * z);
 }
 
 function getAxisColor(value: number, axis: string): string {
+  if (!props.telemetry.sensorStatus.accelValid) return '#00FF66';
   const absVal = Math.abs(value);
   if (absVal > 20) return themeConfig.value.dangerRed;
   if (absVal > 10) return themeConfig.value.warningOrange;
@@ -184,6 +190,7 @@ function getAxisColor(value: number, axis: string): string {
 }
 
 function getGMagnitudeColor(): string {
+  if (!props.telemetry.sensorStatus.accelValid) return '#00FF66';
   const mag = calculateGMagnitude();
   if (mag > 25) return themeConfig.value.dangerRed;
   if (mag > 15) return themeConfig.value.warningOrange;
@@ -198,7 +205,8 @@ function drawWaveform() {
   if (!ctx) return;
 
   // Update history
-  waveformHistory.value.push(calculateGMagnitude());
+  const currentMag = props.telemetry.sensorStatus.accelValid ? calculateGMagnitude() : 0;
+  waveformHistory.value.push(currentMag);
   if (waveformHistory.value.length > 120) {
     waveformHistory.value.shift();
   }

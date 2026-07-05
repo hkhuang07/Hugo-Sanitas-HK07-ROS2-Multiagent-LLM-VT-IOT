@@ -7,6 +7,8 @@ import { useAuthStore } from '../stores/auth'
 import { useKinematicsStore } from '../stores/kinematics'
 import { useTelemetryStore } from '../stores/telemetry'
 import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
+import { useVisionStore } from '../stores/vision'
+import { useBiomarkersStore } from '../stores/biomarkers'
 import type { SafetyInhibitAlert } from '../types/safety'
 
 let _client: Client | null = null
@@ -73,10 +75,14 @@ export function initWebSocket(onReady?: () => void): void {
       const agentsStore = useAgentsStore()
       const safetyStore = useSafetyStore()
       const telemetryStore = useTelemetryStore()
+      const kinematicsStore = useKinematicsStore()
+      const sensorStore = useSensorTelemetryStore()
 
       // Set telemetry mode to live/streaming
       telemetryStore.setLive(true)
       telemetryStore.isMock = false
+      kinematicsStore.setLive(true)
+      sensorStore.isLive = true
 
       // [P1-2] Reconnected: flush offline queue into ring buffer
       await vitalsStore.flushOfflineQueue()
@@ -192,6 +198,17 @@ export function initWebSocket(onReady?: () => void): void {
       _client!.subscribe('/topic/hk07/perception/clinical', (msg: IMessage) => {
         const data = JSON.parse(msg.body)
         safetyStore.applyClinical(data)
+        
+        // Also update visionStore to keep everything unified
+        const visionStore = useVisionStore()
+        visionStore.updatePerceptionScan(data)
+      })
+
+      // ── Subscribe: Live Biomarkers computed on backend
+      _client!.subscribe('/topic/hk07/perception/biomarkers', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const biomarkersStore = useBiomarkersStore()
+        biomarkersStore.updateBiomarkers(data)
       })
 
       // ── Subscribe: Thermal and rPPG telemetry
@@ -206,10 +223,6 @@ export function initWebSocket(onReady?: () => void): void {
         const data = JSON.parse(msg.body)
         const sensorStore = useSensorTelemetryStore()
         sensorStore.updateImu(data)
-        
-        // Drive the 3D twin and toggle active link state
-        const kinematicsStore = useKinematicsStore()
-        kinematicsStore.updateKinematics(data)
       })
 
       // ── Subscribe: Mobile Phone Sensor Bridge — Environment (light + barometer)

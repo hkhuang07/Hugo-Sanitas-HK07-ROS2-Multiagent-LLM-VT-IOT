@@ -33,11 +33,26 @@ LATENCY_GATE_S   = 2.0   # If cloud LLM latency > 2.0s → local evaluator kicks
 _ollama_available: Optional[bool] = None   # None = not probed yet
 _ollama_probe_ts: float = 0.0
 _OLLAMA_PROBE_TTL = 30.0                   # re-probe every 30s max
+_resolved_vision_model: str = OLLAMA_MODEL
 
+
+async def _pull_ollama_model(model_name: str):
+    log.warning("[LOCAL_VISION] Dynamic pull initiated for model '%s'...", model_name)
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            resp = await client.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name, "stream": False})
+            if resp.status_code == 200:
+                log.info("[LOCAL_VISION] Model '%s' pulled successfully!", model_name)
+                global _ollama_available
+                _ollama_available = True
+            else:
+                log.error("[LOCAL_VISION] Failed to pull model '%s': status=%d", model_name, resp.status_code)
+    except Exception as e:
+        log.error("[LOCAL_VISION] Error pulling model '%s': %s", model_name, e)
 
 async def _probe_ollama() -> bool:
     """Probe Ollama /api/tags endpoint to confirm service is live."""
-    global _ollama_available, _ollama_probe_ts
+    global _ollama_available, _ollama_probe_ts, _resolved_vision_model
     now = time.monotonic()
     if _ollama_available is not None and (now - _ollama_probe_ts) < _OLLAMA_PROBE_TTL:
         return _ollama_available
@@ -48,14 +63,26 @@ async def _probe_ollama() -> bool:
             if resp.status_code == 200:
                 models = [m.get("name", "") for m in resp.json().get("models", [])]
                 # Accept any moondream or llava variant
-                if any(OLLAMA_MODEL in m for m in models):
-                    log.info("[LOCAL_VISION] Ollama available. Model '%s' confirmed.", OLLAMA_MODEL)
+                matched_model = None
+                if OLLAMA_MODEL in models:
+                    matched_model = OLLAMA_MODEL
+                else:
+                    for m in models:
+                        if OLLAMA_MODEL in m:
+                            matched_model = m
+                            break
+                            
+                if matched_model:
+                    _resolved_vision_model = matched_model
+                    log.info("[LOCAL_VISION] Ollama available. Model '%s' resolved to '%s'.", OLLAMA_MODEL, _resolved_vision_model)
                     _ollama_available = True
                 else:
                     log.warning(
                         "[LOCAL_VISION] Ollama running but model '%s' not found. Available: %s",
                         OLLAMA_MODEL, models
                     )
+                    # Trigger background dynamic pull
+                    asyncio.create_task(_pull_ollama_model(OLLAMA_MODEL))
                     _ollama_available = False
             else:
                 _ollama_available = False
@@ -97,7 +124,7 @@ async def _call_ollama_vision(
     )
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": _resolved_vision_model,
         "prompt": prompt,
         "images": [b64],
         "stream": False,
@@ -171,7 +198,7 @@ def _vitals_only_fallback(vitals_str: str) -> Dict[str, Any]:
         if fall:
             posture_risk = "HIGH"
             
-        notes = f"LOCAL_OFFLINE: Rule-based assessment from memory. HR={hr:.0f} bpm, Temp={temp:.1f} C, SpO2={spo2:.0f}%, Fall={fall}"
+        notes = f"[DEGRADED MODE] Mất kết nối Cloud Vision. Chế độ offline cục bộ. Chỉ số: HR={hr:.0f} bpm, Temp={temp:.1f} C, SpO2={spo2:.0f}%, Fall={fall}"
     except Exception as exc:
         log.warning("[LOCAL_VISION] Error querying _sensor_cache, fallback to parsing vitals_str: %s", exc)
         # Fallback to string heuristic if main._sensor_cache import fails or key is missing
@@ -180,7 +207,7 @@ def _vitals_only_fallback(vitals_str: str) -> Dict[str, Any]:
             risk = "CRITICAL"
         elif any(k in vs_lower for k in ["high", "fever", "tachycardia", "bradycardia"]):
             risk = "HIGH"
-        notes = f"LOCAL_OFFLINE: No vision available. Vitals-only assessment. Context: {vitals_str}"
+        notes = f"[DEGRADED MODE] Mất kết nối Cloud Vision. Không có dữ liệu VLM. Chỉ số: {vitals_str}"
 
     return {
         "skin_tone_note": "",
@@ -190,7 +217,7 @@ def _vitals_only_fallback(vitals_str: str) -> Dict[str, Any]:
         "overall_risk": risk,
         "confidence": 0.3,
         "notes": notes,
-        "status": "LOCAL_OFFLINE_RULES",
+        "status": "DEGRADED_LOCAL_OFFLINE",
         "alertLevel": "NORMAL" if risk == "LOW" else "WARNING",
         "nearest_obstacle_m": 1.5,
     }

@@ -14,14 +14,14 @@
         class="camera-bg-feed"
         @error="handleCameraError"
         @load="handleCameraLoad"
-        alt="Baymax Optical Stream"
+        alt="Hugo Optical Stream"
       />
       <!-- MODE B: Base64 snapshot from Python daemon (fallback when MJPEG unavailable) -->
       <img
         v-else-if="snapshotSrc && visionStore.cameraFresh"
         :src="snapshotSrc"
         class="camera-bg-feed snapshot-feed"
-        alt="Baymax Snapshot Frame"
+        alt="Hugo Snapshot Frame"
       />
       <div v-else class="camera-bg-offline">
         <div class="noise-bg"></div>
@@ -32,7 +32,7 @@
       </div>
       <!-- Scanline overlay -->
       <div class="scanlines-overlay"></div>
-      <!-- Teal tint wash (very subtle, like Baymax optical filter) -->
+      <!-- Teal tint wash (very subtle, like Hugo optical filter) -->
       <div class="vision-tint"></div>
       <!-- ── SPATIAL BBOX OVERLAY — medical HUD bounding boxes ─── -->
       <div class="spatial-bbox-layer" v-if="spatialBoxes.length > 0">
@@ -62,7 +62,7 @@
       <header class="hud-header">
         <div class="header-left">
           <span class="sys-tag">//</span>
-          <span class="sys-title orbitron">BAYMAX / OPTICAL_SCAN_v4</span>
+          <span class="sys-title orbitron">HUGO / OPTICAL_SCAN_v4</span>
           <span class="sys-tag"> //</span>
         </div>
         <div class="header-center">
@@ -361,6 +361,7 @@ import { useKinematicsStore } from '../stores/kinematics.ts';
 import { useDeviceConfigStore } from '../stores/deviceConfig.ts';
 import { useVisionStore } from '../stores/vision.ts';
 import { useSafetyStore } from '../stores/safety.ts';
+import { useBiomarkersStore } from '../stores/biomarkers.ts';
 import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue';
 import api from '../services/api.ts';
 
@@ -370,6 +371,7 @@ const kinematicsStore = useKinematicsStore();
 const cfg = useDeviceConfigStore();
 const visionStore = useVisionStore();
 const safetyStore = useSafetyStore();
+const biomarkersStore = useBiomarkersStore();
 const cameraIp = computed(() => cfg.phoneIp);
 
 // ── Panel cycle state ──────────────────────────────────────────────────────
@@ -490,15 +492,42 @@ const stressIndex = computed(() => {
 });
 
 // ── Neurotransmitters / hormones ───────────────────────────────────────────
-const dopVal = computed(() => Math.round(Math.max(10, 85 - stressIndex.value * 45 + (steps.value % 60) * 0.1)));
-const serVal = computed(() => Math.round(Math.max(30, 160 - stressIndex.value * 70)));
-const epiVal = computed(() => Math.round(25 + stressIndex.value * 135));
-const gnrhVal = computed(() => Math.round(4 + stressIndex.value * 6));
-const lhVal = computed(() => Math.round(62 + stressIndex.value * 23));
-const fshVal = computed(() => Math.round(45 + stressIndex.value * 16));
-const testosteroneVal = computed(() => Math.round(145 + (1 - stressIndex.value) * 45 + (steps.value % 40) * 0.2));
-const estradiolVal = computed(() => Math.round(18 + stressIndex.value * 7));
-const cortisolVal = computed(() => Math.round(4 + stressIndex.value * 14));
+const dopVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.dopamine === null) return 'N/A';
+  return Math.round(biomarkersStore.dopamine);
+});
+const serVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.serotonin === null) return 'N/A';
+  return Math.round(biomarkersStore.serotonin);
+});
+const epiVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.adrenaline === null) return 'N/A';
+  return Math.round(biomarkersStore.adrenaline);
+});
+const gnrhVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.gnrh === null) return 'N/A';
+  return biomarkersStore.gnrh;
+});
+const lhVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.lh === null) return 'N/A';
+  return biomarkersStore.lh;
+});
+const fshVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.fsh === null) return 'N/A';
+  return biomarkersStore.fsh;
+});
+const testosteroneVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.testosterone === null) return 'N/A';
+  return biomarkersStore.testosterone;
+});
+const estradiolVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.estradiol === null) return 'N/A';
+  return biomarkersStore.estradiol;
+});
+const cortisolVal = computed(() => {
+  if (!biomarkersStore.isLive || biomarkersStore.cortisol === null) return 'N/A';
+  return Math.round(biomarkersStore.cortisol);
+});
 
 // ── Diagnosis ──────────────────────────────────────────────────────────────
 const calculatedDiagnosis = computed(() => {
@@ -538,8 +567,10 @@ const currentSubtitle = computed(() => {
 });
 
 // ── Bar helper ─────────────────────────────────────────────────────────────
-function getBarColor(val: number, max: number, idx: number, warnHigh = false): string {
-  const pct = (val / max) * 100;
+function getBarColor(val: any, max: number, idx: number, warnHigh = false): string {
+  const num = Number(val);
+  if (isNaN(num)) return 'rgba(0, 229, 255, 0.04)';
+  const pct = (num / max) * 100;
   if (pct >= (idx / 10) * 100) {
     if (warnHigh && pct > 65) return '#FF3333';
     if (pct < 40) return '#00E5FF';

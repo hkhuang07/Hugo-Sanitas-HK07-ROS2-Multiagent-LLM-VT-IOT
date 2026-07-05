@@ -7,6 +7,8 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -46,7 +48,8 @@ public class UserEntity {
 
     private LocalDateTime lastSeenAt;
 
-    /** One user can have one wristband config (optional) */
-    @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
-    private WristbandConfigEntity wristbandConfig;
+    /** One user can have multiple device configs */
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
+    @Builder.Default
+    private List<WristbandConfigEntity> wristbandConfigs = new ArrayList<>();
 }

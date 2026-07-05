@@ -42,11 +42,104 @@ from arbitrator.arbitrator import Arbitrator
 from utils.ip_scanner import discover_ipwebcam_ip, fetch_frame_nonblocking
 # [FIX-2] Local Ollama Vision Evaluator
 from utils.local_vision_evaluator import LocalVisionEvaluator
+# [ARCH-1] BehavioralStressProxy (replaces pseudoscientific neurotransmitter labels)
+from services.sensor_intelligence import get_sensor_fusion_analyzer, BehavioralStressProxy
 
 log = logging.getLogger("hk07.perception_agent")
 
 # Module-level singleton — one Ollama evaluator shared across scan invocations
 _local_vision = LocalVisionEvaluator()
+
+# Module-level SensorFusionAnalyzer singleton
+_sensor_fusion = get_sensor_fusion_analyzer()
+
+
+# ─── Event Trigger Gate ──────────────────────────────────────────────────────────────────────────
+# ARCH-2 FIX: Gemini Vision (cloud) is only triggered by EVENTS, not continuous polling.
+# Continuous 15s polling sends private images to cloud servers without consent.
+# Solution: MediaPipe runs locally at 15Hz (no cloud). Cloud vision only fires
+# when a local trigger event is detected (fall, high distress, injury signal).
+# ──────────────────────────────────────────────────────────────────────────
+
+class EventTriggerGate:
+    """
+    Controls when cloud Vision API (Gemini) is invoked.
+    Local MediaPipe runs continuously (free, private, fast).
+    Cloud API fires ONLY on significant event triggers.
+
+    Trigger Events:
+      - FALL_DETECTED: ActivityClassifier outputs 'falling'
+      - HIGH_DISTRESS: facial_distress > 0.65 OR stress_proxy > 0.7
+      - INJURY_SUSPECTED: visible_injuries detected by local scan
+      - EXPLICIT_REQUEST: User or Orchestrator requests full scan
+      - PERIODIC_BASELINE: At most once every 5 minutes (not 15s)
+    """
+
+    # Minimum seconds between cloud vision calls (privacy protection)
+    PERIODIC_BASELINE_INTERVAL_S = 300  # 5 minutes max
+    # After a trigger, cooldown before same event re-triggers
+    EVENT_COOLDOWN_S = 60  # 1 minute per event type
+
+    def __init__(self):
+        self._last_cloud_call_ts: float = 0.0
+        self._event_cooldowns: Dict[str, float] = {}  # event_type -> last triggered ts
+
+    def should_call_cloud_vision(
+        self,
+        activity_state: str = "unknown",
+        facial_distress: float = 0.0,
+        stress_proxy_score: float = 0.0,
+        visible_injuries: list = None,
+        explicit_request: bool = False,
+    ) -> tuple[bool, str]:
+        """
+        Returns (should_call: bool, reason: str).
+        Reasons: 'FALL_DETECTED' | 'HIGH_DISTRESS' | 'INJURY_SUSPECTED' |
+                 'EXPLICIT_REQUEST' | 'PERIODIC_BASELINE' | 'GATED'
+        """
+        now = time.time()
+        visible_injuries = visible_injuries or []
+
+        # Always allow explicit requests from Orchestrator/user
+        if explicit_request:
+            return (True, "EXPLICIT_REQUEST")
+
+        # Fall detected → immediate cloud confirmation scan
+        if activity_state == "falling":
+            last = self._event_cooldowns.get("FALL_DETECTED", 0.0)
+            if now - last > self.EVENT_COOLDOWN_S:
+                self._event_cooldowns["FALL_DETECTED"] = now
+                self._last_cloud_call_ts = now
+                log.warning("[EVENT_GATE] 🚨 FALL trigger → Cloud Vision activated")
+                return (True, "FALL_DETECTED")
+
+        # High behavioral distress
+        if facial_distress > 0.65 or stress_proxy_score > 0.70:
+            last = self._event_cooldowns.get("HIGH_DISTRESS", 0.0)
+            if now - last > self.EVENT_COOLDOWN_S:
+                self._event_cooldowns["HIGH_DISTRESS"] = now
+                self._last_cloud_call_ts = now
+                log.warning("[EVENT_GATE] HIGH_DISTRESS trigger → Cloud Vision activated")
+                return (True, "HIGH_DISTRESS")
+
+        # Injury suspected by local scan
+        if visible_injuries:
+            last = self._event_cooldowns.get("INJURY_SUSPECTED", 0.0)
+            if now - last > self.EVENT_COOLDOWN_S:
+                self._event_cooldowns["INJURY_SUSPECTED"] = now
+                self._last_cloud_call_ts = now
+                log.info("[EVENT_GATE] INJURY_SUSPECTED trigger → Cloud Vision activated")
+                return (True, "INJURY_SUSPECTED")
+
+        # Periodic baseline — at most once every 5 minutes
+        if now - self._last_cloud_call_ts > self.PERIODIC_BASELINE_INTERVAL_S:
+            self._last_cloud_call_ts = now
+            log.info("[EVENT_GATE] PERIODIC_BASELINE (5min) → Cloud Vision activated")
+            return (True, "PERIODIC_BASELINE")
+
+        # All gates blocked
+        return (False, "GATED")
+
 
 # ── Disk I/O Helpers (run inside asyncio.to_thread — never block event loop) ──
 
@@ -206,7 +299,7 @@ class PerceptionScan:
         if self.posture_risk == "HIGH" or self.overall_risk == "CRITICAL":
             activity = "lying_down"
             
-        stress_index = "high_cortisol_equivalent" if (self.facial_distress > 0.4 or self.overall_risk in ("HIGH", "CRITICAL")) else "nominal_resting_state"
+        stress_index = "BEHAVIORAL_STRESS_HIGH" if (self.facial_distress > 0.4 or self.overall_risk in ("HIGH", "CRITICAL")) else "BEHAVIORAL_NOMINAL"
         clinical_reasoning = self.notes or "Vitals and physical posture are stable. Standard monitoring active."
 
         cognitive_insights = {
@@ -215,14 +308,37 @@ class PerceptionScan:
             "clinical_reasoning": clinical_reasoning
         }
         
+        # [BAYMAX] Keep raw dataclass fields at top-level so it can be reconstructed
         d = {
+            "agent_type": self.agent_type,
+            "timestamp": self.timestamp,
+            "scan_duration_ms": self.scan_duration_ms,
+            "skin_tone_note": self.skin_tone_note,
+            "facial_distress": self.facial_distress,
+            "visible_injuries": self.visible_injuries,
+            "posture_risk": self.posture_risk,
+            "heart_rate": self.heart_rate,
+            "spo2": self.spo2,
+            "body_temperature": self.body_temperature,
+            "overall_risk": self.overall_risk,
+            "confidence": self.confidence,
+            "notes": self.notes,
+            "disclaimer": self.disclaimer,
+            "ttl_seconds": self.ttl_seconds,
             "status": "HARDWARE_BOUND" if sensor_status == "ONLINE" else "SENSOR_DISCONNECTED",
+            "alertLevel": self.alertLevel,
+            "nearest_obstacle_m": self.nearest_obstacle_m,
+            "threat_level": self.threat_level,
+            "risk": self.risk,
+            "details": self.details,
+            "spatial_detections": self.spatial_detections,
+            "cognitive_analysis": self.cognitive_analysis,
+            # Frontend payload keys
             "vitals": vitals_payload,
             "spatial_targets": s_targets,
             "cognitive_insights": cognitive_insights,
             "vitals_summary": {"hr": 72.0 if math.isnan(hr) else hr, "temp": 36.6 if math.isnan(temp) else temp},
-            "spatial_detections": self.spatial_detections,
-            "cognitive_analysis": {
+            "cognitive_analysis_frontend": {
                 "user_activity": "lying_down" if activity == "lying_down" else "sitting_or_standing",
                 "clinical_reasoning": clinical_reasoning
             }
@@ -276,16 +392,19 @@ Rules:
         self._gemini_api_key = os.getenv("GEMINI_API_KEY", "")
         self._client: Optional[httpx.AsyncClient] = None
 
+        # [ARCH-2] Event-triggered cloud vision gate
+        self._event_gate = EventTriggerGate()
+
         # Latest scan cached for API retrieval
         self._latest_scan: Optional[PerceptionScan] = None
-        log.info("[PERCEPTION_AGENT] Initialized — Vision model: %s", self.VISION_MODEL)
+        log.info("[PERCEPTION_AGENT] Initialized — Vision model: %s (Event-Triggered)", self.VISION_MODEL)
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
-    async def execute_full_body_scan(self, bypass_cache: bool = False) -> PerceptionScan:
+    async def execute_full_body_scan(self, bypass_cache: bool = False, frame_bytes: Optional[bytes] = None, explicit_request: bool = False) -> PerceptionScan:
         """
         Main entry point for tool `execute_full_body_scan`.
         Called by OrchestratorV2 or directly via POST /agents/perception/scan.
@@ -330,56 +449,77 @@ Rules:
         sensor_meta_json = self._build_sensor_metadata_json(ctx)
         vitals_str = self._vitals_to_str(ctx)  # Keep human-readable for logging
 
+        # ── [ARCH-2] Event-triggered cloud vision gate ──────────────────────
+        should_call_cloud = True
+        gate_reason = "EXPLICIT_REQUEST"
+        if not explicit_request:
+            should_call_cloud, gate_reason = self._event_gate.should_call_cloud_vision(
+                activity_state="falling" if (ctx.vitals and ctx.vitals.alert_level in ("FALL", "CRITICAL")) else "unknown",
+                facial_distress=self._latest_scan.facial_distress if self._latest_scan else 0.0,
+                visible_injuries=self._latest_scan.visible_injuries if self._latest_scan else [],
+                stress_proxy_score=0.0,
+                explicit_request=False,
+            )
+
         # ── [FIX-1] Dynamic IPWebcam IP Discovery ────────────────────────────
         bb = get_blackboard()
         env_phone_ip = await bb.read_value("PHONE_IP") or os.getenv("PHONE_IP", "")
 
-        # discover_ipwebcam_ip: subnet scan + circuit breaker — never throws
-        phone_ip = await discover_ipwebcam_ip(env_phone_ip=env_phone_ip)
-        if not phone_ip:
-            log.warning("[PERCEPTION] IPWebcam discovery failed. Activating disk fallback path.")
+        phone_ip = None
+        if frame_bytes is None and should_call_cloud:
+            # discover_ipwebcam_ip: subnet scan + circuit breaker — never throws
+            phone_ip = await discover_ipwebcam_ip(env_phone_ip=env_phone_ip)
+            if not phone_ip:
+                log.warning("[PERCEPTION] IPWebcam discovery failed. Activating disk fallback path.")
 
         # ── [FIX-1] Non-blocking Frame Fetch (asyncio.to_thread) ─────────────
-        frame_bytes: Optional[bytes] = None
-        if phone_ip:
-            log.info("[PERCEPTION] Fetching frame from IPWebcam @ %s:8080 via async thread...", phone_ip)
-            try:
-                # asyncio.to_thread ensures network latency never freezes main loop
-                frame_bytes = await asyncio.wait_for(
-                    fetch_frame_nonblocking(phone_ip, port=8080, timeout=2.0),
-                    timeout=3.0  # hard outer gate
-                )
-                if frame_bytes:
-                    log.info("[PERCEPTION] Live snapshot ingested (%d bytes).", len(frame_bytes))
-                    # Write to disk asynchronously — no blocking
-                    default_path = os.path.normpath(
-                        os.path.join(os.path.dirname(__file__), "..", "latest_frame.jpg")
-                    )
-                    try:
-                        await asyncio.to_thread(_write_frame_to_disk, frame_bytes, default_path)
-                    except Exception as disk_err:
-                        log.warning("[PERCEPTION] Disk write suppressed (non-critical): %s", disk_err)
-            except asyncio.TimeoutError:
-                log.warning("[PERCEPTION] Frame fetch hard timeout. Falling back to disk buffer.")
-            except Exception as exc:
-                log.warning("[PERCEPTION] Frame fetch exception: %s", exc)
-
-        # Disk fallback — read cached latest_frame.jpg without blocking
-        if not frame_bytes:
-            default_path = os.path.normpath(
-                os.path.join(os.path.dirname(__file__), "..", "latest_frame.jpg")
-            )
-            if os.path.isfile(default_path):
+        if frame_bytes is None:
+            if phone_ip:
+                log.info("[PERCEPTION] Fetching frame from IPWebcam @ %s:8080 via async thread...", phone_ip)
                 try:
-                    frame_bytes = await asyncio.to_thread(_read_frame_from_disk, default_path)
-                    log.info("[PERCEPTION] Loaded fallback latest_frame.jpg from disk.")
-                except Exception as read_err:
-                    log.warning("[PERCEPTION] Disk read fallback failed: %s", read_err)
+                    # asyncio.to_thread ensures network latency never freezes main loop
+                    frame_bytes = await asyncio.wait_for(
+                        fetch_frame_nonblocking(phone_ip, port=8080, timeout=2.0),
+                        timeout=3.0  # hard outer gate
+                    )
+                    if frame_bytes:
+                        log.info("[PERCEPTION] Live snapshot ingested (%d bytes).", len(frame_bytes))
+                        # Write to disk asynchronously — no blocking
+                        default_path = os.path.normpath(
+                            os.path.join(os.path.dirname(__file__), "..", "latest_frame.jpg")
+                        )
+                        try:
+                            await asyncio.to_thread(_write_frame_to_disk, frame_bytes, default_path)
+                        except Exception as disk_err:
+                            log.warning("[PERCEPTION] Disk write suppressed (non-critical): %s", disk_err)
+                except asyncio.TimeoutError:
+                    log.warning("[PERCEPTION] Frame fetch hard timeout. Falling back to disk buffer.")
+                except Exception as exc:
+                    log.warning("[PERCEPTION] Frame fetch exception: %s", exc)
 
-        # ── [FIX-2] Vision LLM with Latency Gate → Local Evaluator ──────────
+            # Disk fallback — read cached latest_frame.jpg without blocking
+            if not frame_bytes:
+                default_path = os.path.normpath(
+                    os.path.join(os.path.dirname(__file__), "..", "latest_frame.jpg")
+                )
+                if os.path.isfile(default_path):
+                    try:
+                        frame_bytes = await asyncio.to_thread(_read_frame_from_disk, default_path)
+                        log.info("[PERCEPTION] Loaded fallback latest_frame.jpg from disk.")
+                    except Exception as read_err:
+                        log.warning("[PERCEPTION] Disk read fallback failed: %s", read_err)
+
+        # ── [FIX-2] Vision LLM with Latency/Event Gate → Local Evaluator ────
         vision_result: Dict[str, Any] = {}
 
-        if frame_bytes:
+        if not should_call_cloud:
+            log.info("[PERCEPTION] Cloud Vision Gated (Reason: %s). Activating Local Evaluator.", gate_reason)
+            vision_result = await _local_vision.evaluate(
+                image_bytes=frame_bytes,
+                vitals_str=vitals_str
+            )
+            vision_result["status"] = f"GATED_{vision_result.get('status', 'LOCAL_OLLAMA')}"
+        elif frame_bytes:
             encoded_frame = base64.b64encode(frame_bytes).decode("utf-8")
             vision_payload_url = f"data:image/jpeg;base64,{encoded_frame}"
 
@@ -409,8 +549,8 @@ Rules:
             pass
 
         vitals_summary = {
-            "hr": ctx.vitals.heart_rate if ctx.vitals else 72.0,
-            "temp": ctx.vitals.body_temperature if ctx.vitals else 36.6
+            "hr": ctx.vitals.heart_rate if (ctx.vitals and ctx.vitals.heart_rate is not None) else 72.0,
+            "temp": ctx.vitals.body_temperature if (ctx.vitals and ctx.vitals.body_temperature is not None) else 36.6
         }
 
         rois = []
@@ -810,6 +950,18 @@ Rules:
                     bb._in_memory_store[key] = data
 
             log.debug("[PERCEPTION] PerceptionScan written to Blackboard: %s", key)
+
+            # [BAYMAX] Also write/update the sensor:perception:latest_scan key for EmpatheticAgent
+            try:
+                existing_scan = await bb.read_value("sensor:perception:latest_scan") or {}
+                # Merge scan data
+                for k, v in data.items():
+                    if v is not None:
+                        existing_scan[k] = v
+                await bb.write_value("sensor:perception:latest_scan", existing_scan, ttl_seconds=scan.ttl_seconds)
+            except Exception as e:
+                log.error("[PERCEPTION] Failed to update sensor:perception:latest_scan: %s", e)
+
         except Exception as e:
             log.error("[PERCEPTION] Failed to write to Blackboard: %s", e)
 
@@ -827,7 +979,12 @@ Rules:
                     latest_key = sorted(keys)[-1]
                     data_str = await bb._redis_client.get(latest_key)
                     if data_str:
-                        return PerceptionScan(**json.loads(data_str))
+                        data = json.loads(data_str)
+                        # Filter keys to only valid fields in dataclass to prevent TypeError
+                        import inspect
+                        valid_fields = {f.name for f in inspect.signature(PerceptionScan).parameters.values()}
+                        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+                        return PerceptionScan(**filtered_data)
             else:
                 async with bb._lock:
                     perception_entries = [
@@ -836,7 +993,11 @@ Rules:
                     ]
                     if perception_entries:
                         _, data = sorted(perception_entries)[-1]
-                        scan = PerceptionScan(**data)
+                        # Filter keys to only valid fields in dataclass to prevent TypeError
+                        import inspect
+                        valid_fields = {f.name for f in inspect.signature(PerceptionScan).parameters.values()}
+                        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+                        scan = PerceptionScan(**filtered_data)
                         if not scan.is_expired():
                             return scan
         except Exception as e:

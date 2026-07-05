@@ -84,22 +84,21 @@ export const router = createRouter({
 })
 
 import { useAuthStore } from '../stores/auth'
-import { authReadyPromise } from '../main'
 
 // Navigation guard
-// NOTE: We await authReadyPromise on the first navigation so that the guard
-// never reads isAuthenticated before tryAutoLogin() has settled.
-// On subsequent navigations authReadyPromise is already resolved (no-op await).
+// NOTE: We await authStore.tryAutoLogin() on the first navigation so that the guard
+// never reads isAuthenticated before auto-login has settled.
+// On subsequent navigations _authResolved is true, so it skips the await.
 let _authResolved = false
 
 router.beforeEach(async (to) => {
+  const authStore = useAuthStore()
+
   // Block ONLY on first navigation — wait for refresh-token auto-login to finish
   if (!_authResolved) {
-    await authReadyPromise
+    await authStore.tryAutoLogin()
     _authResolved = true
   }
-
-  const authStore = useAuthStore()
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'Login' }

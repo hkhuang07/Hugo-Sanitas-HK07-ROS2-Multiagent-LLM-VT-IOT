@@ -10,6 +10,7 @@ volumes:
   mysql-data:
   mosquitto-data:
   mosquitto-log:
+  ollama-data:
 
 services:
 
@@ -18,7 +19,8 @@ services:
     image: mysql:8.4
     container_name: hk07-mysql
     restart: unless-stopped
-    networks: [hk07-net]
+    init: true
+    networks: [ hk07-net ]
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD not set (see .env.example)}
       MYSQL_DATABASE: ${DB_DATABASE:-hk07db}
@@ -27,10 +29,10 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "0.0.0.0:3306:3306" #- "3306:3306"
     # [P0-2] Healthcheck: hk07-core will not start until DB is truly ready
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       interval: 10s
       timeout: 5s
       retries: 8
@@ -38,20 +40,20 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 512M
 
   # ── [P0-2] Redis — Token cache + message throttle buffer ───────────────────
   hk07-redis:
     image: redis:7.2-alpine
     container_name: hk07-redis
     restart: unless-stopped
-    networks: [hk07-net]
-    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [ hk07-net ]
+    command: [ "redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru" ]
     ports:
-      - "6379:6379"
+      - "0.0.0.0:6379:6379" #- "6379:6379"
     # [P0-2] Healthcheck: ensures Redis is accepting commands
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -65,10 +67,10 @@ services:
     image: eclipse-mosquitto:2.0
     container_name: hk07-mosquitto
     restart: unless-stopped
-    networks: [hk07-net]
+    networks: [ hk07-net ]
     environment:
       MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
-    entrypoint: ["/bin/sh", "/mosquitto/config/docker-entrypoint.sh"]
+    entrypoint: [ "/bin/sh", "/mosquitto/config/docker-entrypoint.sh" ]
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
       - ./docker/mosquitto/docker-entrypoint.sh:/mosquitto/config/docker-entrypoint.sh
@@ -78,7 +80,7 @@ services:
       - "1883:1883"
       - "9001:9001"
     healthcheck:
-      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-u", "hk07core", "-P", "${MQTT_PASSWORD}", "-i", "healthcheck", "-W", "3"]
+      test: [ "CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-u", "hk07core", "-P", "${MQTT_PASSWORD}", "-i", "healthcheck", "-W", "3" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -87,96 +89,22 @@ services:
         limits:
           memory: 32M
 
-  # ── [HẠNCHẾ-#19 FIX] Mosquitto Replica — High Availability / Broker Failover ──
-  hk07-mosquitto-replica:
-    image: eclipse-mosquitto:2.0
-    container_name: hk07-mosquitto-replica
+  # ── Ollama — Local offline AI models server ──────────────────────────────
+  hk07-ollama:
+    image: ollama/ollama:latest
+    container_name: hk07-ollama
     restart: unless-stopped
-    networks: [hk07-net]
-    environment:
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
-    entrypoint: ["/bin/sh", "/mosquitto/config/docker-entrypoint.sh"]
+    networks: [ hk07-net ]
+    ports:
+      - "11434:11434"
     volumes:
-      - ./docker/mosquitto/replica.conf:/mosquitto/config/mosquitto.conf
-      - ./docker/mosquitto/docker-entrypoint.sh:/mosquitto/config/docker-entrypoint.sh
-    ports:
-      - "1884:1883"
-    depends_on:
-      - hk07-mosquitto
-    deploy:
-      resources:
-        limits:
-          memory: 32M
-
-  # ── Spring Boot Core ────────────────────────────────────────────────────────
-  hk07-core:
-    build:
-      context: ./hk07-core
-      dockerfile: Dockerfile
-    container_name: hk07-core
-    profiles:
-      - operation
-    restart: unless-stopped
-    networks: [hk07-net]
-    ports:
-      - "8888:8888"
-    environment:
-      DB_HOST: hk07-mysql
-      DB_PORT: 3306
-      DB_DATABASE: ${DB_DATABASE:-hk07db}
-      DB_USERNAME: ${DB_USERNAME:-hk07user}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set (see .env.example)}
-      REDIS_HOST: hk07-redis
-      REDIS_PORT: 6379
-      MQTT_BROKER_URL: tcp://hk07-mosquitto:1883
-      MQTT_USERNAME: hk07core
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
-      AGENT_ENGINE_URL: http://hk07-agent:8000
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET not set (see .env.example)}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-hk07-internal-api-key-bypass}
-      JAVA_OPTS: "-Xmx512m -Xms128m -XX:+UseZGC -XX:+UseStringDeduplication"
-    # [P0-2] depends_on with condition: service_healthy (not just started)
-    depends_on:
-      hk07-mysql:
-        condition: service_healthy
-      hk07-redis:
-        condition: service_healthy
-      hk07-mosquitto:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-
-  # ── Python AI Multi-Agent Engine ────────────────────────────────────────────
-  hk07-agent:
-    build:
-      context: ./hk07-agent
-      dockerfile: Dockerfile
-    container_name: hk07-agent
-    profiles:
-      - operation
-    restart: unless-stopped
-    networks: [hk07-net]
-    ports:
-      - "8000:8000"
-    environment:
-      MQTT_BROKER_HOST: hk07-mosquitto
-      MQTT_BROKER_PORT: 1883
-      MQTT_USERNAME: hk07agent
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD not set (see .env.example)}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      HK07_CORE_URL: http://hk07-core:8888
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-hk07-internal-api-key-bypass}
-    depends_on:
-      hk07-mosquitto:
-        condition: service_healthy
-      hk07-core:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          memory: 256M
+      - ollama-data:/root/.ollama
+    # GPU Acceleration Setup (Production Ready / Nvidia Docker Toolkits)
+    # Uncomment the following block if host machine has GPU passthrough enabled:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

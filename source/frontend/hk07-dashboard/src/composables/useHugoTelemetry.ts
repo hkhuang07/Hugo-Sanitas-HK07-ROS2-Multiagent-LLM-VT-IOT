@@ -1,16 +1,16 @@
 /**
- * BAYMAX TELEMETRY COMPOSABLE
+ * HUGO TELEMETRY COMPOSABLE
  * Real-time WebSocket/MQTT data ingestion for Vue 3 components
  * 
  * Usage:
- *   const { telemetry, isConnected, connect, disconnect } = useBayMaxTelemetry();
+ *   const { telemetry, isConnected, connect, disconnect } = useHugoTelemetry();
  *   onMounted(() => connect('wss://your-ws-server/telemetry'));
  */
 
 import { ref, Ref } from 'vue';
 import type { RobotTelemetry } from '../components/telemetry/types';
 
-export function useBayMaxTelemetry() {
+export function useHugoTelemetry() {
   const telemetry: Ref<RobotTelemetry | null> = ref(null);
   const isConnected = ref(false);
   const latencyMs = ref(0);
@@ -103,17 +103,9 @@ export function useMQTTClient() {
   const topics = ref<Map<string, any>>(new Map());
   let client: any = null;
 
-  async function connect(brokerUrl: string, clientId: string = 'baymax-viewer') {
+  async function connect(brokerUrl: string, clientId: string = 'hugo-viewer') {
     try {
       // Requires paho-mqtt library
-      // const mqtt = await import('paho-mqtt');
-      // client = new mqtt.Client(brokerUrl, clientId);
-      // client.onConnectionLost = onConnectionLost;
-      // client.onMessageArrived = onMessageArrived;
-      // client.connect({
-      //   onSuccess: () => { isConnected.value = true; }
-      // });
-
       console.warn('[MQTT] MQTT client requires paho-mqtt library. Add to package.json:');
       console.warn('npm install paho-mqtt');
     } catch (error) {

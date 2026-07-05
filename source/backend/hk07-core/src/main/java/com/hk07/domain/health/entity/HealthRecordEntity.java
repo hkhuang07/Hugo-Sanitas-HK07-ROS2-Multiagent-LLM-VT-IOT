@@ -32,11 +32,11 @@ public class HealthRecordEntity {
     private UUID userId;
 
     // ─── Raw vitals (denormalized for fast query; no JOIN needed) ────────────
-    private int heartRate;
-    private float systolic;
-    private float diastolic;
-    private float bodyTemperature;
-    private float spo2;
+    private Integer heartRate;
+    private Float systolic;
+    private Float diastolic;
+    private Float bodyTemperature;
+    private Float spo2;
     private String deviceId;
 
     // ─── AI Analysis output ──────────────────────────────────────────────────

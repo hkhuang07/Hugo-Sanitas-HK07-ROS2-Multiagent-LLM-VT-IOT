@@ -1,0 +1,17 @@
+.env
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local model weights and generated memory data are mounted/provisioned outside
+# the base agent image. Keeping them in the Docker context makes builds huge.
+models/
+data/
+
+tests/
+*.log

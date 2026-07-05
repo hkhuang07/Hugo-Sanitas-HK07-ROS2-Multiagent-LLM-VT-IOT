@@ -41,7 +41,7 @@ public class SensorCacheController {
     // ── Stale-While-Revalidate cache ─────────────────────────────────────────
     private final AtomicReference<Map<String, Object>> _latestCacheRef = new AtomicReference<>(null);
     private final AtomicLong _cacheUpdatedAt = new AtomicLong(0);
-    private static final long STALE_THRESHOLD_MS = 10_000L; // serve stale for up to 10s
+    private static final long STALE_THRESHOLD_MS = 60_000L; // serve stale for up to 60s (devmode)
     private final AtomicReference<Map<String, Object>> _visionCacheRef = new AtomicReference<>(null);
     private final AtomicLong _visionUpdatedAt = new AtomicLong(0);
 
@@ -74,7 +74,7 @@ public class SensorCacheController {
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(m -> (Map<String, Object>) m)
-                    .block(Duration.ofMillis(2500)); // [FIX] 2.5s timeout (was 5s)
+                    .block(Duration.ofSeconds(15)); // [FIX] 15s timeout for devmode
 
             if (payload != null) {
                 // Update the stale cache on successful fetch
@@ -132,7 +132,7 @@ public class SensorCacheController {
                     .uri("/api/v1/sensor-cache/frame")
                     .retrieve()
                     .bodyToMono(byte[].class)
-                    .block(Duration.ofMillis(2500)); // [FIX] 2.5s timeout (was 5s)
+                    .block(Duration.ofSeconds(15)); // [FIX] 15s timeout for devmode
 
             if (frame == null || frame.length == 0) {
                 return ResponseEntity.notFound().build();
@@ -157,7 +157,7 @@ public class SensorCacheController {
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(m -> (Map<String, Object>) m)
-                    .block(Duration.ofMillis(2500)); // 2.5s timeout
+                    .block(Duration.ofSeconds(15)); // 15s timeout for devmode
 
             if (payload != null) {
                 _visionCacheRef.set(payload);
@@ -171,7 +171,7 @@ public class SensorCacheController {
 
             log.debug("[SENSOR_CACHE] Python vision agent query timeout/error: {}", e.getMessage());
 
-            if (stale != null && staleness < 30_000L) { // serve stale vision for up to 30s
+            if (stale != null && staleness < 60_000L) { // serve stale vision for up to 60s
                 Map<String, Object> response = new HashMap<>(stale);
                 response.put("_cache_stale", true);
                 response.put("_cache_age_ms", staleness);

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package hk07;
+
+option java_package = "com.hk07.domain.telemetry.dto";
+option java_outer_classname = "PoseSkeletonProto";
+
+message Landmark {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+    float visibility = 4;
+}
+
+message SkeletonFrame {
+    int64 timestamp_ms = 1;
+    repeated Landmark landmarks = 2;
+    string alert_level = 3;
+    string overall_risk = 4;
+    string user_id = 5;
+}

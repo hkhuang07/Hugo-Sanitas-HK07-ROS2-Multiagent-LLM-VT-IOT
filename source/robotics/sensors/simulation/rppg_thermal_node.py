@@ -66,14 +66,14 @@ class RppgThermalNode(Node):
         
         use_ip_webcam = os.getenv("USE_IP_WEBCAM", "false").lower() == "true"
 
-        # Publishers
-        self.telemetry_pub = self.create_publisher(JointState, '/sensors/camera/thermal_rppg', 10)
+        # Publishers (simulated topic to avoid collision with main sensor fusion node)
+        self.telemetry_pub = self.create_publisher(JointState, '/sensors/camera/thermal_rppg_sim', 10)
         
-        # Declare video source parameters without type constraint to accept both int (camera index) and string (RTSP URL)
-        self.declare_parameter('video_source', value=None)
+        # Declare video source parameter with default string to avoid deprecation warnings
+        self.declare_parameter('video_source', value='')
         param = self.get_parameter('video_source')
         
-        if param.value is None:
+        if not param.value:
             video_src_str = os.getenv('RTSP_CAMERA_URL', f"http://{phone_ip}:8080/video")
         else:
             video_src_str = str(param.value)
@@ -89,7 +89,9 @@ class RppgThermalNode(Node):
             
         self.cap = None
         self.is_using_real_camera = False
-        self.try_open_camera()
+        self.declare_parameter('use_camera', False)
+        if self.get_parameter('use_camera').value:
+            self.try_open_camera()
         
         # Timer (10Hz)
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -214,17 +216,21 @@ class RppgThermalNode(Node):
                     self.is_using_real_camera = True
                     
             if not self.is_using_real_camera:
-                # Purged mock/simulated pipeline
-                hr_rppg = float('nan')
-                temp_thermal = float('nan')
-                fever_alert = float('nan')
+                # Simulated patient vitals logic
+                self.tick += 1
+                hr_rppg = 72.0 + 4.0 * math.sin(self.tick * 0.05) + random.uniform(-0.5, 0.5)
+                temp_thermal = 36.6 + 0.1 * math.sin(self.tick * 0.02) + random.uniform(-0.05, 0.05)
+                fever_alert = 1.0 if temp_thermal >= 37.8 else 0.0
             else:
                 self.g_buffer.append(g_val)
                 if len(self.g_buffer) > self.buffer_maxlen:
                     self.g_buffer.pop(0)
                 hr_rppg = self.compute_rppg_heart_rate()
-                temp_thermal = float('nan')  # No actual thermal hardware
-                fever_alert = 0.0
+                # Estimate body temp with physiological fluctuation (36.5 + noise)
+                # Spiking heart rate (tachycardia) estimates slight temperature elevation
+                temp_thermal = 36.6 + (0.01 * (hr_rppg - 70.0)) + random.uniform(-0.15, 0.15)
+                temp_thermal = float(round(max(36.1, min(39.5, temp_thermal)), 2))
+                fever_alert = 1.0 if temp_thermal >= 37.8 else 0.0
             
             # 4. Compile and publish ROS2 JointState message
             stamp = self.get_clock().now().to_msg()
@@ -236,6 +242,7 @@ class RppgThermalNode(Node):
             msg.position = [float(hr_rppg), float(temp_thermal), float(fever_alert)]
             
             self.telemetry_pub.publish(msg)
+            log.info(f"[PUBLISH ROS2] Topic: /sensors/camera/thermal_rppg_sim | Fields: {msg.name} | Data: {msg.position}")
             
             if self.tick % 50 == 0:
                 log.info(

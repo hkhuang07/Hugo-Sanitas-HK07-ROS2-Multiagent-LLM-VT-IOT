@@ -115,7 +115,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 ├───────────────────────┬─────────────────────────┬──────────────────────────────────────┤
 │    [FRONTEND]         │     [BACKEND CORE]      │            [AGENT ENGINE]            │
 │    Vue 3 + Vite       │    Spring Boot 3.4      │            Python FastAPI            │
-│    Port: 5173         │     Java 21 VT          │            Port: 8000                │
+│    Port: 3010         │     Java 21 VT          │            Port: 8889                │
 │    Three.js 3D Twin   │     Port: 8888          │            Multi-Agent Loops         │
 │    Voice UI (TTS/STT) │     JWT Auth & RBAC     │            Redis Blackboard          │
 └──────────┬────────────┴──────────┬──────────────┴──────────────────┬───────────────────┘
@@ -236,6 +236,7 @@ Once infrastructure is active, launch each subsystem in a dedicated terminal win
     ```bash
     cd source/robotics
     source /opt/ros/humble/setup.bash
+    rm -rf ~/.ros/log/*
     ros2 launch rosbridge_server rosbridge_websocket_launch.xml
     ```
 
@@ -248,13 +249,13 @@ Once infrastructure is active, launch each subsystem in a dedicated terminal win
     ./mvnw spring-boot:run
     ```
 
-* **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (Windows Host CMD)**
+* **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (WSL2 Ubuntu Enviroment)**
   * **Purpose**: Activates the primary artificial intelligence decision-making engine built on FastAPI running on Port 8000. This component deploys the multi-layered Subsumption architecture (Tiers 0-2), spins up the async isolated watchdog heartbeats, handles query routing, and manages the shared Redis blackboard memory matrix.
   * **Execution Path**: `source/backend/hk07-agent`
   * **Step-by-Step Commands**:
     ```bash
     cd source/backend/hk07-agent
-    python main.py
+    python3 main.py
     ```
 
 * **[TERMINAL 4]: ROS2 Sensors Orchestrator Node (WSL2 Ubuntu Environment)**

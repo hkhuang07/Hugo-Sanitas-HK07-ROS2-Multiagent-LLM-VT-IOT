@@ -77,7 +77,7 @@
             <!-- Sensor Port -->
             <div class="field-group">
               <label class="field-label mono">// SENSOR_BRIDGE_PORT (SensorLogs / MQTT Bridge)</label>
-              <div class="field-hint mono">Default <b>5005</b> · Endpoint: <b>/data</b> → JSON sensor payload</div>
+              <div class="field-hint mono">Default <b>5006</b> · Endpoint: <b>/data</b> → JSON sensor payload (port 5005 reserved by Windows)</div>
               <div class="field-row">
                 <div class="field-prefix mono">PORT:</div>
                 <input

@@ -69,7 +69,7 @@ class BalanceController(Node):
         # Publishers
         self.cmd_vel_pub = self.create_publisher(
             Twist,
-            '/control/motion/cmd_vel',
+            '/control/motion/balance_cmd_vel',
             10
         )
         
@@ -90,20 +90,40 @@ class BalanceController(Node):
         if dt <= 0.0:
             dt = 0.02 # fallback to 50Hz standard
             
-        # Get raw accelerations
         ax = msg.linear_acceleration.x
         ay = msg.linear_acceleration.y
         az = msg.linear_acceleration.z
+
+        # Check if quaternion orientation is present and valid
+        qw = msg.orientation.w
+        qx = msg.orientation.x
+        qy = msg.orientation.y
+        qz = msg.orientation.z
         
-        # Compute Tilt Angles (pitch, roll in radians)
-        # Pitch: tilt about Y-axis (forward/backward)
-        # Roll: tilt about X-axis (left/right)
-        try:
-            pitch = math.atan2(ax, math.sqrt(ay**2 + az**2))
-            roll = math.atan2(ay, math.sqrt(ax**2 + az**2))
-        except ZeroDivisionError:
-            pitch = 0.0
-            roll = 0.0
+        if abs(qw**2 + qx**2 + qy**2 + qz**2 - 1.0) < 0.1 and not (qw == 1.0 and qx == 0.0 and qy == 0.0 and qz == 0.0):
+            # Calculate Euler angles directly from orientation quaternion (more stable)
+            sinr_cosp = 2.0 * (qw * qx + qy * qz)
+            cosr_cosp = 1.0 - 2.0 * (qx**2 + qy**2)
+            roll = math.atan2(sinr_cosp, cosr_cosp)
+
+            sinp = 2.0 * (qw * qy - qz * qx)
+            if abs(sinp) >= 1.0:
+                pitch = math.copysign(math.pi / 2.0, sinp)
+            else:
+                pitch = math.asin(sinp)
+        else:
+            # Fall back to raw accelerometer math with noise gate
+            accel_mag = math.sqrt(ax**2 + ay**2 + az**2)
+            if accel_mag > 0.5:
+                try:
+                    pitch = math.atan2(ax, math.sqrt(ay**2 + az**2))
+                    roll = math.atan2(ay, math.sqrt(ax**2 + az**2))
+                except ZeroDivisionError:
+                    pitch = 0.0
+                    roll = 0.0
+            else:
+                pitch = 0.0
+                roll = 0.0
             
         # Target is 0 tilt (perfectly vertical standing)
         target_pitch = 0.0

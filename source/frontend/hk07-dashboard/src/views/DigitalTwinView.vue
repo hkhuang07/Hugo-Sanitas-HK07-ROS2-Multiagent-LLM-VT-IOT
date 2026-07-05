@@ -1,7 +1,7 @@
 <template>
   <div class="dt-shell">
     <!-- ══ 3D Holographic Twin Canvas ══════════════════════════════════════ -->
-    <HolographicTwin class="dt-canvas" />
+    <HolographicTwin class="dt-canvas" :telemetry="currentTelemetry" />
 
     <!-- ══ HUD Overlay ═══════════════════════════════════════════════════ -->
     <div class="hud-overlay">
@@ -11,9 +11,13 @@
         <div class="hud-title">[ HK-07 // DIGITAL TWIN — HOLOGRAPHIC SCAN v3.0 ]</div>
         <div class="hud-sub">
           <span class="status-dot" :style="{ background: alertColor }">●</span>
-          <span class="mode-tag">{{ kinematicsStore.isLive ? 'LIVE_STREAM' : 'OFFLINE_STANDBY' }}</span>
+          <span class="mode-tag" :class="{ 'text-warn': kinematicsStore.isLive && kinematicsStore.isSimulated }">
+            {{ kinematicsStore.isLive ? (kinematicsStore.isSimulated ? 'SIMULATED_STREAM' : 'LIVE_STREAM') : 'OFFLINE_STANDBY' }}
+          </span>
           <span class="sep">|</span>
-          <span class="fps-val">{{ kinematicsStore.isLive ? 'SYNCED' : 'NO_LINK' }}</span>
+          <span class="fps-val" :class="{ 'text-warn': kinematicsStore.isLive && kinematicsStore.isSimulated }">
+            {{ kinematicsStore.isLive ? (kinematicsStore.isSimulated ? 'SIMULATED' : 'SYNCED') : 'NO_LINK' }}
+          </span>
           <span class="sep">|</span>
           <span class="ts-val">{{ timeStr }}</span>
         </div>
@@ -139,9 +143,53 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import HolographicTwin from '../components/HolographicTwin.vue'
 import { useKinematicsStore } from '../stores/kinematics'
 import { useSafetyStore } from '../stores/safety'
+import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
+import { useVitalsStore } from '../stores/vitals'
+import type { RobotTelemetry } from '../components/telemetry/types'
 
 const kinematicsStore = useKinematicsStore()
 const safetyStore = useSafetyStore()
+const sensorStore = useSensorTelemetryStore()
+const vitalsStore = useVitalsStore()
+
+const currentTelemetry = computed<RobotTelemetry>(() => {
+  return {
+    messageId: 'msg-dt',
+    sessionId: 'session-dt',
+    deviceId: 'HK07-TWIN',
+    hr: vitalsStore.current.heartRate || 72,
+    spO2: vitalsStore.current.spo2 || 98,
+    light: sensorStore.environment.ambient_light || 0,
+    pressure: sensorStore.environment.barometric_pressure || 1013.25,
+    pressureDelta: sensorStore.environment.pressure_delta_hpa || 0,
+    yaw: sensorStore.eulerAngles.yaw || 0,
+    pitch: sensorStore.eulerAngles.pitch || 0,
+    roll: sensorStore.eulerAngles.roll || 0,
+    latitude: sensorStore.location.latitude || 0,
+    longitude: sensorStore.location.longitude || 0,
+    altitude: sensorStore.location.altitude || 0,
+    steps: sensorStore.activity.pedometer_steps || 0,
+    activityType: sensorStore.activity.activity_type || 'unknown',
+    fallState: safetyStore.threatLevel === 'CRITICAL',
+    fallConfidence: safetyStore.threatLevel === 'CRITICAL' ? 1.0 : 0.0,
+    gForceMagnitude: sensorStore.wristMagnitude || 0.0,
+    rawAccel: {
+      x: sensorStore.imu.linear_acceleration.x || 0.0,
+      y: sensorStore.imu.linear_acceleration.y || 0.0,
+      z: sensorStore.imu.linear_acceleration.z || 0.0,
+      magnitude: sensorStore.wristMagnitude || 0.0
+    },
+    sensorStatus: {
+      hrValid: vitalsStore.isConnected,
+      spo2Valid: vitalsStore.isConnected,
+      lightValid: sensorStore.envStatus === 'LIVE',
+      pressureValid: sensorStore.envStatus === 'LIVE',
+      yawValid: sensorStore.imuStatus === 'LIVE',
+      accelValid: sensorStore.imuStatus === 'LIVE'
+    },
+    timestamp: Date.now()
+  }
+})
 
 const timeStr = computed(() => new Date().toLocaleTimeString('vi-VN', { hour12: false }))
 
@@ -176,6 +224,10 @@ function resetScene() {
   width: 100% !important;
   height: 100% !important;
   display: block;
+}
+
+.text-warn {
+  color: #FFB000 !important;
 }
 
 /* ── HUD Overlay ─────────────────────────────────────────────────────── */

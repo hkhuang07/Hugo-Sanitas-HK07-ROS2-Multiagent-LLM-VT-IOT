@@ -1,5 +1,5 @@
 <template>
-  <div class="baymax-dashboard">
+  <div class="hugo-dashboard">
     <!-- SCANLINES OVERLAY (Subtle) -->
     <div class="scanlines-overlay" />
 
@@ -47,7 +47,7 @@ import type { RobotTelemetry } from './telemetry/types';
 // Mock telemetry data (replace with WebSocket/HTTP in production)
 const currentTelemetry = ref<RobotTelemetry>({
   messageId: 'msg-001',
-  sessionId: 'session-baymax-001',
+  sessionId: 'session-hugo-001',
   deviceId: 'wristband-sim-001',
   hr: 72,
   spO2: 98.5,
@@ -122,7 +122,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.baymax-dashboard {
+.hugo-dashboard {
   position: relative;
   min-height: 100vh;
   background-color: #000000;

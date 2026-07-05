@@ -144,7 +144,12 @@ influx-data/
 # Local Agent Temp Files & Memory Databases
 source/backend/hk07-agent/latest_frame.jpg
 source/backend/hk07-agent/data/
+source/backend/hk07-agent/models/
 source/backend/hk07-core/logs/
 
 .claude/
 data/
+
+# Telemetry log payload dumps
+sensor_log_payload.json
+**/sensor_log_payload.json

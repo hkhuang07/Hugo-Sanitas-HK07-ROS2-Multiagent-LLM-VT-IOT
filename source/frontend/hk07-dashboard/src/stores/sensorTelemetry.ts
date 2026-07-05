@@ -27,16 +27,20 @@ export interface ImuSnapshot {
   orientation: { w: number; x: number; y: number; z: number }
   angular_velocity: { x: number; y: number; z: number }
   linear_acceleration: { x: number; y: number; z: number }
-  magnetometer: { x: number; y: number; z: number }
-  compass_heading: number
+  magnetometer: { x: number | null; y: number | null; z: number | null }
+  compass_heading: number | null
   position: { x: number; y: number; z: number }
   timestamp_ms: number
 }
 
 export interface EnvironmentSnapshot {
   ambient_light: number
-  barometric_pressure: number
-  pressure_delta_hpa: number
+  // null = sensor not available on this hardware (e.g. Vivo phone has no barometer)
+  barometric_pressure: number | null
+  // null = cannot compute delta when barometer absent
+  pressure_delta_hpa: number | null
+  battery_level: number
+  battery_temp: number
   timestamp_ms: number
 }
 
@@ -65,16 +69,18 @@ const DEFAULT_IMU: ImuSnapshot = {
   orientation: { w: 1, x: 0, y: 0, z: 0 },
   angular_velocity: { x: 0, y: 0, z: 0 },
   linear_acceleration: { x: 0, y: 0, z: 0 },
-  magnetometer: { x: 0, y: 0, z: 0 },
-  compass_heading: 0,
+  magnetometer: { x: null, y: null, z: null },
+  compass_heading: null,
   position: { x: 0, y: 0, z: 0 },
   timestamp_ms: 0,
 }
 
 const DEFAULT_ENV: EnvironmentSnapshot = {
   ambient_light: 0,
-  barometric_pressure: 1013.25,
-  pressure_delta_hpa: 0,
+  barometric_pressure: null,  // null = no barometer hardware
+  pressure_delta_hpa: null,   // null = no barometer hardware
+  battery_level: 100.0,
+  battery_temp: 32.0,
   timestamp_ms: 0,
 }
 
@@ -113,6 +119,11 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
   const lastActMs = ref(0)
   const isLive = ref(false)
 
+  const isImuSimulated = ref(false)
+  const isEnvSimulated = ref(false)
+  const isLocSimulated = ref(false)
+  const isActSimulated = ref(false)
+
   // ── Rolling history arrays for charts ───────────────────────────────────────
   // IMU — accel XYZ
   const accelXHistory = ref<TimestampedValue[]>([])
@@ -132,38 +143,54 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
   const stepsHistory = ref<TimestampedValue[]>([])
   const wristMagHistory = ref<TimestampedValue[]>([])
 
-  // ── Stale watchdog — marks isLive=false after 60 seconds of no IMU data ──────
+  // ── Stale watchdog — resets channel values to defaults when they go stale ──────
   setInterval(() => {
     const now = Date.now()
-    if (isLive.value && now - lastImuMs.value > 60000 && now - lastEnvMs.value > 60000) {
+    const STALE_TIMEOUT = 15000  // 15 seconds
+    const GPS_TIMEOUT = 60000    // 60 seconds
+
+    if (lastImuMs.value !== 0 && now - lastImuMs.value > STALE_TIMEOUT) {
+      imu.value = { ...DEFAULT_IMU }
+    }
+    if (lastEnvMs.value !== 0 && now - lastEnvMs.value > STALE_TIMEOUT) {
+      environment.value = { ...DEFAULT_ENV }
+    }
+    if (lastLocMs.value !== 0 && now - lastLocMs.value > GPS_TIMEOUT) {
+      location.value = { ...DEFAULT_LOCATION }
+    }
+    if (lastActMs.value !== 0 && now - lastActMs.value > STALE_TIMEOUT) {
+      activity.value = { ...DEFAULT_ACTIVITY }
+    }
+
+    if (isLive.value && now - lastImuMs.value > 30000 && now - lastEnvMs.value > 30000) {
       isLive.value = false
     }
   }, 1000)
 
   // ── Computed sensors status per channel ──────────────────────────────────────
-  const imuStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
+  const imuStatus = computed<'LIVE' | 'SIMULATED' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastImuMs.value
     if (lastImuMs.value === 0) return 'OFFLINE'
-    if (age < 60000) return 'LIVE'
-    return 'STALE'
+    if (age > 15000) return 'STALE'
+    return isImuSimulated.value ? 'SIMULATED' : 'LIVE'
   })
-  const envStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
+  const envStatus = computed<'LIVE' | 'SIMULATED' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastEnvMs.value
     if (lastEnvMs.value === 0) return 'OFFLINE'
-    if (age < 60000) return 'LIVE'
-    return 'STALE'
+    if (age > 15000) return 'STALE'
+    return isEnvSimulated.value ? 'SIMULATED' : 'LIVE'
   })
-  const locStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
+  const locStatus = computed<'LIVE' | 'SIMULATED' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastLocMs.value
     if (lastLocMs.value === 0) return 'OFFLINE'
-    if (age < 60000) return 'LIVE'
-    return 'STALE'
+    if (age > 60000) return 'STALE'
+    return isLocSimulated.value ? 'SIMULATED' : 'LIVE'
   })
-  const actStatus = computed<'LIVE' | 'STALE' | 'OFFLINE'>(() => {
+  const actStatus = computed<'LIVE' | 'SIMULATED' | 'STALE' | 'OFFLINE'>(() => {
     const age = Date.now() - lastActMs.value
     if (lastActMs.value === 0) return 'OFFLINE'
-    if (age < 60000) return 'LIVE'
-    return 'STALE'
+    if (age > 15000) return 'STALE'
+    return isActSimulated.value ? 'SIMULATED' : 'LIVE'
   })
 
   // ── Derived: Euler angles from quaternion (degrees) ──────────────────────────
@@ -203,13 +230,39 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     const now = Date.now()
     lastImuMs.value = now
     isLive.value = true
+    isImuSimulated.value = data.is_simulated ?? false
+
+    // Magnetometer: phone may send {x:0,y:0,z:0} when sensor is in duty-cycle off state.
+    // Keep last known valid magnetometer values to prevent flip-flopping to null/NO HW.
+    const rawMag = data.magnetometer ?? DEFAULT_IMU.magnetometer
+    const magIsValid = rawMag && (rawMag.x !== 0 || rawMag.y !== 0 || rawMag.z !== 0 || rawMag.x === null)
+    const resolvedMag = magIsValid
+      ? rawMag
+      : (imu.value.magnetometer.x !== null ? imu.value.magnetometer : DEFAULT_IMU.magnetometer)
+
+    // compass_heading: preserve previous value when bridge sends null/0 (no new reading).
+    // A null from bridge means the compass parser found no valid magneticBearing this cycle.
+    const incomingHeading = data.compass_heading
+    const resolvedHeading = (incomingHeading !== null && incomingHeading !== undefined && incomingHeading !== 0)
+      ? incomingHeading
+      : imu.value.compass_heading  // keep last known valid heading
+
+    // Resolve orientation schema: supports both nested and flat layouts, with fallback to last known valid values
+    const orient = data.orientation || {}
+    const isNum = (v: any) => v !== undefined && v !== null && !isNaN(Number(v))
+    const resolvedOrient = {
+      w: isNum(data.qw) ? Number(data.qw) : (isNum(orient.w) ? Number(orient.w) : (isNum(orient.qw) ? Number(orient.qw) : imu.value.orientation.w)),
+      x: isNum(data.qx) ? Number(data.qx) : (isNum(orient.x) ? Number(orient.x) : (isNum(orient.qx) ? Number(orient.qx) : imu.value.orientation.x)),
+      y: isNum(data.qy) ? Number(data.qy) : (isNum(orient.y) ? Number(orient.y) : (isNum(orient.qy) ? Number(orient.qy) : imu.value.orientation.y)),
+      z: isNum(data.qz) ? Number(data.qz) : (isNum(orient.z) ? Number(orient.z) : (isNum(orient.qz) ? Number(orient.qz) : imu.value.orientation.z)),
+    }
 
     imu.value = {
-      orientation: data.orientation ?? DEFAULT_IMU.orientation,
+      orientation: resolvedOrient,
       angular_velocity: data.angular_velocity ?? DEFAULT_IMU.angular_velocity,
       linear_acceleration: data.linear_acceleration ?? DEFAULT_IMU.linear_acceleration,
-      magnetometer: data.magnetometer ?? DEFAULT_IMU.magnetometer,
-      compass_heading: data.compass_heading ?? 0,
+      magnetometer: resolvedMag,
+      compass_heading: resolvedHeading,
       position: data.position ?? DEFAULT_IMU.position,
       timestamp_ms: data.header?.stamp
         ? data.header.stamp.sec * 1000 + Math.floor(data.header.stamp.nanosec / 1e6)
@@ -225,30 +278,57 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     gyroXHistory.value  = pushHistory(gyroXHistory.value,  { value: av.x, ts })
     gyroYHistory.value  = pushHistory(gyroYHistory.value,  { value: av.y, ts })
     gyroZHistory.value  = pushHistory(gyroZHistory.value,  { value: av.z, ts })
-    compassHistory.value = pushHistory(compassHistory.value, { value: imu.value.compass_heading, ts })
+    
+    // Only push compass history when we have a valid non-zero heading
+    if (imu.value.compass_heading !== null && imu.value.compass_heading !== 0) {
+      compassHistory.value = pushHistory(compassHistory.value, { value: imu.value.compass_heading, ts })
+    }
   }
 
   function updateEnvironment(data: any) {
     const now = Date.now()
     lastEnvMs.value = now
     isLive.value = true
+    isEnvSimulated.value = data.is_simulated ?? false
+
+    // barometric_pressure arrives as null from bridge when phone has no barometer hardware.
+    // We preserve null rather than defaulting to 1013.25 to avoid displaying fake data.
+    const baro = data.barometric_pressure !== undefined ? data.barometric_pressure : null
+    const baroδ = data.pressure_delta_hpa !== undefined ? data.pressure_delta_hpa : null
+
+    // Keep last known battery level and temp to prevent flip-flopping to defaults
+    const batLvl = (data.battery_level !== undefined && data.battery_level !== null)
+      ? data.battery_level
+      : (environment.value.battery_level ?? 100.0)
+    
+    const batTemp = (data.battery_temp !== undefined && data.battery_temp !== null)
+      ? data.battery_temp
+      : (environment.value.battery_temp ?? 32.0)
 
     environment.value = {
       ambient_light: data.ambient_light ?? 0,
-      barometric_pressure: data.barometric_pressure ?? 1013.25,
-      pressure_delta_hpa: data.pressure_delta_hpa ?? 0,
+      barometric_pressure: baro,
+      pressure_delta_hpa: baroδ,
+      battery_level: batLvl,
+      battery_temp: batTemp,
       timestamp_ms: data.timestamp_ms ?? now,
     }
 
     const ts = now
     lightHistory.value = pushHistory(lightHistory.value, { value: environment.value.ambient_light, ts })
-    pressureHistory.value = pushHistory(pressureHistory.value, { value: environment.value.barometric_pressure, ts })
-    pressureDeltaHistory.value = pushHistory(pressureDeltaHistory.value, { value: environment.value.pressure_delta_hpa, ts })
+    // Only chart barometric data when we have a real sensor reading (not null)
+    if (baro !== null) {
+      pressureHistory.value = pushHistory(pressureHistory.value, { value: baro, ts })
+    }
+    if (baroδ !== null) {
+      pressureDeltaHistory.value = pushHistory(pressureDeltaHistory.value, { value: baroδ, ts })
+    }
   }
 
   function updateLocation(data: any) {
     lastLocMs.value = Date.now()
     isLive.value = true
+    isLocSimulated.value = data.is_simulated ?? false
     location.value = {
       latitude: data.latitude ?? 0,
       longitude: data.longitude ?? 0,
@@ -261,6 +341,7 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     const now = Date.now()
     lastActMs.value = now
     isLive.value = true
+    isActSimulated.value = data.is_simulated ?? false
 
     activity.value = {
       pedometer_steps: data.pedometer_steps ?? 0,
@@ -283,6 +364,10 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     lastLocMs.value = 0
     lastActMs.value = 0
     isLive.value = false
+    isImuSimulated.value = false
+    isEnvSimulated.value = false
+    isLocSimulated.value = false
+    isActSimulated.value = false
     accelXHistory.value = []
     accelYHistory.value = []
     accelZHistory.value = []
@@ -301,6 +386,7 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     // State
     imu, environment, location, activity,
     isLive, lastImuMs, lastEnvMs, lastLocMs, lastActMs,
+    isImuSimulated, isEnvSimulated, isLocSimulated, isActSimulated,
     // History
     accelXHistory, accelYHistory, accelZHistory,
     gyroXHistory, gyroYHistory, gyroZHistory,

@@ -216,8 +216,10 @@ class YOLOv11SpatialTracker:
 
 class SpatialTrackerThread:
     """
-    Background worker thread running the Spatial Tracker at >= 15 FPS over the camera frame.
-    Decoupled from FastAPI event loop. Streams coordinates directly to websocket clients.
+    Background worker thread placeholder.
+    To maximize CPU efficiency and prevent GIL conflicts, the actual MediaPipe/YOLOv8
+    computations are managed by the multi-process VisionPipeline, and websocket broadcasts
+    are delegated directly to the main camera daemon.
     """
     _connections = set()
 
@@ -226,8 +228,6 @@ class SpatialTrackerThread:
         self.fps = fps
         self.running = False
         self.thread = None
-        self.tracker = YOLOv11SpatialTracker()
-        self.rppg = RPPGTracker(buffer_size=150)
         self.latest_detections = []
         self.lock = threading.Lock()
         
@@ -237,7 +237,7 @@ class SpatialTrackerThread:
         self.running = True
         self.thread = threading.Thread(target=self._run, name="spatial-tracker-thread", daemon=True)
         self.thread.start()
-        log.info(f"[SPATIAL_TRACKER] Background thread started at {self.fps} FPS.")
+        log.info("[SPATIAL_TRACKER] Background thread placeholder started (Low-CPU mode).")
         
     def stop(self):
         self.running = False
@@ -245,138 +245,14 @@ class SpatialTrackerThread:
             self.thread.join(timeout=2.0)
             
     def get_latest_detections(self):
-        with self.lock:
-            return list(self.latest_detections)
+        # Read from global cache if available
+        try:
+            from main import _sensor_cache
+            return _sensor_cache.get("spatial_detections", [])
+        except Exception:
+            return []
             
     def _run(self):
-        import asyncio
-        import json
-        
         while self.running:
-            t_start = time.perf_counter()
-            try:
-                if self.camera_worker:
-                    frame_bytes, ts, status = self.camera_worker.get_latest_frame()
-                    
-                    if status == "OK" and frame_bytes:
-                        nparr = np.frombuffer(frame_bytes, np.uint8)
-                        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        
-                        if img is not None:
-                            from main import _sensor_cache
-                            
-                            fall_active = _sensor_cache.get("fall_detected", False)
-                            detections, face_roi = self.tracker.detect(img, fall_active)
-                            
-                            # Push face ROI to rPPG tracking
-                            if face_roi is not None:
-                                self.rppg.push(face_roi)
-                                
-                            # Compute genuine HR and HRV
-                            hr, hrv = self.rppg.compute_vitals(fps=self.fps)
-                            
-                            # In-memory vitals cache update
-                            if not math.isnan(hr):
-                                current_vitals = _sensor_cache.get("vitals") or {}
-                                current_vitals.update({
-                                    "hr": hr,
-                                    "hrv": hrv,
-                                    "status": "ONLINE"
-                                })
-                                _sensor_cache["vitals"] = current_vitals
-                            
-                            with self.lock:
-                                self.latest_detections = detections
-                                
-                            _sensor_cache["spatial_detections"] = detections
-                            
-                            # Broadcast real-time JSON coordinate matrix directly to Vite web client connections
-                            if SpatialTrackerThread._connections:
-                                payload = {
-                                    "status": "HARDWARE_BOUND",
-                                    "vitals": {
-                                        "real_hr_rppg": hr if not math.isnan(hr) else "SENSOR_DISCONNECTED",
-                                        "real_temp_thermal": "SENSOR_DISCONNECTED",
-                                        "sensor_status": "ONLINE"
-                                    },
-                                    "spatial_targets": [
-                                        {
-                                            "label": d["label"],
-                                            "coordinates": d["bounding_box"],
-                                            "confidence": d["confidence"]
-                                        } for d in detections
-                                    ]
-                                }
-                                
-                                # Send using helper
-                                async def broadcast():
-                                    disconnected = []
-                                    msg_str = json.dumps(payload)
-                                    for ws in SpatialTrackerThread._connections:
-                                        try:
-                                            await ws.send_text(msg_str)
-                                        except Exception:
-                                            disconnected.append(ws)
-                                    for ws in disconnected:
-                                        SpatialTrackerThread._connections.discard(ws)
-                                        
-                                try:
-                                    loop = asyncio.get_event_loop()
-                                except RuntimeError:
-                                    loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(loop)
-                                    
-                                if loop.is_running():
-                                    loop.create_task(broadcast())
-                                else:
-                                    loop.run_until_complete(broadcast())
-                    else:
-                        # Hardware / stream disconnected state: invalidate
-                        from main import _sensor_cache
-                        self.rppg.clear()
-                        current_vitals = _sensor_cache.get("vitals") or {}
-                        current_vitals.update({
-                            "hr": float('nan'),
-                            "hrv": float('nan'),
-                            "status": "SENSOR_DISCONNECTED"
-                        })
-                        _sensor_cache["vitals"] = current_vitals
-                        _sensor_cache["spatial_detections"] = []
-                        
-                        # Broadcast SENSOR_DISCONNECTED payload
-                        if SpatialTrackerThread._connections:
-                            payload = {
-                                "status": "SENSOR_DISCONNECTED",
-                                "vitals": {
-                                    "real_hr_rppg": "SENSOR_DISCONNECTED",
-                                    "real_temp_thermal": "SENSOR_DISCONNECTED",
-                                    "sensor_status": "OFFLINE"
-                                },
-                                "spatial_targets": []
-                            }
-                            async def broadcast_disconnected():
-                                disconnected = []
-                                msg_str = json.dumps(payload)
-                                for ws in SpatialTrackerThread._connections:
-                                    try:
-                                        await ws.send_text(msg_str)
-                                    except Exception:
-                                        disconnected.append(ws)
-                                for ws in disconnected:
-                                    SpatialTrackerThread._connections.discard(ws)
-                            try:
-                                loop = asyncio.get_event_loop()
-                            except RuntimeError:
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                
-                            if loop.is_running():
-                                loop.create_task(broadcast_disconnected())
-                            else:
-                                loop.run_until_complete(broadcast_disconnected())
-            except Exception as e:
-                log.error(f"[SPATIAL_TRACKER] Thread loop error: {e}")
-                
-            elapsed = time.perf_counter() - t_start
-            sleep_time = max(0.005, (1.0 / self.fps) - elapsed)
-            time.sleep(sleep_time)
+            time.sleep(1.0)
+

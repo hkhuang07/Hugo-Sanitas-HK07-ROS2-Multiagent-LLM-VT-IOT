@@ -9,7 +9,7 @@ from typing import TypedDict, List, Dict, Any, Optional
 
 from agents.router_agent import RouterAgent
 from agents.safety_agent import SafetyAgent
-from agents.medical_agent import MedicalAgent
+from agents.care_agent import CareAgent
 from agents.empathetic_agent import EmpatheticAgent
 from services.blackboard_service import current_user_id
 
@@ -28,7 +28,8 @@ class AgentOrchestrator:
     def __init__(self, memory=None, arbitrator=None):
         self.router_agent = RouterAgent()
         self.safety_agent = SafetyAgent(arbitrator)
-        self.medical_agent = MedicalAgent(memory, arbitrator)
+        self.care_agent = CareAgent(memory, arbitrator)
+        self.medical_agent = self.care_agent  # backward-compatibility alias
         self.empathetic_agent = EmpatheticAgent(memory, arbitrator)
         self.memory = memory
 

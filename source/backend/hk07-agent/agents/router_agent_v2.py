@@ -261,12 +261,59 @@ TOOLS_SCHEMA = [
                 "required": ["plan_id", "steps"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_care_action",
+            "description": (
+                "[BAYMAX] Propose a proactive care action based on what the owner is currently doing and feeling. "
+                "Use this when vision/perception data indicates the owner needs attention: sad, stressed, tired, in pain, "
+                "eating, typing for long periods, inactive, or happy and needs positive engagement. "
+                "Examples: owner appears sad → EMOTIONAL_SUPPORT; typing 2+ hours → INACTIVITY_NUDGE; "
+                "facial grimace detected → MEDICAL_FIRST_AID; owner is happy → COMPANION_CHAT."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "observed_activity": {
+                        "type": "string",
+                        "enum": [
+                            "sitting_still", "typing", "writing", "eating", "drinking", "phone_use",
+                            "sleeping", "lying_down", "walking", "running", "falling",
+                            "reaching_up", "leaning_forward", "standing_still", "unknown"
+                        ],
+                        "description": "Owner's observed activity from vision pipeline"
+                    },
+                    "observed_expression": {
+                        "type": "string",
+                        "enum": ["calm", "happy", "sad", "stressed", "fearful", "angry", "pain", "tired", "unknown"],
+                        "description": "Owner's detected facial expression/mood from FacialExpressionAnalyzer"
+                    },
+                    "care_action_type": {
+                        "type": "string",
+                        "enum": [
+                            "COMPANION_CHAT", "EMOTIONAL_SUPPORT", "STRESS_RELIEF",
+                            "MEDICAL_FIRST_AID", "HUG_GESTURE", "TREATMENT_PROMPT",
+                            "INACTIVITY_NUDGE", "SLEEP_MONITORING", "TASK_ASSISTANCE",
+                            "FALL_RESPONSE", "DRINKING_REMINDER"
+                        ],
+                        "description": "Proposed Baymax care action type"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief reason for proposing this care action"
+                    }
+                },
+                "required": ["observed_activity", "observed_expression", "care_action_type", "reason"]
+            }
+        }
     }
 ]
 
 
 ORCHESTRATOR_SYSTEM_PROMPT = (
-    "Bạn là Router Agent v2 của robot đồng hành HK-07.\n"
+    "Bạn là Router Agent v2 của robot đồng hành HK-07 (Hugo / Sanitas HK-07) — hoạt động như Baymax trong Big Hero 6.\n"
     "Nhiệm vụ: Phân tích message từ user và quyết định gọi ĐỒNG THỜI các Tool phù hợp.\n"
     "Tư duy Mixture of Agents: 1 message có thể trigger 2-3 tools cùng lúc.\n"
     "Quy tắc bắt buộc:\n"
@@ -276,9 +323,10 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
     "Ví dụ:\n"
     "- User: 'Tôi ho ra máu và rất sợ' → gọi analyze_clinical_symptoms + speak_empathetic_response\n"
     "- User: 'Xin chào Hugo' → gọi speak_empathetic_response\n"
-    "- User: 'Tôi bị đột quỵ' → gọi trigger_sos_protocol + analyze_clinical_symptoms\n"
+    "- User: 'Tôi bị đột quỵ' → gọi trigger_sos_protocol + speak_empathetic_response\n"
     "- User: 'Quét toàn thân tôi' → gọi execute_full_body_scan\n"
     "- User: 'Xung quanh tôi có vật cản không?' → gọi execute_environment_scan\n"
+    "- User: '[CARE_CONTEXT] activity=typing expression=stressed' → gọi propose_care_action + speak_empathetic_response\n"
     "\n"
     "Nguyên tắc (Subsumption):\n"
     "1. Luôn ưu tiên Safety (Emergency) trước — TIER 0 (Ví dụ: đột quỵ, nhồi máu cơ tim, bất tỉnh → gọi trigger_sos_protocol)\n"
@@ -288,6 +336,7 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
     "5. Nếu có yếu tố cảm xúc, gọi speak_empathetic_response — TIER 2\n"
     "6. Nếu hỏi về kiến thức y tế, gọi search_medical_guidelines\n"
     "7. Nếu muốn kiểm tra trạng thái phần cứng, kết nối hoặc ping cảm biến, gọi execute_system_query\n"
+    "8. [BAYMAX] Nếu context cho thấy chủ nhân đang buồn/căng thẳng/mệt/đau mà không hỏi gì cụ thể → gọi propose_care_action + speak_empathetic_response\n"
     "LƯU Ý QUAN TRỌNG VỀ PHÂN BIỆT Ý ĐỊNH:\n"
     "- Nếu yêu cầu là quét cơ thể/sức khỏe hoặc phân tích sinh tồn (ví dụ: 'Scan me', 'Quét cơ thể tôi', 'Analyze my vitals', 'Scan my body', 'Scan my vitals'), bạn BẮT BUỘC phải gọi analyze_clinical_symptoms (Medical Analysis). TUYỆT ĐỐI KHÔNG gọi execute_system_query.\n"
     "- Nếu câu hỏi là về lý thuyết/kiến thức khái niệm (ví dụ: 'Cảm biến Lidar hoạt động như thế nào?', 'Lidar là gì?', 'How does Lidar work?'), bạn BẮT BUỘC phải gọi speak_empathetic_response (để an ủi/giải thích khái niệm) hoặc search_medical_guidelines (nếu y tế). TUYỆT ĐỐI KHÔNG gọi execute_system_query.\n"
@@ -317,10 +366,19 @@ class RouterAgentV2:
         """
         # 1. Try centralized LLM client for tool calling fallback
         try:
+            from services.plugin_manager import get_plugin_manager
+            pm = get_plugin_manager()
+            plugin_tools = pm.get_all_tools()
+            combined_tools = TOOLS_SCHEMA + plugin_tools
+        except Exception as pm_err:
+            log.warning("[ROUTER_V2] Failed to load plugin tools: %s", pm_err)
+            combined_tools = TOOLS_SCHEMA
+
+        try:
             result, provider = await LLMClient.generate_tool_call(
                 prompt=user_message,
                 tiers=ROUTER_TIERS,
-                tools=TOOLS_SCHEMA,
+                tools=combined_tools,
                 system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=512,

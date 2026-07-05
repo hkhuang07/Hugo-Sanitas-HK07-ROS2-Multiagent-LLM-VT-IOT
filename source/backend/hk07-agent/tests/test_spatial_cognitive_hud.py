@@ -7,7 +7,7 @@ import cv2
 # Ensure package paths
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.spatial_tracker import YOLOv8SpatialTracker, SpatialTrackerThread
+from utils.spatial_tracker import YOLOv11SpatialTracker, SpatialTrackerThread
 from services.llm_client import LocalOfflineFallback
 from agents.perception_agent import PerceptionScan
 
@@ -21,9 +21,8 @@ class TestSpatialCognitiveHUD(unittest.TestCase):
         self.img_bytes = self.img_bytes.tobytes()
 
     def test_yolo_tracker_detect(self):
-        tracker = YOLOv8SpatialTracker()
-        # Normal state
-        detections = tracker.detect(self.img, fall_active=False, fever_active=False, hr=72.0)
+        tracker = YOLOv11SpatialTracker()
+        detections, face_roi = tracker.detect(self.img, fall_active=False)
         self.assertTrue(len(detections) >= 2)
         labels = [d["label"] for d in detections]
         self.assertIn("user_body", labels)
@@ -59,18 +58,18 @@ class TestSpatialCognitiveHUD(unittest.TestCase):
         )
         
         d = scan.to_dict()
-        self.assertEqual(d["status"], "SUCCESS")
+        self.assertEqual(d["status"], "HARDWARE_BOUND")
         self.assertEqual(d["vitals_summary"]["hr"], 132.0)
         self.assertEqual(d["vitals_summary"]["temp"], 38.9)
         
         # Spatial detections must contain labels
-        labels = [s["label"] for s in d["spatial_detections"]]
+        labels = [s["label"] for s in d["spatial_targets"]]
         self.assertIn("user_face", labels)
-        self.assertIn("hematoma", labels)
+        self.assertIn("localized_injury", labels)
         
         # Cognitive analysis fields
-        self.assertEqual(d["cognitive_analysis"]["user_activity"], "sitting_or_standing")
-        self.assertEqual(d["cognitive_analysis"]["clinical_reasoning"], "High fever with tachycardia.")
+        self.assertEqual(d["cognitive_analysis_frontend"]["user_activity"], "sitting_or_standing")
+        self.assertEqual(d["cognitive_analysis_frontend"]["clinical_reasoning"], "High fever with tachycardia.")
 
 if __name__ == "__main__":
     unittest.main()

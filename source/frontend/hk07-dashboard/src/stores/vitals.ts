@@ -12,6 +12,7 @@ export interface VitalSign {
   epochTimestampMs: number
   alertLevel?: 'NORMAL' | 'WARNING' | 'CRITICAL' | 'STROKE'
   userId?: string
+  hormones?: Record<string, any>
 }
 
 export interface HourlyBucket {
@@ -113,6 +114,8 @@ export const useVitalsStore = defineStore('vitals', () => {
     alertLevel: 'NORMAL',
   })
 
+  const isSimulated = ref(true)
+
   // Persisted state from localStorage
   const savedBuckets = localStorage.getItem('hk07_vitals_buckets')
   const hourlyBuckets = ref<HourlyBucket[]>(savedBuckets ? JSON.parse(savedBuckets) : [])
@@ -140,6 +143,7 @@ export const useVitalsStore = defineStore('vitals', () => {
   // Actions
   function updateVitals(data: VitalSign) {
     current.value = data
+    isSimulated.value = data.hormones?.is_simulated ?? false
 
     // Ring buffer write (overwrite at write index, increment modulo)
     const idx = bufferWriteIdx.value % RING_BUFFER_SIZE
@@ -244,6 +248,7 @@ export const useVitalsStore = defineStore('vitals', () => {
     spo2History.value.fill(99)
     bufferWriteIdx.value = 0
     isConnected.value = false
+    isSimulated.value = true
   }
 
   // Watchers to update localStorage automatically on changes
@@ -264,6 +269,7 @@ export const useVitalsStore = defineStore('vitals', () => {
     heartRateHistory,
     bufferWriteIdx,
     RING_BUFFER_SIZE,
-    isConnected
+    isConnected,
+    isSimulated
   }
 })

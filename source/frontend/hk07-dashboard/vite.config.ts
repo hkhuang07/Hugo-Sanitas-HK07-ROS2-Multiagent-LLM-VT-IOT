@@ -13,11 +13,11 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    port: 3010,
     host: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true,
         timeout: 60000,
         proxyTimeout: 60000,
@@ -33,8 +33,9 @@ export default defineConfig({
         }
       },
       '/ws': {
-        target: 'ws://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         ws: true,
+        changeOrigin: true,
         timeout: 60000,
         proxyTimeout: 60000,
       },

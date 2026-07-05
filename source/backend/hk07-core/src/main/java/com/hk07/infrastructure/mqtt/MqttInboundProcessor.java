@@ -40,7 +40,23 @@ public class MqttInboundProcessor {
     @ServiceActivator(inputChannel = "mqttInboundChannel")
     public void processInbound(Message<?> message) {
         String topic   = (String) message.getHeaders().get("mqtt_receivedTopic");
+        if (topic == null) {
+            log.warn("[MQTT_INBOUND] Received message with null topic");
+            return;
+        }
+
         Object rawPayload = message.getPayload();
+        
+        // Zero-JSON Skeleton Policy: process binary protobuf payload directly
+        if ("hk07/telemetry/skeleton".equals(topic)) {
+            if (rawPayload instanceof byte[]) {
+                handleTelemetrySkeleton((byte[]) rawPayload);
+            } else if (rawPayload != null) {
+                handleTelemetrySkeleton(rawPayload.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return;
+        }
+
         String payload;
         if (rawPayload instanceof byte[]) {
             payload = new String((byte[]) rawPayload, java.nio.charset.StandardCharsets.UTF_8);
@@ -50,11 +66,6 @@ public class MqttInboundProcessor {
             } catch (Exception e) {
                 payload = rawPayload.toString();
             }
-        }
-
-        if (topic == null) {
-            log.warn("[MQTT_INBOUND] Received message with null topic");
-            return;
         }
 
         log.debug("[MQTT_INBOUND] Topic: {} | PayloadSize: {}B", topic, payload.length());
@@ -92,10 +103,14 @@ public class MqttInboundProcessor {
                 handlePerceptionClinical(payload);
             } else if (topic.equals("hk07/sensors/camera/thermal_rppg")) {
                 handleThermalRppg(payload);
+            } else if (topic.equals("hk07/perception/biomarkers")) {
+                handlePerceptionBiomarkers(payload);
             } else if (topic.equals("hk07/control/subsumption/inhibit")) {
                 handleSubsumptionInhibit(payload);
             } else if (topic.startsWith("hk07/agents/")) {
                 handleAgentOutput(topic, payload);
+            } else if ("hk07/care/decision".equals(topic)) {
+                handleCareDecision(payload);
             } else if (topic.equals("hk07/system/heartbeat")) {
                 log.trace("[MQTT_HEARTBEAT] Broker alive: {}", payload);
             } else {
@@ -128,7 +143,7 @@ public class MqttInboundProcessor {
                 || payload.contains("\"is_falling\":1") || payload.contains("\"is_falling\": 1")
                 || payload.contains("\"vision_fall_detected\":true") || payload.contains("\"vision_fall_detected\": true")) {
             log.warn("[FALL_DETECTED] FallState active. Instantly setting bypass aggregation for device={}", deviceId);
-            healthService.setBypassAggregationForDevice(deviceId, true);
+            healthService.handleCriticalFallForDevice(deviceId);
         }
 
         // Fire-and-forget on Virtual Thread — listener never blocks
@@ -167,6 +182,34 @@ public class MqttInboundProcessor {
 
         wsTemplate.convertAndSend("/topic/safety-alerts", objectMapper.writeValueAsString(alert));
         log.info("[SUBSUMPTION_INHIBIT] active={} trigger={}", active, trigger);
+    }
+
+    private void handleCareDecision(String payload) {
+        log.info("[CARE_DECISION] Received decision: {}", payload);
+        // Forward care decision directly to /topic/agent-events for visual dashboard
+        wsTemplate.convertAndSend("/topic/agent-events", payload);
+
+        try {
+            JsonNode node = objectMapper.readTree(payload);
+            String priority = node.has("priority") ? node.get("priority").asText("NORMAL") : "NORMAL";
+            String actionType = node.has("actionType") ? node.get("actionType").asText("COMPANION_CHAT") : "COMPANION_CHAT";
+            String conversationHint = node.has("conversationHint") ? node.get("conversationHint").asText() : "";
+
+            if ("CRITICAL".equalsIgnoreCase(priority)) {
+                log.warn("[CRITICAL_EMERGENCY_BROADCAST] Action: {} | Hint: {}", actionType, conversationHint);
+
+                // Map critical clinical care decisions to safety-alerts
+                var alert = new java.util.LinkedHashMap<String, Object>();
+                alert.put("subsumptionActivated", false);
+                alert.put("triggerType", actionType);
+                alert.put("message", conversationHint);
+                alert.put("isCriticalEmergency", true);
+
+                wsTemplate.convertAndSend("/topic/safety-alerts", objectMapper.writeValueAsString(alert));
+            }
+        } catch (Exception e) {
+            log.error("[CARE_DECISION_ERROR] Failed to process care decision: {}", e.getMessage());
+        }
     }
 
     private void handleAgentOutput(String topic, String payload) {
@@ -267,5 +310,89 @@ public class MqttInboundProcessor {
     private void handleMobileActivity(String payload) {
         log.debug("[MOBILE_ACTIVITY] {}", payload);
         wsTemplate.convertAndSend("/topic/hk07/sensors/activity", payload);
+    }
+
+    private void handlePerceptionBiomarkers(String payload) {
+        wsTemplate.convertAndSend("/topic/hk07/perception/biomarkers", payload);
+    }
+
+    private void handleTelemetrySkeleton(byte[] bytes) {
+        try {
+            if (bytes.length >= 13 && new String(bytes, 0, 13, java.nio.charset.StandardCharsets.UTF_8).startsWith("RAW_FALLBACK\0")) {
+                // Parse fallback binary structure
+                java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(bytes);
+                buf.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                buf.position(13); // skip RAW_FALLBACK\0 header
+                
+                long timestampMs = buf.getLong();
+                int alertLen = buf.getInt();
+                int riskLen = buf.getInt();
+                int userLen = buf.getInt();
+                
+                byte[] alertBytes = new byte[alertLen];
+                buf.get(alertBytes);
+                String alertLevel = new String(alertBytes, java.nio.charset.StandardCharsets.UTF_8);
+                
+                byte[] riskBytes = new byte[riskLen];
+                buf.get(riskBytes);
+                String overallRisk = new String(riskBytes, java.nio.charset.StandardCharsets.UTF_8);
+                
+                byte[] userBytes = new byte[userLen];
+                buf.get(userBytes);
+                String userId = new String(userBytes, java.nio.charset.StandardCharsets.UTF_8);
+                
+                java.util.List<java.util.Map<String, Object>> landmarksList = new java.util.ArrayList<>();
+                while (buf.remaining() >= 16) {
+                    float x = buf.getFloat();
+                    float y = buf.getFloat();
+                    float z = buf.getFloat();
+                    float visibility = buf.getFloat();
+                    
+                    java.util.Map<String, Object> lmMap = new java.util.HashMap<>();
+                    lmMap.put("x", x);
+                    lmMap.put("y", y);
+                    lmMap.put("z", z);
+                    lmMap.put("visibility", visibility);
+                    landmarksList.add(lmMap);
+                }
+                
+                java.util.Map<String, Object> jsonMap = new java.util.HashMap<>();
+                jsonMap.put("timestampMs", timestampMs);
+                jsonMap.put("alertLevel", alertLevel);
+                jsonMap.put("overallRisk", overallRisk);
+                jsonMap.put("userId", userId);
+                jsonMap.put("landmarks", landmarksList);
+                
+                String jsonPayload = objectMapper.writeValueAsString(jsonMap);
+                wsTemplate.convertAndSend("/topic/hk07/telemetry/skeleton", jsonPayload);
+                log.debug("[SKELETON_FALLBACK] Decoded fallback skeleton binary successfully.");
+            } else {
+                // Protobuf decode
+                com.hk07.domain.telemetry.dto.PoseSkeletonProto.SkeletonFrame frame =
+                    com.hk07.domain.telemetry.dto.PoseSkeletonProto.SkeletonFrame.parseFrom(bytes);
+                    
+                java.util.Map<String, Object> jsonMap = new java.util.HashMap<>();
+                jsonMap.put("timestampMs", frame.getTimestampMs());
+                jsonMap.put("alertLevel", frame.getAlertLevel());
+                jsonMap.put("overallRisk", frame.getOverallRisk());
+                jsonMap.put("userId", frame.getUserId());
+                
+                java.util.List<java.util.Map<String, Object>> landmarksList = new java.util.ArrayList<>();
+                for (com.hk07.domain.telemetry.dto.PoseSkeletonProto.Landmark lm : frame.getLandmarksList()) {
+                    java.util.Map<String, Object> lmMap = new java.util.HashMap<>();
+                    lmMap.put("x", lm.getX());
+                    lmMap.put("y", lm.getY());
+                    lmMap.put("z", lm.getZ());
+                    lmMap.put("visibility", lm.getVisibility());
+                    landmarksList.add(lmMap);
+                }
+                jsonMap.put("landmarks", landmarksList);
+                
+                String jsonPayload = objectMapper.writeValueAsString(jsonMap);
+                wsTemplate.convertAndSend("/topic/hk07/telemetry/skeleton", jsonPayload);
+            }
+        } catch (Exception e) {
+            log.error("[SKELETON_DECODE_ERROR] Failed to decode skeleton binary: {}", e.getMessage());
+        }
     }
 }

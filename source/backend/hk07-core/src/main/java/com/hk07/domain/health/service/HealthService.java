@@ -1,11 +1,13 @@
 package com.hk07.domain.health.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hk07.common.enums.AlertLevel;
 import com.hk07.domain.health.dto.VitalSignDto;
 import com.hk07.domain.health.entity.HealthRecordEntity;
 import com.hk07.domain.health.repository.HealthRecordRepository;
 import com.hk07.domain.user.entity.WristbandConfigEntity;
 import com.hk07.domain.user.repository.WristbandConfigRepository;
+import com.hk07.domain.user.repository.MedicalProfileRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -53,14 +55,34 @@ public class HealthService {
 
     private final HealthRecordRepository healthRepository;
     private final WristbandConfigRepository wristbandConfigRepository;
+    private final MedicalProfileRepository medicalProfileRepository;
+    private final ObjectMapper objectMapper;
     private final SimpMessagingTemplate wsTemplate;
 
     // ── Throttle: Max 60Hz per device ───────────────────────────────────────
     private final ConcurrentHashMap<String, Long> lastProcessedTime = new ConcurrentHashMap<>();
 
+    // ── High-Performance Zero-Latency In-Memory Device Config Cache ────────
+    private final ConcurrentHashMap<String, Optional<WristbandConfigEntity>> configCache = new ConcurrentHashMap<>();
+
+    // ── Smart Rate-of-Change Jitter Filtering Map ───────────────────────────
+    private final ConcurrentHashMap<String, Integer> lastFilteredHr = new ConcurrentHashMap<>();
+
+    public void clearConfigCache() {
+        configCache.clear();
+    }
+
+    private Optional<WristbandConfigEntity> getConfigForTopic(String topic) {
+        return configCache.computeIfAbsent(topic, wristbandConfigRepository::findByMqttTopic);
+    }
+
     // ── Sliding windows for SpO2 and Heart Rate (size = 5) ──────────────────
     private final ConcurrentHashMap<String, ConcurrentLinkedQueue<Integer>> hrWindows = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ConcurrentLinkedQueue<Float>> spo2Windows = new ConcurrentHashMap<>();
+
+    // ── Distress Signal Cooldown Map ─────────────────────────────────────────
+    private final ConcurrentHashMap<UUID, Long> lastDistressSignalTime = new ConcurrentHashMap<>();
+    private static final long DISTRESS_SIGNAL_COOLDOWN_MS = 30000;
 
     // ── Thread-Safe Memory Cache & Bypass Map ────────────────────────────────
     @lombok.Data
@@ -120,6 +142,66 @@ public class HealthService {
         });
     }
 
+    public void handleCriticalIncident(UUID userId, String reason) {
+        long now = System.currentTimeMillis();
+        Long lastTime = lastDistressSignalTime.get(userId);
+        if (lastTime != null && (now - lastTime < DISTRESS_SIGNAL_COOLDOWN_MS)) {
+            return;
+        }
+        lastDistressSignalTime.put(userId, now);
+
+        medicalProfileRepository.findByUserId(userId).ifPresentOrElse(profile -> {
+            String contactName = profile.getEmergencyContactName();
+            String contactPhone = profile.getEmergencyContactPhone();
+            log.warn("[DISTRESS_SIGNAL] !!! CRITICAL HEALTH ALERT !!! {} detected for user={}. Emitting distress signal. Notifying Emergency Contact: {} (Phone: {})",
+                    reason, userId, contactName != null ? contactName : "UNKNOWN", contactPhone != null ? contactPhone : "UNKNOWN");
+            
+            var notification = new java.util.LinkedHashMap<String, Object>();
+            notification.put("userId", userId.toString());
+            notification.put("eventType", "DISTRESS_SIGNAL_DISPATCH");
+            notification.put("reason", reason);
+            notification.put("contactName", contactName != null ? contactName : "Chưa đăng ký");
+            notification.put("contactPhone", contactPhone != null ? contactPhone : "Chưa đăng ký");
+            notification.put("timestamp", now);
+            try {
+                wsTemplate.convertAndSend("/topic/safety-alerts", objectMapper.writeValueAsString(notification));
+            } catch (Exception e) {
+                log.error("Failed to broadcast distress signal via WebSocket", e);
+            }
+        }, () -> {
+            log.warn("[DISTRESS_SIGNAL] !!! CRITICAL HEALTH ALERT !!! {} detected for user={}. Emitting distress signal. Emergency contact details not found in profile!",
+                    reason, userId);
+        });
+    }
+
+    public void handleSimulatedCriticalIncident(UUID userId, String reason) {
+        long now = System.currentTimeMillis();
+        log.warn("[DISTRESS_SIGNAL_SIMULATED] !!! SIMULATED HEALTH ALERT !!! {} detected for user={}. Emitting simulated distress signal.",
+                reason, userId);
+        
+        var notification = new java.util.LinkedHashMap<String, Object>();
+        notification.put("userId", userId.toString());
+        notification.put("eventType", "SIMULATED_DISTRESS_SIGNAL_DISPATCH");
+        notification.put("reason", reason);
+        notification.put("contactName", "Người giám hộ (Giả lập)");
+        notification.put("contactPhone", "0900000000 (Giả lập)");
+        notification.put("timestamp", now);
+        try {
+            wsTemplate.convertAndSend("/topic/safety-alerts", objectMapper.writeValueAsString(notification));
+        } catch (Exception e) {
+            log.error("Failed to broadcast simulated distress signal via WebSocket", e);
+        }
+    }
+
+    public void handleCriticalFallForDevice(String deviceId) {
+        String topic = "hk07/sensors/wristband/" + deviceId + "/vitals";
+        wristbandConfigRepository.findByMqttTopic(topic).ifPresent(config -> {
+            UUID userId = config.getUser().getId();
+            setBypassAggregation(userId, true);
+            handleCriticalIncident(userId, "Cú ngã đột ngột (Fall Detected)");
+        });
+    }
+
     /**
      * Primary pipeline — runs on Virtual Thread (via @Async).
      * The MQTT listener is never blocked; this method executes concurrently.
@@ -137,9 +219,9 @@ public class HealthService {
         if (lastTime != null && now - lastTime < 16) return;
         lastProcessedTime.put(deviceId, now);
 
-        // Resolve owner from device's MQTT topic
+        // Resolve owner from device's MQTT topic (using cached config to prevent DB query saturation)
         String topic = "hk07/sensors/wristband/" + deviceId + "/vitals";
-        Optional<WristbandConfigEntity> configOpt = wristbandConfigRepository.findByMqttTopic(topic);
+        Optional<WristbandConfigEntity> configOpt = getConfigForTopic(topic);
 
         if (configOpt.isEmpty()) {
             log.debug("[HEALTH_SERVICE] No owner found for deviceId={}", deviceId);
@@ -149,6 +231,8 @@ public class HealthService {
 
         WristbandConfigEntity config = configOpt.get();
         UUID userId = config.getUser().getId();
+
+        boolean isSimulated = vital.getHormones() != null && Boolean.TRUE.equals(vital.getHormones().get("is_simulated"));
 
         // Smooth SpO2 and Heart Rate using median filter of size 5 (ignoring <= 0 disconnected/invalid signals)
         ConcurrentLinkedQueue<Integer> hrWindow = hrWindows.computeIfAbsent(deviceId, k -> new ConcurrentLinkedQueue<>());
@@ -161,9 +245,22 @@ public class HealthService {
             }
             List<Integer> hrList = new ArrayList<>(hrWindow);
             int medianHr = computeMedianInt(hrList);
-            vital.setHeartRate(medianHr);
+            
+            // Smart Rate-of-Change (Jitter Filter): Restrict sudden extreme jumps (> 15 bpm) unless sustained
+            int filteredHr = medianHr;
+            Integer lastHr = lastFilteredHr.get(deviceId);
+            if (lastHr != null && lastHr > 0) {
+                int diff = Math.abs(medianHr - lastHr);
+                if (diff > 15) {
+                    filteredHr = lastHr + (medianHr > lastHr ? 5 : -5);
+                    log.warn("[VITAL_FILTER] Suppressed heart rate jitter from {} bpm to {} bpm (median raw: {}) for device {}", lastHr, filteredHr, medianHr, deviceId);
+                }
+            }
+            lastFilteredHr.put(deviceId, filteredHr);
+            vital.setHeartRate(filteredHr);
         } else {
             hrWindow.clear();
+            lastFilteredHr.remove(deviceId);
             vital.setHeartRate(-1);
         }
         
@@ -189,6 +286,13 @@ public class HealthService {
         // Confirmed critical warning (CRITICAL or STROKE level) or Fever Alert triggers bypass instantly
         if ((vital.getBodyTemperature() >= 38.5f && vital.getBodyTemperature() > 0.0f) || level == AlertLevel.CRITICAL || level == AlertLevel.STROKE) {
             setBypassAggregation(userId, true);
+            if (level == AlertLevel.CRITICAL || level == AlertLevel.STROKE) {
+                if (isSimulated) {
+                    handleSimulatedCriticalIncident(userId, "Chỉ số sinh hiệu nguy kịch giả lập (" + level.name() + ")");
+                } else {
+                    handleCriticalIncident(userId, "Chỉ số sinh hiệu nguy kịch (" + level.name() + ")");
+                }
+            }
         }
 
         // Add to sliding memory cache
@@ -231,7 +335,8 @@ public class HealthService {
 
                 // Audit group for anomaly signals to auto-trigger bypass if missed
                 boolean hasAnomalyInBatch = userGroup.stream().anyMatch(v -> 
-                        v.getAlertLevel() != AlertLevel.NORMAL || 
+                        v.getAlertLevel() == AlertLevel.CRITICAL || 
+                        v.getAlertLevel() == AlertLevel.STROKE || 
                         v.getVital().getBodyTemperature() >= 38.5f);
 
                 if (hasAnomalyInBatch) {

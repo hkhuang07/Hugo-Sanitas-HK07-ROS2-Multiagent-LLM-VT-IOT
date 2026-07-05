@@ -12,7 +12,7 @@ export const useSafetyStore = defineStore('safety', () => {
   const closestAngleDeg = ref(0)
   const scanHz = ref(0)
   const threatLevel = ref<LidarScanSnapshot['threatLevel']>('UNKNOWN')
-  const baymaxHint = ref('Đang chờ dữ liệu thị giác IPWebcam từ robot HK-07...')
+  const hugoHint = ref('Đang chờ dữ liệu thị giác IPWebcam từ robot HK-07...')
   const lastScanMs = ref(0)
   const sectorCount = ref(0)
   const activeTriggers = ref<ActiveSafetyTrigger[]>([])
@@ -42,7 +42,7 @@ export const useSafetyStore = defineStore('safety', () => {
     minDistanceM.value = snap.minDistanceM
     closestAngleDeg.value = snap.closestAngleDeg
     threatLevel.value = snap.threatLevel
-    baymaxHint.value = snap.baymaxHint
+    hugoHint.value = snap.hugoHint
     sectorCount.value = snap.sectorCount ?? 0
     lastScanMs.value = snap.timestampMs || Date.now()
 
@@ -172,7 +172,7 @@ export const useSafetyStore = defineStore('safety', () => {
     closestAngleDeg,
     scanHz,
     threatLevel,
-    baymaxHint,
+    hugoHint,
     lastScanMs,
     sectorCount,
     activeTriggers,

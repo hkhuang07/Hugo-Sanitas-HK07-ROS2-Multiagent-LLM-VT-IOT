@@ -31,13 +31,13 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
   const phoneIp = ref(localStorage.getItem(LS_PHONE_IP) || _oldIp || '')
   const pcIp = ref(localStorage.getItem(LS_PC_IP) || '')
   const cameraPort = ref(localStorage.getItem(LS_PORT_CAM) || '8080')
-  const sensorPort = ref(localStorage.getItem(LS_PORT_SENSOR) || '5005')
+  const sensorPort = ref(localStorage.getItem(LS_PORT_SENSOR) || '5006')
 
   /** draft edited by the form — only committed on confirmIp() */
   const draftPhoneIp = ref(phoneIp.value || '')
   const draftPcIp = ref(pcIp.value || '')
   const draftCameraPort = ref(cameraPort.value || '8080')
-  const draftSensorPort = ref(sensorPort.value || '5005')
+  const draftSensorPort = ref(sensorPort.value || '5006')
 
   /** last confirmation timestamp — watchers in views react to this */
   const confirmedAt = ref(0)
@@ -52,7 +52,7 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
 
   // ── Computed URLs ───────────────────────────────────────────────────────────
   // Camera:  http://<PHONE_IP>:8080/video   (IP Webcam Android app)
-  // Sensor:  http://<PC_IP>:5005/data        (hk07_sensor_fusion.py / SensorLogs destination)
+  // Sensor:  http://<PC_IP>:5006/data        (hk07_sensor_fusion.py / SensorLogs destination — port 5005 is reserved by Windows svchost)
   const cameraUrl = computed(() => `http://${phoneIp.value}:${cameraPort.value}/video`)
   const sensorBridgeUrl = computed(() => `http://${pcIp.value}:${sensorPort.value}/data`)
 
@@ -131,13 +131,17 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
     }
     isConfigLoading.value = true
 
-    const maxAttempts = 5
+    const maxAttempts = 3
     const base = 1000 // 1s
-    const cap = 10000 // 10s
+    const cap = 5000  // 5s
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 2500)
+
       try {
-        const response = await fetch('/api/v1/auth/config')
+        const response = await fetch('/api/v1/auth/config', { signal: controller.signal })
+        clearTimeout(timeoutId)
         if (!response.ok) {
           throw new Error(`HTTP error ${response.status}`)
         }
@@ -156,8 +160,10 @@ export const useDeviceConfigStore = defineStore('deviceConfig', () => {
         } else {
           throw new Error("Invalid response format")
         }
-      } catch (err) {
-        console.warn(`[CONFIG] Attempt ${attempt + 1} failed to fetch config:`, err)
+      } catch (err: any) {
+        clearTimeout(timeoutId)
+        const errMsg = err.name === 'AbortError' ? 'Request timed out (2.5s)' : err.message
+        console.warn(`[CONFIG] Attempt ${attempt + 1} failed to fetch config: ${errMsg}`)
         if (attempt === maxAttempts - 1) {
           isConfigError.value = true
           isConfigLoading.value = false

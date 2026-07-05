@@ -34,7 +34,7 @@ export function classifyThreat(minDist: number): ThreatLevel {
   return 'SAFE'
 }
 
-export function baymaxHint(minDist: number, closeSectors: number): string {
+export function hugoHint(minDist: number, closeSectors: number): string {
   if (minDist <= 0.01) {
     return 'Chưa nhận tín hiệu thị giác IPWebcam — tôi đang lắng nghe môi trường xung quanh bạn.'
   }
@@ -84,7 +84,7 @@ export function analyzeRawScan(body: Record<string, unknown>): LidarScanSnapshot
     timestampMs: ts,
     scanHz: typeof body.scanHz === 'number' ? body.scanHz : 0,
     threatLevel: (body.threatLevel as ThreatLevel) || classifyThreat(minDist === Infinity ? 0 : minDist),
-    baymaxHint: (body.baymaxHint as string) || baymaxHint(minDist === Infinity ? 0 : minDist, closeSectors),
+    hugoHint: (body.hugoHint as string) || (body.baymaxHint as string) || hugoHint(minDist === Infinity ? 0 : minDist, closeSectors),
     live: body.live === true,
     sectorCount: typeof body.sectorCount === 'number' ? body.sectorCount : rangesRaw.length,
   }

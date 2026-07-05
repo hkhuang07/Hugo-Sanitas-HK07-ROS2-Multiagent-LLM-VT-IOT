@@ -93,6 +93,9 @@ public class MqttConfig {
                 "hk07/telemetry/avoidance",
                 "hk07/telemetry/joint_states",
                 "hk07/sensors/camera/thermal_rppg",
+                "hk07/telemetry/skeleton",
+                "hk07/perception/biomarkers",
+                "hk07/care/decision",
                 // Mobile Phone Sensor Bridge topics (vivo_http_mqtt_bridge.py via WiFi Hotspot)
                 "hk07/sensors/imu/target",
                 "hk07/sensors/environment/state",
@@ -125,5 +128,15 @@ public class MqttConfig {
         handler.setDefaultQos(1);
         handler.setDefaultTopic("hk07/control/motion/command");
         return handler;
+    }
+
+    @Bean
+    public MessageChannel errorChannel() {
+        return new org.springframework.integration.channel.PublishSubscribeChannel();
+    }
+
+    @Bean
+    public org.springframework.integration.support.channel.HeaderChannelRegistry integrationHeaderChannelRegistry() {
+        return new org.springframework.integration.channel.DefaultHeaderChannelRegistry();
     }
 }

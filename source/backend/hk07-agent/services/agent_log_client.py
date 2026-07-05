@@ -211,23 +211,19 @@ class AgentLogClient:
                 )
                 # Keep a fixed retry backoff for credential failures to avoid spamming the database
                 self._retry_auth_after = time.time() + 60.0
-        except (httpx.RequestError, Exception) as e:
-            err_msg = str(e)
-            is_connection_error = any(
-                kw in err_msg.lower()
-                for kw in ("connect", "unreachable", "timeout", "all connection attempts failed", "refused")
+        except httpx.RequestError as exc:
+            err_msg = str(exc) or exc.__class__.__name__
+            log.warning(
+                "[AGENT_LOG_CLIENT] Backend core is offline or booting up. Reconnecting in %.1fs... (Detail: %s)",
+                self._backoff_delay,
+                err_msg
             )
-            if is_connection_error:
-                log.warning(
-                    "[AGENT_LOG_CLIENT] Backend core is offline or booting up. Reconnecting in %.1fs... (Detail: %s)",
-                    self._backoff_delay,
-                    err_msg
-                )
-                self._retry_auth_after = time.time() + self._backoff_delay
-                self._backoff_delay = min(self._backoff_delay * 2, 60.0)  # Exponential backoff
-            else:
-                log.error("[AGENT_LOG_CLIENT] Auth error: %s", err_msg)
-                self._retry_auth_after = time.time() + 60.0
+            self._retry_auth_after = time.time() + self._backoff_delay
+            self._backoff_delay = min(self._backoff_delay * 2, 60.0)  # Exponential backoff
+        except Exception as e:
+            err_msg = str(e) or e.__class__.__name__
+            log.error("[AGENT_LOG_CLIENT] Auth error: %s", err_msg, exc_info=True)
+            self._retry_auth_after = time.time() + 60.0
 
 
 # ─── Singleton instance ───────────────────────────────────────────────────────

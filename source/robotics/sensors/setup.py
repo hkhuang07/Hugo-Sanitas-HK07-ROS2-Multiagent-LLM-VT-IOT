@@ -23,7 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'hk07_physics_node = simulation.hk07_physics_node:main',
-            'baymax_telemetry_sim = simulation.baymax_telemetry_sim:main',
+            'hugo_telemetry_sim = simulation.hugo_telemetry_sim:main',
             'hugo_action_controller_node = simulation.hugo_action_controller_node:main',
             'rppg_thermal_node = simulation.rppg_thermal_node:main',
             'rtos_watchdog_simulator = simulation.rtos_watchdog_simulator:main',

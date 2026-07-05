@@ -69,7 +69,7 @@
               </tr>
               <tr>
                 <td class="text-white font-bold">hk07-agent MAS Core</td>
-                <td class="text-green">8000</td>
+                <td class="text-green">8889</td>
                 <td>HTTP/REST</td>
                 <td>
                   <span :class="isAgentOnline ? 'state-badge green' : 'state-badge red'">
@@ -79,7 +79,7 @@
               </tr>
               <tr>
                 <td class="text-white font-bold">Dashboard Client</td>
-                <td class="text-green">3000</td>
+                <td class="text-green">3010</td>
                 <td>HTTP</td>
                 <td>
                   <span class="state-badge green">[ONLINE]</span>
@@ -327,7 +327,7 @@ const mockLogTemplates = [
   { level: 'INFO' as const, content: 'hk07.core — [MQTT Call] Inbound processor status: SUBSUMPTION_INHIBIT active=true trigger=FALL_RISK' },
   { level: 'INFO' as const, content: 'hk07.agent — [LANCEDB] Compacted 96 chat memory logs successfully' },
   { level: 'INFO' as const, content: 'hk07.core — [SECURITY] Unauthenticated request allowed for path: /actuator/health' },
-  { level: 'INFO' as const, content: 'hk07.agent — [CORS] Dynamic origin check succeeded for http://localhost:3000' },
+  { level: 'INFO' as const, content: 'hk07.agent — [CORS] Dynamic origin check succeeded for http://localhost:3010' },
   { level: 'DEBUG' as const, content: 'hk07.core — [API_KEY_BYPASS] Service-to-service auth successful for path=/api/v1/agents/status' },
   { level: 'INFO' as const, content: 'hk07.core — [AUDIT] INHIBIT | actor=0 status=SUCCESS' },
   { level: 'WARN' as const, content: 'hk07.agent — [SAFETY_WORKER] Critical facial distress detected via IPWebcam; empathy dialogue inhibited.' },
@@ -350,7 +350,7 @@ async function runHealthChecks() {
   }
 
   try {
-    const resp = await fetch('http://localhost:8000/health', { method: 'GET', mode: 'cors' })
+    const resp = await fetch('http://localhost:8889/health', { method: 'GET', mode: 'cors' })
     isAgentOnline.value = resp.ok || resp.status === 200
   } catch {
     isAgentOnline.value = false

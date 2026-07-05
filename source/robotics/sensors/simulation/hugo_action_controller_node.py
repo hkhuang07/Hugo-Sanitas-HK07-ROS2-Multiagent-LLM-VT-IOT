@@ -61,11 +61,51 @@ class HugoActionControllerNode(Node):
         # Sinusoidal timing
         self.time_t = 0.0
         
-        # Subscriptions
-        self.cmd_vel_sub = self.create_subscription(
+        # ─── Priority Action Arbitrator Configuration ───
+        self.EMERGENCY = 1
+        self.BALANCE = 2
+        self.NAV_COMMAND = 3
+        self.MONITOR_IDLE = 4
+        
+        # Dict to store latest command of each priority level:
+        # structure: {priority_level: (timestamp, linear_x, linear_z, angular_z, action)}
+        self.latest_commands = {
+            self.EMERGENCY: None,
+            self.BALANCE: None,
+            self.NAV_COMMAND: None,
+            self.MONITOR_IDLE: None
+        }
+        
+        # Motor hardware power status & last motion timestamp
+        self.motor_power_supplied = False
+        self.last_motion_ts = time.time()
+        
+        # Subscriptions for four distinct priority levels
+        self.emergency_sub = self.create_subscription(
             Twist,
-            '/control/motion/cmd_vel',
-            self.cmd_vel_callback,
+            '/control/motion/emergency',
+            self.emergency_callback,
+            10
+        )
+        
+        self.balance_sub = self.create_subscription(
+            Twist,
+            '/control/motion/balance_cmd_vel',
+            self.balance_callback,
+            10
+        )
+        
+        self.nav_sub = self.create_subscription(
+            Twist,
+            '/control/motion/nav_cmd_vel',
+            self.nav_callback,
+            10
+        )
+        
+        self.idle_sub = self.create_subscription(
+            Twist,
+            '/control/motion/idle',
+            self.idle_callback,
             10
         )
         
@@ -73,18 +113,71 @@ class HugoActionControllerNode(Node):
         self.joint_pub = self.create_publisher(JointState, '/telemetry/joint_states', 10)
         self.imu_pub = self.create_publisher(Imu, '/telemetry/imu', 10)
         
+        from geometry_msgs.msg import PoseStamped
+        self.pose_pub = self.create_publisher(PoseStamped, '/telemetry/pose', 10)
+        
         # 50Hz Timer Loop for kinematics simulation
         self.timer = self.create_timer(0.02, self.control_step)
         
-        log.info("=== HUGO KINEMATICS & ACTION CONTROLLER NODE INITIALIZED ===")
+        log.info("=== HUGO KINEMATICS, MOTOR ARBITRATOR & POWER CONTROL NODE INITIALIZED ===")
+        log.info("Priority Arbitrator registered topics:")
+        log.info("  Level 1: /control/motion/emergency")
+        log.info("  Level 2: /control/motion/balance_cmd_vel")
+        log.info("  Level 3: /control/motion/nav_cmd_vel")
+        log.info("  Level 4: /control/motion/idle")
 
-    def cmd_vel_callback(self, msg):
+    def emergency_callback(self, msg):
+        """
+        Callback for Priority 1: EMERGENCY (SOS/Ngã/Hụt chất dẫn truyền).
+        Instantly preempts and drops lower priority command streams.
+        """
         with self.state_lock:
-            self.cmd_linear_x = msg.linear.x
-            self.cmd_linear_z = msg.linear.z
-            self.cmd_angular_z = msg.angular.z
-            # Use angular.x to select actions via web UI (0=idle, 1=cầm nắm, 2=phun, 3=ôm)
-            self.current_action = msg.angular.x
+            now = time.time()
+            log.warning(
+                f">>> [ARBITRATOR - EMERGENCY LEVEL 1] SOS/Fall/Biomarker fault trigger! "
+                f"Preempting and purging lower-priority command buffer."
+            )
+            # Purge/drop lower priority command records
+            self.latest_commands[self.BALANCE] = None
+            self.latest_commands[self.NAV_COMMAND] = None
+            self.latest_commands[self.MONITOR_IDLE] = None
+            # Store emergency command
+            self.latest_commands[self.EMERGENCY] = (now, msg.linear.x, msg.linear.z, msg.angular.z, msg.angular.x)
+
+    def balance_callback(self, msg):
+        """
+        Callback for Priority 2: BALANCE (Standing balance controller PID feedback).
+        """
+        with self.state_lock:
+            emerg = self.latest_commands[self.EMERGENCY]
+            if emerg is not None and (time.time() - emerg[0]) < 10.0:
+                return
+            now = time.time()
+            self.latest_commands[self.BALANCE] = (now, msg.linear.x, msg.linear.z, msg.angular.z, msg.angular.x)
+
+    def nav_callback(self, msg):
+        """
+        Callback for Priority 3: NAV_COMMAND (Navigation agent APF waypoint).
+        """
+        with self.state_lock:
+            emerg = self.latest_commands[self.EMERGENCY]
+            if emerg is not None and (time.time() - emerg[0]) < 10.0:
+                return
+            bal = self.latest_commands[self.BALANCE]
+            # If balance corrections are active (within 0.5s), ignore navigation commands
+            if bal is not None and (time.time() - bal[0]) < 0.5:
+                return
+            now = time.time()
+            self.latest_commands[self.NAV_COMMAND] = (now, msg.linear.x, msg.linear.z, msg.angular.z, msg.angular.x)
+
+    def idle_callback(self, msg):
+        """
+        Callback for Priority 4: MONITOR_IDLE.
+        Only executed if no higher levels are active.
+        """
+        with self.state_lock:
+            now = time.time()
+            self.latest_commands[self.MONITOR_IDLE] = (now, msg.linear.x, msg.linear.z, msg.angular.z, msg.angular.x)
 
     def solve_arm_ik(self, tx, ty, tz, is_left=False):
         """
@@ -128,12 +221,70 @@ class HugoActionControllerNode(Node):
     def control_step(self):
         dt = 0.02
         self.time_t += dt
+        now = time.time()
         
+        # State variables to process
+        v_x = 0.0
+        v_z = 0.0
+        w_yaw = 0.0
+        action = 0
+        active_pri = self.MONITOR_IDLE
         with self.state_lock:
-            v_x = self.cmd_linear_x
-            v_z = self.cmd_linear_z
-            w_yaw = self.cmd_angular_z
-            action = int(self.current_action)
+            # Check commands by priority: EMERGENCY (1), BALANCE (2), NAV_COMMAND (3), MONITOR_IDLE (4)
+            cmd_emerg = self.latest_commands[self.EMERGENCY]
+            if cmd_emerg is not None and (now - cmd_emerg[0]) < 10.0:
+                v_x, v_z, w_yaw, action = cmd_emerg[1], cmd_emerg[2], cmd_emerg[3], int(cmd_emerg[4])
+                active_pri = self.EMERGENCY
+            else:
+                cmd_bal = self.latest_commands[self.BALANCE]
+                if cmd_bal is not None and (now - cmd_bal[0]) < 1.0:
+                    v_x, v_z, w_yaw, action = cmd_bal[1], cmd_bal[2], cmd_bal[3], int(cmd_bal[4])
+                    active_pri = self.BALANCE
+                else:
+                    cmd_nav = self.latest_commands[self.NAV_COMMAND]
+                    if cmd_nav is not None and (now - cmd_nav[0]) < 2.0:
+                        v_x, v_z, w_yaw, action = cmd_nav[1], cmd_nav[2], cmd_nav[3], int(cmd_nav[4])
+                        active_pri = self.NAV_COMMAND
+                    else:
+                        cmd_idle = self.latest_commands[self.MONITOR_IDLE]
+                        if cmd_idle is not None:
+                            v_x, v_z, w_yaw, action = cmd_idle[1], cmd_idle[2], cmd_idle[3], int(cmd_idle[4])
+                            active_pri = self.MONITOR_IDLE
+            
+            self.cmd_linear_x = v_x
+            self.cmd_linear_z = v_z
+            self.cmd_angular_z = w_yaw
+            self.current_action = action
+ 
+        # ─── Motor Power Line Simulation (Fail-safe Supply Control) ───
+        is_moving = (abs(v_x) > 0.01 or abs(v_z) > 0.01 or abs(w_yaw) > 0.01 or action != 0)
+        if is_moving:
+            self.last_motion_ts = now
+            if not self.motor_power_supplied:
+                self.motor_power_supplied = True
+                log.info(
+                    f">>> [MOTOR_CONTROLLER] Command priority LEVEL {active_pri} detected! "
+                    f"Power line ST1 ON (24V). Releasing safety electromagnetic brakes."
+                )
+            
+            # Real-world Motor Electrical Logs
+            import random
+            motor_current = 0.5 + 1.2 * math.sqrt(v_x**2 + v_z**2) + random.uniform(-0.05, 0.05)
+            log.info(
+                f">>> [MOTOR_CONTROL] Hub motors active: speed={v_x:.2f}m/s, yaw_rate={w_yaw:.2f}rad/s. "
+                f"PMU consumption: current={motor_current:.2f}A, power={motor_current*24.0:.1f}W."
+            )
+            if action == 3:
+                log.info(
+                    ">>> [PNEUMATIC_ARMOR] Soft-suit pump powered (24V, 2.8A). "
+                    "Expanding chambers. Target pressure: 2.3 PSI."
+                )
+        else:
+            if self.motor_power_supplied and (now - self.last_motion_ts) > 3.0:
+                self.motor_power_supplied = False
+                log.info(
+                    f">>> [MOTOR_CONTROLLER] Hardware idle for 3.0s. Power line ST1 OFF (0V). "
+                )
             
         # 1. Integrate linear/angular velocities to update position and yaw
         # Simple Euler integration
@@ -226,7 +377,7 @@ class HugoActionControllerNode(Node):
         ]
         self.joint_pub.publish(js_msg)
         
-        # 4. Compile and Publish IMU Telemetry (including integrated position)
+        # 4. Compile and Publish IMU & PoseStamped Telemetry
         cy = math.cos(self.yaw * 0.5)
         sy = math.sin(self.yaw * 0.5)
         cp = math.cos(0.0) # pitch = 0
@@ -247,16 +398,28 @@ class HugoActionControllerNode(Node):
         imu_msg.orientation.y = qy
         imu_msg.orientation.z = qz
         
-        # Simulated acceleration
+        # Simulated acceleration & actual angular velocity
         imu_msg.linear_acceleration.x = v_x / dt if dt > 0 else 0.0
         imu_msg.linear_acceleration.y = 0.0
         imu_msg.linear_acceleration.z = 9.81
-        
-        # Pack integrated physical position in angular_velocity
-        imu_msg.angular_velocity.x = self.pos_x
-        imu_msg.angular_velocity.y = self.pos_y
-        imu_msg.angular_velocity.z = self.pos_z
+        imu_msg.angular_velocity.x = 0.0
+        imu_msg.angular_velocity.y = 0.0
+        imu_msg.angular_velocity.z = w_yaw
         self.imu_pub.publish(imu_msg)
+        
+        # Publish PoseStamped for position tracking (eliminates topic hacking)
+        from geometry_msgs.msg import PoseStamped
+        pose_msg = PoseStamped()
+        pose_msg.header.stamp = stamp
+        pose_msg.header.frame_id = "odom"
+        pose_msg.pose.position.x = self.pos_x
+        pose_msg.pose.position.y = self.pos_y
+        pose_msg.pose.position.z = self.pos_z
+        pose_msg.pose.orientation.w = qw
+        pose_msg.pose.orientation.x = qx
+        pose_msg.pose.orientation.y = qy
+        pose_msg.pose.orientation.z = qz
+        self.pose_pub.publish(pose_msg)
 
 def main(args=None):
     rclpy.init(args=args)

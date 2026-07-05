@@ -127,56 +127,102 @@ class GlobalStreamingService {
       // 3. Update sensor telemetry store (IMU/environment/activity)
       if (data.imu && Object.keys(data.imu).length > 0) {
         _kinematicsStore!.updateKinematics(data.imu)
+
+        const orient = data.imu.orientation || {}
+        const isNum = (v: any) => v !== undefined && v !== null && !isNaN(Number(v))
+        const storeOrient = _sensorStore!.imu.orientation
+
+        const raw_w = isNum(data.imu.qw) ? Number(data.imu.qw) : (isNum(orient.w) ? Number(orient.w) : (isNum(orient.qw) ? Number(orient.qw) : storeOrient.w))
+        const raw_x = isNum(data.imu.qx) ? Number(data.imu.qx) : (isNum(orient.x) ? Number(orient.x) : (isNum(orient.qx) ? Number(orient.qx) : storeOrient.x))
+        const raw_y = isNum(data.imu.qy) ? Number(data.imu.qy) : (isNum(orient.y) ? Number(orient.y) : (isNum(orient.qy) ? Number(orient.qy) : storeOrient.y))
+        const raw_z = isNum(data.imu.qz) ? Number(data.imu.qz) : (isNum(orient.z) ? Number(orient.z) : (isNum(orient.qz) ? Number(orient.qz) : storeOrient.z))
+
+        const gyro = data.imu.angular_velocity || {}
+        const storeGyro = _sensorStore!.imu.angular_velocity
+        const raw_gx = isNum(data.imu.gyro_x) ? Number(data.imu.gyro_x) : (isNum(gyro.x) ? Number(gyro.x) : storeGyro.x)
+        const raw_gy = isNum(data.imu.gyro_y) ? Number(data.imu.gyro_y) : (isNum(gyro.y) ? Number(gyro.y) : storeGyro.y)
+        const raw_gz = isNum(data.imu.gyro_z) ? Number(data.imu.gyro_z) : (isNum(gyro.z) ? Number(gyro.z) : storeGyro.z)
+
+        const accel = data.imu.linear_acceleration || {}
+        const storeAccel = _sensorStore!.imu.linear_acceleration
+        const raw_ax = isNum(data.imu.accel_x) ? Number(data.imu.accel_x) : (isNum(accel.x) ? Number(accel.x) : storeAccel.x)
+        const raw_ay = isNum(data.imu.accel_y) ? Number(data.imu.accel_y) : (isNum(accel.y) ? Number(accel.y) : storeAccel.y)
+        const raw_az = isNum(data.imu.accel_z) ? Number(data.imu.accel_z) : (isNum(accel.z) ? Number(accel.z) : storeAccel.z)
+
+        const mag = data.imu.magnetometer || {}
+        const storeMag = _sensorStore!.imu.magnetometer
+        const raw_mx = isNum(data.imu.mag_x) ? Number(data.imu.mag_x) : (isNum(mag.x) ? Number(mag.x) : storeMag.x)
+        const raw_my = isNum(data.imu.mag_y) ? Number(data.imu.mag_y) : (isNum(mag.y) ? Number(mag.y) : storeMag.y)
+        const raw_mz = isNum(data.imu.mag_z) ? Number(data.imu.mag_z) : (isNum(mag.z) ? Number(mag.z) : storeMag.z)
+
         _sensorStore!.updateImu({
           orientation: {
-            w: data.imu.qw ?? 1.0,
-            x: data.imu.qx ?? 0.0,
-            y: data.imu.qy ?? 0.0,
-            z: data.imu.qz ?? 0.0,
+            w: raw_w,
+            x: raw_x,
+            y: raw_y,
+            z: raw_z,
           },
           angular_velocity: {
-            x: data.imu.gyro_x ?? 0.0,
-            y: data.imu.gyro_y ?? 0.0,
-            z: data.imu.gyro_z ?? 0.0,
+            x: raw_gx,
+            y: raw_gy,
+            z: raw_gz,
           },
           linear_acceleration: {
-            x: data.imu.accel_x ?? 0.0,
-            y: data.imu.accel_y ?? 0.0,
-            z: data.imu.accel_z ?? 0.0,
+            x: raw_ax,
+            y: raw_ay,
+            z: raw_az,
           },
           magnetometer: {
-            x: data.imu.mag_x ?? 0.0,
-            y: data.imu.mag_y ?? 0.0,
-            z: data.imu.mag_z ?? 0.0,
+            x: raw_mx,
+            y: raw_my,
+            z: raw_mz,
           },
-          compass_heading: data.imu.compass_heading ?? 0,
+          compass_heading: data.imu.compass_heading !== undefined ? data.imu.compass_heading : null,
+          is_simulated: data.imu.is_simulated ?? false,
         })
       }
 
       // 4. Update environment data if available
       if (data.environment) {
         _sensorStore!.updateEnvironment({
-          ambient_light: data.environment.ambient_light ?? 0,
-          barometric_pressure: data.environment.barometric_pressure ?? 1013.25,
-          pressure_delta_hpa: data.environment.pressure_delta_hpa ?? 0,
-          timestamp_ms: Date.now(),
+          ambient_light: data.environment.ambient_light !== undefined ? data.environment.ambient_light : null,
+          barometric_pressure: data.environment.barometric_pressure !== undefined ? data.environment.barometric_pressure : null,
+          pressure_delta_hpa: data.environment.pressure_delta_hpa !== undefined ? data.environment.pressure_delta_hpa : null,
+          battery_level: data.environment.battery_level !== undefined ? data.environment.battery_level : null,
+          battery_temp: data.environment.battery_temp !== undefined ? data.environment.battery_temp : null,
+          timestamp_ms: data.environment.timestamp_ms ?? Date.now(),
+          is_simulated: data.environment.is_simulated ?? false,
         })
       }
 
       // 5. Update activity data if available
       if (data.activity) {
         _sensorStore!.updateActivity({
-          pedometer_steps: data.activity.steps ?? data.vitals?.step_count ?? 0,
-          activity_type: data.activity.type ?? 'unknown',
+          pedometer_steps: data.activity.pedometer_steps ?? data.vitals?.step_count ?? 0,
+          activity_type: data.activity.activity_type ?? 'unknown',
           wrist_motion: data.activity.wrist_motion ?? [],
-          timestamp_ms: Date.now(),
+          timestamp_ms: data.activity.timestamp_ms ?? Date.now(),
         })
       }
 
-      // 6. Mark stores live when daemon is healthy
-      if (data.daemon_status === 'OK') {
+      // 6. Update location data if available
+      if (data.location) {
+        _sensorStore!.updateLocation({
+          latitude: data.location.latitude ?? 0,
+          longitude: data.location.longitude ?? 0,
+          altitude: data.location.altitude ?? 0,
+          timestamp_ms: data.location.timestamp_ms ?? Date.now(),
+        })
+      }
+
+      // 6. Mark stores live independently based on actual data presence
+      if (data.daemon_status === 'OK' || data.daemon_status === 'RUNNING') {
         _kinematicsStore!.setLive?.(true)
+      }
+      if (data.vitals && data.vitals.status === 'ONLINE') {
         _vitalsStore!.isConnected = true
+      }
+      if (data.imu && Object.keys(data.imu).length > 0) {
         _sensorStore!.isLive = true
       }
 

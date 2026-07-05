@@ -243,16 +243,14 @@ function animate() {
 
   if (!scene || !renderer || !camera || !wireframeMesh) return;
 
-  // Update rotation based on accelerometer data
-  const accel = props.telemetry.rawAccel;
-  const rotationScale = 0.02;
+  // Directly set the rotation to the actual pitch, yaw, and roll received in props.telemetry
+  const pitchRad = ((props.telemetry.pitch || 0) * Math.PI) / 180;
+  const yawRad = ((props.telemetry.yaw || 0) * Math.PI) / 180;
+  const rollRad = ((props.telemetry.roll || 0) * Math.PI) / 180;
 
-  meshRotation.value.x += accel.y * rotationScale;
-  meshRotation.value.y += accel.x * rotationScale;
-
-  wireframeMesh.rotation.x = meshRotation.value.x;
-  wireframeMesh.rotation.y = meshRotation.value.y;
-  wireframeMesh.rotation.z = (props.telemetry.yaw * Math.PI) / 180;
+  wireframeMesh.rotation.x = pitchRad;
+  wireframeMesh.rotation.y = yawRad;
+  wireframeMesh.rotation.z = rollRad;
 
   // Add pulsing effect on fall detection
   if (props.telemetry.fallState) {

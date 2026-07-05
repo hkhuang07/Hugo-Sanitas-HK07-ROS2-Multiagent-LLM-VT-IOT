@@ -35,6 +35,16 @@ if "%WIFI_IP%"=="" (
     echo [SUCCESS] Laptop Wi-Fi IP Target: %WIFI_IP%
     echo [SUCCESS] Phone Hotspot Gateway IP: %PHONE_IP%
 )
+:: Extract WSL2 IP address
+set "WSL_IP="
+for /f "usebackq tokens=1" %%i in (`wsl -e hostname -I`) do set "WSL_IP=%%i"
+
+if "%WSL_IP%"=="" (
+    echo [WARNING] Failed to extract WSL2 IP address. Falling back to loopback 127.0.0.1
+    set "WSL_IP=127.0.0.1"
+) else (
+    echo [SUCCESS] WSL2 Target VM IP: %WSL_IP%
+)
 
 echo.
 echo ======================================================================
@@ -56,10 +66,14 @@ echo.
 echo ======================================================================
 echo [PROCESS] PROVISIONING SENSORLOGS PRIMARY CHANNEL (PORT 5005)
 echo ======================================================================
-echo [COMMAND] netsh interface portproxy add v4tov4 listenport=5005 listenaddress=%WIFI_IP% connectport=5005 connectaddress=127.0.0.1
-netsh interface portproxy add v4tov4 listenport=5005 listenaddress=%WIFI_IP% connectport=5005 connectaddress=127.0.0.1
+echo [COMMAND] netsh interface portproxy add v4tov4 listenport=5005 listenaddress=0.0.0.0 connectport=5005 connectaddress=!WSL_IP!
+netsh interface portproxy add v4tov4 listenport=5005 listenaddress=0.0.0.0 connectport=5005 connectaddress=!WSL_IP!
 if !errorlevel! equ 0 (
-    echo [SUCCESS] Inbound traffic on %WIFI_IP%:5005 mapped -^> 127.0.0.1:5005 (WSL2)
+    echo [SUCCESS] Inbound traffic on 0.0.0.0:5005 mapped -^> !WSL_IP!:5005 (WSL2^)
+    echo [INFO] Provisioning Windows Firewall rule for Port 5005...
+    netsh advfirewall firewall delete rule name="HK07 Ingest 5005" >nul 2>&1
+    netsh advfirewall firewall add rule name="HK07 Ingest 5005" dir=in action=allow protocol=TCP localport=5005 >nul
+    echo [SUCCESS] Windows Firewall rule "HK07 Ingest 5005" created/verified.
 ) else (
     echo [CRITICAL ERROR] Binding statement failed for Port 5005.
 )
@@ -68,25 +82,26 @@ echo.
 echo ======================================================================
 echo [PROCESS] PROVISIONING SENSORLOGS BACKUP CHANNEL (PORT 5006)
 echo ======================================================================
-echo [COMMAND] netsh interface portproxy add v4tov4 listenport=5006 listenaddress=%WIFI_IP% connectport=5006 connectaddress=127.0.0.1
-netsh interface portproxy add v4tov4 listenport=5006 listenaddress=%WIFI_IP% connectport=5006 connectaddress=127.0.0.1
+echo [COMMAND] netsh interface portproxy add v4tov4 listenport=5006 listenaddress=0.0.0.0 connectport=5006 connectaddress=!WSL_IP!
+netsh interface portproxy add v4tov4 listenport=5006 listenaddress=0.0.0.0 connectport=5006 connectaddress=!WSL_IP!
 if !errorlevel! equ 0 (
-    echo [SUCCESS] Inbound traffic on %WIFI_IP%:5006 mapped -^> 127.0.0.1:5006 (WSL2)
+    echo [SUCCESS] Inbound traffic on 0.0.0.0:5006 mapped -^> !WSL_IP!:5006 (WSL2^)
+    echo [INFO] Provisioning Windows Firewall rule for Port 5006...
+    netsh advfirewall firewall delete rule name="HK07 Ingest 5006" >nul 2>&1
+    netsh advfirewall firewall add rule name="HK07 Ingest 5006" dir=in action=allow protocol=TCP localport=5006 >nul
+    echo [SUCCESS] Windows Firewall rule "HK07 Ingest 5006" created/verified.
 ) else (
     echo [CRITICAL ERROR] Binding statement failed for Port 5006.
 )
 
+
 echo.
 echo ======================================================================
-echo [PROCESS] PROVISIONING ROSBRIDGE WEBSOCKET SUITE PORTAL (PORT 9090)
+echo [PROCESS] DE-PROVISIONING ROSBRIDGE WEBSOCKET SUITE PORTAL (PORT 9090)
+echo [INFO] Removing self-referential loopback proxy to allow native WSL2 forwarding
 echo ======================================================================
-echo [COMMAND] netsh interface portproxy add v4tov4 listenport=9090 listenaddress=127.0.0.1 connectport=9090 connectaddress=127.0.0.1
-netsh interface portproxy add v4tov4 listenport=9090 listenaddress=127.0.0.1 connectport=9090 connectaddress=127.0.0.1
-if !errorlevel! equ 0 (
-    echo [SUCCESS] Loopback communication matrix arming successful for port 9090.
-) else (
-    echo [CRITICAL ERROR] Binding statement failed for Port 9090.
-)
+netsh interface portproxy delete v4tov4 listenport=9090 listenaddress=127.0.0.1 >nul 2>&1
+echo [SUCCESS] Self-referential loopback proxy for port 9090 cleared.
 
 echo.
 echo ======================================================================
@@ -98,7 +113,6 @@ echo ----------------------------------------------------------------------
 
 echo ======================================================================
 echo [INFO] PIPELINE VERIFICATION COMPLETE. SYSTEM INGESTION LIVE.
-echo [INFO] Set Mobile Endpoint Target URL to: http://%WIFI_IP%:5005/data
+echo [INFO] Set Mobile Endpoint Target URL to: http://%WIFI_IP%:5006/data
 echo [INFO] IPWebCam Endpoint Target URL is: http://%PHONE_IP%:8080/video
 echo ======================================================================
-pause
