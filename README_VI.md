@@ -110,6 +110,17 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 
 ---
 
+### 8. Bản Đồ Dẫn Đường Chiến Thuật & Tìm Đường Đi (Tactical Navigation)
+![Map](./asset/map.jpg)
+* **Mô tả:** Giao diện điều hướng bản đồ dạng lưới tọa độ quân sự hỗ trợ các tính năng:
+  * **Tìm kiếm địa chỉ thực tế (Nominatim API):** Tự động truy vấn và phân tích tọa độ địa chỉ thực tế, giới hạn trong lãnh thổ Việt Nam (`countrycodes=vn`). Tích hợp bộ lọc từ khóa cục bộ thông minh cho các quán cafe/doanh nghiệp địa phương (như quán cafe Ngọc Trai Núi).
+  * **Tìm đường đi ngắn nhất (OSRM API):** Tự động liên kết cơ sở dữ liệu giao thông đường bộ thời gian thực để tính toán tuyến đường đi tối ưu nhất và liệt kê chi tiết các bước điều hướng di chuyển.
+  * **Giới hạn biên giới đất liền:** Tự động chặn và cảnh báo nếu tọa độ di chuyển vượt khỏi biên giới lãnh thổ Việt Nam.
+  * **Điều khiển Camera linh hoạt:** Chế độ `LKD_CENTER` giúp tự động khóa màn hình và di chuyển camera bám theo tọa độ định vị của Robot, chế độ `FREE_CAM` cho phép di chuyển kéo thả bản đồ tự do.
+  * **Đồng bộ hóa Telemetry:** Nhận và cập nhật liên tục tọa độ định vị của Robot truyền lên từ điện thoại/thiết bị cảm biến di động qua WebSocket.
+
+---
+
 ## ⚙️ Kiến Trúc Hệ Thống
 
 ```

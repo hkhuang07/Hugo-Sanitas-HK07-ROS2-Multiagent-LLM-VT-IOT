@@ -57,6 +57,12 @@ export const router = createRouter({
       component: () => import('../views/DigitalTwinView.vue'),
       meta: { requiresAuth: true }
     },
+    {
+      path: '/map',
+      name: 'Map',
+      component: () => import('../views/MapView.vue'),
+      meta: { requiresAuth: true }
+    },
 
     {
       path: '/sensor-telemetry',

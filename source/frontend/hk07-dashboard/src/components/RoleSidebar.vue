@@ -47,23 +47,26 @@
           <router-link to="/digital-twin" class="sidebar-nav-item dt-nav-item" active-class="active">
             <span class="index text-dim">[04]</span> HOLOGRAPHIC_TWIN
           </router-link>
+          <router-link to="/map" class="sidebar-nav-item" active-class="active">
+            <span class="index text-dim">[05]</span> HK07_MAP_TACTICAL
+          </router-link>
           <router-link to="/companion" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[05]</span> COMPANION_UPLINK
+            <span class="index text-dim">[06]</span> COMPANION_UPLINK
           </router-link>
           <router-link to="/agents" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[06]</span> AGENT_SYSTEM_LOG
+            <span class="index text-dim">[07]</span> AGENT_SYSTEM_LOG
           </router-link>
           <router-link to="/safety" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[07]</span> SAFETY_COORDINATES
+            <span class="index text-dim">[08]</span> SAFETY_COORDINATES
           </router-link>
           <router-link to="/history" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[08]</span> HISTORICAL_METRICS
+            <span class="index text-dim">[09]</span> HISTORICAL_METRICS
           </router-link>
           <router-link to="/profile" class="sidebar-nav-item" active-class="active">
-            <span class="index text-dim">[09]</span> PROFILE_SETTINGS
+            <span class="index text-dim">[10]</span> PROFILE_SETTINGS
           </router-link>
           <router-link to="/system-observer" class="sidebar-nav-item observer-nav-item" active-class="active">
-            <span class="index text-dim">[10]</span> SYSTEM_OBSERVER_HUD
+            <span class="index text-dim">[11]</span> SYSTEM_OBSERVER_HUD
           </router-link>
           
         </div>

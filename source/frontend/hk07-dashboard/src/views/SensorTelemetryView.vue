@@ -262,82 +262,87 @@
     <!-- 4. GPS LOCATION (100% width) -->
     <div class="sv-panel gps-panel full-width" style="margin-bottom: 16px;">
       <div class="panel-header" style="margin-bottom:8px;">
-        <span class="panel-tag">[ GPS LOCATION ]</span>
+        <span class="panel-tag">[ GPS // REAL-TIME FIELD POSITION ]</span>
         <span class="panel-status" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
       </div>
       <div class="gps-layout">
         <div class="map-placeholder">
-          <!-- Real map container -->
+          <!-- Leaflet map container -->
           <div ref="mapContainer" class="real-map"></div>
-          
-          <!-- Static HUD Overlay -->
+
+          <!-- Functional HUD Overlay -->
           <div class="map-hud-overlay">
-            <!-- Center lock targeting bracket -->
-            <div class="hud-center-targeting">
-              <div class="target-bracket bracket-tl"></div>
-              <div class="target-bracket bracket-tr"></div>
-              <div class="target-bracket bracket-bl"></div>
-              <div class="target-bracket bracket-br"></div>
-              <span class="target-cross">+</span>
-              <span class="target-status font-mono">LOCK ON</span>
-            </div>
-            
-            <!-- Tech scan line sweep -->
+            <!-- Scan line sweep -->
             <div class="radar-scanline"></div>
-            
-            <!-- Tech corner details containing coordinates and metadata -->
-            <div class="tech-tag tag-tl">
-              <div class="tech-row"><span class="tech-lbl">LATITUDE:</span> <span class="tech-val font-mono">{{ safeToFixed(sensorStore.location?.latitude, 6, '0.000000') }}°</span></div>
-              <div class="tech-row"><span class="tech-lbl">LONGITUDE:</span> <span class="tech-val font-mono">{{ safeToFixed(sensorStore.location?.longitude, 6, '0.000000') }}°</span></div>
-            </div>
-            
-            <div class="tech-tag tag-tr">
-              <div class="tech-row"><span class="tech-lbl">ALTITUDE:</span> <span class="tech-val font-mono">{{ safeToFixed(sensorStore.location?.altitude, 1, '0.0') }} m</span></div>
-              <div class="tech-row"><span class="tech-lbl">SIGNAL:</span> <span class="tech-val font-mono" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span></div>
-            </div>
-            
-            <div class="tech-tag tag-bl font-mono">
-              <div class="tech-row">SAT / 30tx.78A</div>
-              <div class="tech-row text-danger">LOCK: ACTIVE (98.2%)</div>
-            </div>
-            
-            <div class="tech-tag tag-br font-mono">
-              <div class="tech-row">GPH_V.02 / COORDINATES</div>
-              <div class="tech-row">SYS_TIME: MON 02:09</div>
+
+            <!-- TOP-LEFT: Range scale control (hacker tactical zoom) -->
+            <div class="hud-tactical-zoom font-mono">
+              <div class="zoom-title">// RANGE_SCALE</div>
+              <button 
+                v-for="r in tacticalRanges" 
+                :key="r.zoom" 
+                @click="setTacticalRange(r.zoom)" 
+                :class="{ active: currentZoom === r.zoom }" 
+                class="zoom-btn"
+              >
+                [{{ r.label.toUpperCase() }}]
+              </button>
+              <div class="zoom-title" style="margin-top: 6px; border-top: 1px dashed rgba(0, 255, 102, 0.2); padding-top: 4px;">// CAM_TRACK</div>
+              <button @click="recenterMap" :class="{ active: isTracking }" class="zoom-btn">
+                [{{ isTracking ? 'LKD_CENTER' : 'FREE_CAM' }}]
+              </button>
             </div>
 
-            <!-- Glowing target concentric rings -->
-            <div class="hud-concentric-ring ring-1"></div>
-            <div class="hud-concentric-ring ring-2"></div>
-            
-            <!-- Floating code/telemetry console in bottom-left above tag-bl -->
+            <!-- TOP-RIGHT: Coordinates & Status HUD -->
+            <div class="coord-readout font-mono">
+              <div class="coord-line">
+                <span class="coord-lbl">LAT</span>
+                <span class="coord-val">{{ safeToFixed(sensorStore.location?.latitude, 6, '0.000000') }}°</span>
+              </div>
+              <div class="coord-line">
+                <span class="coord-lbl">LNG</span>
+                <span class="coord-val">{{ safeToFixed(sensorStore.location?.longitude, 6, '0.000000') }}°</span>
+              </div>
+              <div class="coord-line">
+                <span class="coord-lbl">ALT</span>
+                <span class="coord-val">{{ safeToFixed(sensorStore.location?.altitude, 1, '0.0') }}<span class="coord-unit">m</span></span>
+              </div>
+              <div class="coord-line">
+                <span class="coord-lbl">HDG</span>
+                <span class="coord-val">{{ safeToFixed(sensorStore.imu?.compass_heading, 1, '000.0') }}°</span>
+              </div>
+              <div class="coord-line">
+                <span class="coord-lbl">SCALE</span>
+                <span class="coord-val">1:{{ currentZoom === 19 ? '500' : currentZoom === 18 ? '1200' : currentZoom === 17 ? '2500' : currentZoom === 16 ? '5000' : '25000' }}</span>
+              </div>
+              <div class="coord-line" style="margin-top: 4px; border-top: 1px dashed rgba(0, 255, 102, 0.2); padding-top: 4px;">
+                <span class="coord-lbl">SIG</span>
+                <span class="coord-val" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
+              </div>
+            </div>
+
+            <!-- Central targeting crosshair (always at center of map) -->
+            <div class="map-crosshair">
+              <span class="crosshair-h"></span>
+              <span class="crosshair-v"></span>
+              <span class="crosshair-dot"></span>
+            </div>
+
+            <!-- BOTTOM-LEFT: Telemetry console stream -->
             <div class="hud-terminal-overlay font-mono">
-              <div class="term-line">&gt; CONNECTING SAT_LINK_9... OK</div>
-              <div class="term-line">&gt; SEC: 10.3955 N | 105.4213 E</div>
-              <div class="term-line">&gt; RESOLVING CALL TRACE... ACTIVE</div>
-            </div>
-            
-            <!-- Tactical Marker 1 -->
-            <div class="hud-tactical-marker marker-alpha" style="top: 20%; left: 30%;">
-              <div class="marker-box"></div>
-              <span class="marker-label">NAV_0307</span>
+              <div class="term-header">// TELEMETRY_STREAM</div>
+              <div v-for="(log, idx) in telemetryLogs" :key="idx" class="term-line">{{ log }}</div>
             </div>
 
-            <!-- Tactical Marker 2 -->
-            <div class="hud-tactical-marker marker-beta" style="top: 55%; left: 70%;">
-              <div class="marker-box alt-color"></div>
-              <span class="marker-label">ARM_0308</span>
+            <!-- BOTTOM-RIGHT: Target tracking & system parameters -->
+            <div class="hud-sys-parameters font-mono">
+              <div class="sys-title">// UPLINK_TELEMETRY</div>
+              <div class="sys-row"><span class="sys-lbl">SYS_STATE</span><span class="sys-val text-live">NOMINAL</span></div>
+              <div class="sys-row"><span class="sys-lbl">DEV_ID</span><span class="sys-val">HK07_MOBILE</span></div>
+              <div class="sys-row"><span class="sys-lbl">BATTERY</span><span class="sys-val">{{ safeToFixed(sensorStore.environment?.battery_level, 1, '100') }}% ({{ safeToFixed(sensorStore.environment?.battery_temp, 1, '32.0') }}°C)</span></div>
+              <div class="sys-row"><span class="sys-lbl">HR_RATE</span><span class="sys-val text-danger">{{ vitalsStore.current.heartRate > 0 ? vitalsStore.current.heartRate : '72' }} BPM</span></div>
+              <div class="sys-row"><span class="sys-lbl">ACTIVITY</span><span class="sys-val text-blue">{{ (sensorStore.activity?.activity_type || 'still').toUpperCase() }}</span></div>
             </div>
-
-            <!-- Coordinate side rails (ticks) -->
-            <div class="hud-side-rail rail-left">
-              <span>00.01</span><span>00.02</span><span>00.03</span><span>00.04</span>
-            </div>
-            <div class="hud-side-rail rail-right">
-              <span>90%</span><span>92%</span><span>95%</span><span>98%</span>
-            </div>
-
-            <div class="map-grid-lines"></div>
           </div>
         </div>
       </div>
@@ -733,6 +738,41 @@ function updateCharts() {
     stepsChart.data.datasets[0].data = steps
     stepsChart.update('none')
   }
+
+  // Real-time scrolling telemetry logging inside the 10 FPS loop
+  logUpdateTick++
+  if (logUpdateTick >= 5) {
+    logUpdateTick = 0
+    const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude.toFixed(6) : '10.395500'
+    const lng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude.toFixed(6) : '105.421300'
+    const step = sensorStore.activity.pedometer_steps
+    const type = sensorStore.activity.activity_type.toUpperCase()
+    const batt = sensorStore.environment.battery_level.toFixed(1)
+    
+    const possibleLogs = [
+      `> RX_PKT: SEC_FLOW_${sensorStore.stepsHistory.length}_OK`,
+      `> GPS_LOCK: LAT=${lat} | LNG=${lng}`,
+      `> ACCEL_XYZ: [${sensorStore.imu.linear_acceleration?.x?.toFixed(2) ?? '0.00'}, ${sensorStore.imu.linear_acceleration?.y?.toFixed(2) ?? '0.00'}, ${sensorStore.imu.linear_acceleration?.z?.toFixed(2) ?? '9.81'}]`,
+      `> COMPASS: YAW=${sensorStore.eulerAngles.yaw}° | HEADING=${sensorStore.imu.compass_heading ?? 0}°`,
+      `> PEDOMETER: TOTAL_STEPS=${step} | STATE=${type}`,
+      `> BATT_MON: CAP=${batt}% | TEMP=${sensorStore.environment.battery_temp.toFixed(1)}°C`,
+      `> SYS_STAT: HEAP_ALLOC_OK | THREADS=4`,
+      `> LINK_UPLINK: ACTIVE_PORT_3005`,
+      `> CALIBRATING REACTOR_CORE_C... COMPLETE`
+    ]
+    const randomLog = possibleLogs[Math.floor(Math.random() * possibleLogs.length)]
+    telemetryLogs.value.push(randomLog)
+    if (telemetryLogs.value.length > 5) {
+      telemetryLogs.value.shift()
+    }
+  }
+
+  // Update rotating tactical scan sweep sector on Leaflet map
+  if (mapInstance && (window as any).L) {
+    const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
+    const lng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude : 105.4213
+    updateTacticalLayers((window as any).L, lat, lng)
+  }
 }
 
 // ── Statistics Table ──────────────────────────────────────────────────────────
@@ -868,6 +908,44 @@ function exportCSV() {
 const mapContainer = ref<HTMLElement | null>(null)
 let mapInstance: any = null
 let markerInstance: any = null
+let tacticalLayersGroup: any = null
+const telemetryLogs = ref<string[]>([
+  '> CONNECTING SAT_LINK_9... OK',
+  '> SEC_UPLINK: LOCK_ACTIVE',
+  '> RESOLVING TRACKING NODES...',
+  '> TELEMETRY_STREAM: RUNNING',
+  '> ALL_SYSTEMS_NOMINAL'
+])
+let logUpdateTick = 0
+let _blueprintAnimFrame: number | null = null
+
+const currentZoom = ref(17)
+const isTracking = ref(true)
+const tacticalRanges = [
+  { label: '100m', zoom: 19 },
+  { label: '250m', zoom: 18 },
+  { label: '500m', zoom: 17 },
+  { label: '1km', zoom: 16 },
+  { label: '5km', zoom: 14 }
+]
+
+function setTacticalRange(zoom: number) {
+  currentZoom.value = zoom
+  if (mapInstance) {
+    const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
+    const lng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude : 105.4213
+    mapInstance.setView([lat, lng], zoom)
+  }
+}
+
+function recenterMap() {
+  isTracking.value = true
+  if (mapInstance) {
+    const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
+    const lng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude : 105.4213
+    mapInstance.setView([lat, lng], mapInstance.getZoom() || currentZoom.value)
+  }
+}
 
 function loadLeaflet(): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -890,23 +968,86 @@ function loadLeaflet(): Promise<any> {
   })
 }
 
+function updateTacticalLayers(L: any, lat: number, lng: number) {
+  if (!mapInstance) return
+  if (!tacticalLayersGroup) {
+    tacticalLayersGroup = L.layerGroup().addTo(mapInstance)
+  } else {
+    tacticalLayersGroup.clearLayers()
+  }
+
+  // Terminal green palette
+  const gridColor  = 'rgba(0, 255, 102, 0.22)'   // #00FF66 — geo graticule grid
+  const gridWeight = 0.6
+
+  // ── GEO GRATICULE GRID ─────────────────────────────────────────────────────
+  // Draw lat lines every ~100m and lng lines every ~100m around current position
+  // visible radius: ±500m in each axis
+  const stepM    = 100
+  const radiusM  = 500
+  const meterToLat = (m: number) => m / 111320
+  const meterToLng = (m: number) => m / (111320 * Math.cos((lat * Math.PI) / 180))
+
+  const latStep = meterToLat(stepM)
+  const lngStep = meterToLng(stepM)
+  const latSpan = meterToLat(radiusM)
+  const lngSpan = meterToLng(radiusM)
+
+  // Latitude lines (horizontal lines)
+  const latStart = Math.ceil((lat - latSpan) / latStep) * latStep
+  for (let lineLat = latStart; lineLat <= lat + latSpan; lineLat += latStep) {
+    L.polyline(
+      [[lineLat, lng - lngSpan], [lineLat, lng + lngSpan]],
+      { color: gridColor, weight: gridWeight, interactive: false, opacity: 1 }
+    ).addTo(tacticalLayersGroup)
+  }
+
+  // Longitude lines (vertical lines)
+  const lngStart = Math.ceil((lng - lngSpan) / lngStep) * lngStep
+  for (let lineLng = lngStart; lineLng <= lng + lngSpan; lineLng += lngStep) {
+    L.polyline(
+      [[lat - latSpan, lineLng], [lat + latSpan, lineLng]],
+      { color: gridColor, weight: gridWeight, interactive: false, opacity: 1 }
+    ).addTo(tacticalLayersGroup)
+  }
+
+  // ── POSITION MARKER ──
+  L.circle([lat, lng], {
+    radius: 8,
+    color: '#00FF66',
+    weight: 1,
+    fillOpacity: 0,
+    interactive: false
+  }).addTo(tacticalLayersGroup)
+}
+
 function initMap(L: any) {
   if (!mapContainer.value) return
-  // Center map on current location if available, otherwise default to target
   const initLat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
   const initLng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude : 105.4213
 
   mapInstance = L.map(mapContainer.value, {
-    zoomControl: false,
-    attributionControl: false
-  }).setView([initLat, initLng], 16)
+    zoomControl: false,          // disabled default zoom controls (replaced with tactical range scale)
+    attributionControl: false,
+    dragging: true,             // allow dragging/panning
+    scrollWheelZoom: true,      // allow scroll wheel zoom
+    doubleClickZoom: true,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: true
+  }).setView([initLat, initLng], currentZoom.value)
 
-  // Use OpenStreetMap tiles with high-contrast inverted green filter
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap contributors'
   }).addTo(mapInstance)
 
-  // Sonar pulsing div icon
+  // Auto-disable tracking mode if the user manually drags the viewport
+  mapInstance.on('dragstart', () => {
+    isTracking.value = false
+  })
+
+  // Sonar pulsing position marker
   const pingIcon = L.divIcon({
     className: 'gps-sonar-ping',
     html: '<div class="ping-ring"></div><div class="ping-dot"></div>',
@@ -915,6 +1056,9 @@ function initMap(L: any) {
   })
 
   markerInstance = L.marker([initLat, initLng], { icon: pingIcon }).addTo(mapInstance)
+
+  // Initial graticule grid draw
+  updateTacticalLayers(L, initLat, initLng)
 }
 
 watch(
@@ -923,7 +1067,12 @@ watch(
     if (mapInstance && markerInstance && lat !== 0 && lng !== 0) {
       const pos = [lat, lng] as [number, number]
       markerInstance.setLatLng(pos)
-      mapInstance.setView(pos, mapInstance.getZoom() || 16)
+      if (isTracking.value) {
+        mapInstance.setView(pos, mapInstance.getZoom() || currentZoom.value)
+      }
+      if ((window as any).L) {
+        updateTacticalLayers((window as any).L, lat, lng)
+      }
     }
   }
 )
@@ -965,6 +1114,7 @@ onUnmounted(() => {
   if (_clockInterval) clearInterval(_clockInterval)
   if (_chartInterval) clearInterval(_chartInterval)
   if (_pktInterval) clearInterval(_pktInterval)
+  if (_blueprintAnimFrame) cancelAnimationFrame(_blueprintAnimFrame)
   accelChart?.destroy()
   gyroChart?.destroy()
   lightChart?.destroy()
@@ -1231,11 +1381,12 @@ onUnmounted(() => {
 }
 .gps-panel .map-placeholder {
   width: 100%;
-  height: 320px;
+  height: 500px;
   position: relative;
   background: #000000;
-  border: 1px solid #00FF6622;
+  border: 1px solid rgba(0, 255, 102, 0.25);
   overflow: hidden;
+  box-shadow: none;
 }
 .real-map {
   width: 100%;
@@ -1244,34 +1395,33 @@ onUnmounted(() => {
   top: 0;
   left: 0;
   z-index: 1;
-  /* Cyber-Cinematic dark green and black high-contrast inverted green filter for ultra clear street contrast */
-  filter: invert(1) hue-rotate(110deg) saturate(3.5) brightness(0.95) contrast(1.85);
+  background: #080D10;
 }
+.blueprint-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+.real-map :deep(.leaflet-tile) {
+  display: block;
+  filter: grayscale(1) invert(1) sepia(1) hue-rotate(85deg) saturate(2) contrast(1.6) brightness(0.65) !important;
+  opacity: 0.95;
+  transition: filter 0.3s, opacity 0.3s;
+}
+
 .map-hud-overlay {
   position: absolute;
   inset: 0;
   z-index: 10;
-  pointer-events: none; /* Allows pointer events to pass through for map panning/zooming */
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-}
-/* Conic sweeping radar pulse */
-.map-hud-overlay::before {
-  content: '';
-  position: absolute;
-  top: -150%;
-  left: -150%;
-  width: 300%;
-  height: 300%;
-  background: conic-gradient(from 0deg, rgba(0, 255, 102, 0.05) 0deg, transparent 75deg, transparent 360deg);
-  animation: radar-sweep 8s infinite linear;
-  z-index: 4;
-}
-@keyframes radar-sweep {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
 }
 
 /* Radar scanline sweep */
@@ -1279,8 +1429,7 @@ onUnmounted(() => {
   position: absolute;
   width: 100%;
   height: 2px;
-  background: linear-gradient(to bottom, transparent, rgba(0, 255, 102, 0.35), transparent);
-  box-shadow: 0 0 6px rgba(0, 255, 102, 0.5);
+  background: linear-gradient(to bottom, transparent, rgba(0, 255, 102, 0.25), transparent);
   top: 0;
   left: 0;
   z-index: 12;
@@ -1291,51 +1440,161 @@ onUnmounted(() => {
   100% { top: 100%; }
 }
 
-/* Tech corner metadata tags containing coordinates & signal */
-.tech-tag {
+/* TOP-LEFT: Zoom Range Selector */
+.hud-tactical-zoom {
   position: absolute;
-  font-family: 'Roboto Mono', monospace;
-  background: rgba(0, 0, 0, 0.85);
-  padding: 6px 10px;
+  top: 10px;
+  left: 10px;
+  background: rgba(10, 10, 10, 0.88);
   border: 1px solid rgba(0, 255, 102, 0.25);
-  pointer-events: none;
+  border-left: 3px solid #00FF66;
+  padding: 6px 10px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto; /* enable clicks! */
+  width: 110px;
+}
+.zoom-title {
+  font-size: 7.5px;
+  color: #00FF66;
+  opacity: 0.7;
+  letter-spacing: 1px;
+}
+.zoom-btn {
+  background: transparent;
+  border: none;
+  color: rgba(0, 255, 102, 0.5);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 9px;
+  text-align: left;
+  padding: 2px 0;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.2s ease;
+}
+.zoom-btn:hover {
+  color: #00FF66;
+  padding-left: 2px;
+}
+.zoom-btn.active {
+  color: #00FF66;
+  font-weight: 700;
+  text-shadow: 0 0 4px rgba(0, 255, 102, 0.6);
+}
+
+/* TOP-RIGHT: Coordinates & Status HUD */
+.coord-readout {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  background: rgba(10, 10, 10, 0.88);
+  border: 1px solid rgba(0, 255, 102, 0.25);
+  border-left: 3px solid #00FF66;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 140px;
+}
+.coord-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+}
+.coord-lbl {
+  color: #00FF66;
+  opacity: 0.6;
+}
+.coord-val {
+  color: #00FF66;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.coord-unit {
+  font-size: 8px;
+  opacity: 0.8;
+  margin-left: 1px;
+}
+
+/* BOTTOM-LEFT: Telemetry console stream */
+.hud-terminal-overlay {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  width: 220px;
+  background: rgba(10, 10, 10, 0.88);
+  border: 1px solid rgba(0, 255, 102, 0.25);
+  border-left: 3px solid #00FF66;
+  padding: 6px 10px;
+  z-index: 15;
+  font-size: 7.5px;
+  line-height: 1.4;
+  color: rgba(0, 255, 102, 0.9);
+}
+.term-header {
+  font-size: 8px;
+  font-weight: 700;
+  color: #00FF66;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed rgba(0, 255, 102, 0.2);
+  padding-bottom: 2px;
+}
+.term-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* BOTTOM-RIGHT: Target tracking & system parameters */
+.hud-sys-parameters {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 180px;
+  background: rgba(10, 10, 10, 0.88);
+  border: 1px solid rgba(0, 255, 102, 0.25);
+  border-left: 3px solid #00FF66;
+  padding: 6px 10px;
   z-index: 15;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
-.tech-row {
+.sys-title {
+  font-size: 8px;
+  font-weight: 700;
+  color: #00FF66;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed rgba(0, 255, 102, 0.2);
+  padding-bottom: 2px;
+}
+.sys-row {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 8px;
-  line-height: 1.2;
-  color: #00FF66BB;
+  font-size: 8.5px;
 }
-.tech-lbl {
-  color: rgba(0, 255, 102, 0.55);
+.sys-lbl {
+  color: #00FF66;
+  opacity: 0.6;
 }
-.tech-val {
+.sys-val {
   color: #00FF66;
   font-weight: 700;
 }
-.tech-val.live { color: #00FF66; }
-.tech-val.simulated { color: #FFB000; }
-.tech-val.stale { color: #FFB000; }
-.tech-val.offline { color: #FF3333; }
+.text-live { color: #00FF66 !important; }
+.text-danger { color: #FF3333 !important; }
+.text-blue { color: #0088FF !important; }
 
-.tag-tl { top: 10px; left: 10px; border-left: 2px solid #00FF66; }
-.tag-tr { top: 10px; right: 10px; border-right: 2px solid #00FF66; }
-.tag-bl { bottom: 10px; left: 10px; border-left: 2px solid #00FF66; }
-.tag-br { bottom: 10px; right: 10px; border-right: 2px solid #00FF66; }
-
-/* Center tactical targeting bracket */
-.hud-center-targeting {
+/* Central targeting crosshair */
+.map-crosshair {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 20;
@@ -1343,87 +1602,25 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
 }
-.target-cross {
-  font-size: 14px;
-  color: #00FF66;
-  text-shadow: 0 0 4px #00FF66;
-}
-.target-status {
+.crosshair-h {
   position: absolute;
-  bottom: -16px;
-  font-size: 7px;
-  color: #00FF66;
-  letter-spacing: 1px;
-  text-shadow: 0 0 3px #00FF66;
-  animation: blink-fast 1.2s infinite steps(2);
+  width: 100%;
+  height: 1px;
+  background: rgba(0, 255, 102, 0.4);
 }
-@keyframes blink-fast {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-.target-bracket {
+.crosshair-v {
   position: absolute;
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid #00FF66;
-  box-shadow: 0 0 4px rgba(0, 255, 102, 0.4);
+  height: 100%;
+  width: 1px;
+  background: rgba(0, 255, 102, 0.4);
 }
-.bracket-tl { top: 0; left: 0; border-right: none; border-bottom: none; }
-.bracket-tr { top: 0; right: 0; border-left: none; border-bottom: none; }
-.bracket-bl { bottom: 0; left: 0; border-right: none; border-top: none; }
-.bracket-br { bottom: 0; right: 0; border-left: none; border-top: none; }
-
-/* Concentric radar circles */
-.hud-concentric-ring {
-  position: absolute;
+.crosshair-dot {
+  width: 6px;
+  height: 6px;
+  border: 1px solid #00FF66;
   border-radius: 50%;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 5;
-}
-.ring-1 {
-  width: 180px;
-  height: 180px;
-  border: 1px solid rgba(0, 255, 102, 0.08);
-  animation: rotate-cw 25s infinite linear;
-}
-.ring-2 {
-  width: 300px;
-  height: 300px;
-  border: 1px dashed rgba(255, 51, 51, 0.08); /* red ring like Oracle screenshots */
-  animation: rotate-ccw 35s infinite linear;
-}
-@keyframes rotate-cw {
-  0% { transform: translate(-50%, -50%) rotate(0deg); }
-  100% { transform: translate(-50%, -50%) rotate(360deg); }
-}
-@keyframes rotate-ccw {
-  0% { transform: translate(-50%, -50%) rotate(0deg); }
-  100% { transform: translate(-50%, -50%) rotate(-360deg); }
-}
-
-/* Floating Terminal Overlay (bottom left of map - stacked above tag-bl) */
-.hud-terminal-overlay {
-  position: absolute;
-  bottom: 55px;
-  left: 10px;
-  width: 190px;
-  background: rgba(0, 0, 0, 0.8);
-  border: 1px solid rgba(0, 255, 102, 0.25);
-  padding: 6px 8px;
-  z-index: 15;
-  font-size: 7px;
-  line-height: 1.4;
-  color: rgba(0, 255, 102, 0.85);
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.9);
-  border-bottom: 2px solid #00FF66;
-}
-.term-line {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: transparent;
+  box-shadow: 0 0 4px #00FF66;
 }
 
 /* Tactical target markers (NAV_0307 & ARM_0308) */
@@ -1480,13 +1677,30 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  font-size: 7px;
+  font-size: 6.5px;
   font-family: 'Roboto Mono', monospace;
-  color: rgba(0, 255, 102, 0.35);
+  color: rgba(0, 255, 102, 0.4);
   z-index: 12;
+  letter-spacing: 0.5px;
+  line-height: 1;
 }
 .rail-left { left: 4px; align-items: flex-start; }
 .rail-right { right: 4px; align-items: flex-end; }
+
+/* Top horizontal scale rail ticks */
+.hud-top-rail {
+  position: absolute;
+  top: 4px;
+  left: 90px;
+  right: 90px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 6.5px;
+  font-family: 'Roboto Mono', monospace;
+  color: rgba(0, 255, 102, 0.4);
+  z-index: 12;
+  letter-spacing: 0.5px;
+}
 
 /* Pulsing Sonar Ping Pin Marker styling */
 .gps-sonar-ping {
@@ -1495,23 +1709,23 @@ onUnmounted(() => {
 .ping-dot {
   width: 8px;
   height: 8px;
-  background: #00FF66;
+  background: var(--hud-active);
   border-radius: 50%;
   position: absolute;
   top: 8px;
   left: 8px;
-  box-shadow: 0 0 10px #00FF66, 0 0 20px #00FF66;
+  box-shadow: 0 0 10px var(--hud-active);
 }
 .ping-ring {
   width: 24px;
   height: 24px;
-  border: 1.5px solid #00FF66;
+  border: 1.5px solid var(--hud-active);
   border-radius: 50%;
   position: absolute;
   top: 0;
   left: 0;
   animation: gps-sonar-pulse 2s infinite cubic-bezier(0.215, 0.610, 0.355, 1);
-  box-shadow: inset 0 0 4px rgba(0, 255, 102, 0.3);
+  box-shadow: inset 0 0 4px var(--hud-border);
 }
 @keyframes gps-sonar-pulse {
   0% {
@@ -1725,10 +1939,22 @@ onUnmounted(() => {
 
 /* ─── GPS Panel ──────────────────────────────────────────────────────────── */
 .gps-panel {
-  border: 1px solid #00FF6622;
+  border: 1px solid rgba(0, 255, 102, 0.25);
   background: #0A0A0A;
-  padding: 10px;
+  backdrop-filter: blur(12px);
+  padding: 12px;
+
+  /* Stark OS Variables scoped locally ONLY to the map widget (Mục 2 & Mục 4 Theme Configuration) */
+  --hud-bg: #080D10;                      /* Canvas Background */
+  --hud-grid: rgba(1, 34, 17, 0.4);       /* Grids / Terrain */
+  --hud-active: #00FF66;                  /* Active Phosphor Green */
+  --hud-threat: #FF3333;                  /* Crimson Threat Lock */
+  --hud-secondary: #FFFFFF;               /* Secondary Node White */
+  --hud-panel-bg: rgba(8, 13, 16, 0.85);
+  --hud-border: rgba(0, 255, 102, 0.25);
 }
+
+
 .gps-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -1736,39 +1962,24 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 .gps-item { display: flex; flex-direction: column; gap: 2px; }
-.gps-label { font-size: 8px; color: #00FF6666; letter-spacing: 1px; font-family: 'Roboto Mono', monospace; }
+.gps-label { font-size: 8px; color: rgba(0, 255, 102, 0.6); letter-spacing: 1px; font-family: 'Roboto Mono', monospace; }
 .gps-val { font-family: 'Roboto Mono', monospace; font-size: 10px; color: #00FF66; }
-.map-placeholder {
-  position: relative;
-  height: 80px;
-  background: #001010;
-  border: 1px solid #00FF6622;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+
+/* Color overrides for GPS panel status indicators to match green/black primary theme */
+.gps-panel .simulated {
+  color: #00FF66 !important;
 }
-.map-reticle {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 20px;
-  color: #00FF6688;
+.gps-panel .stale {
+  color: #FF3333 !important;
 }
-.map-label {
-  font-family: 'Roboto Mono', monospace;
-  font-size: 9px;
-  color: #00FF6666;
-  letter-spacing: 1px;
-  z-index: 1;
+.gps-panel .warn {
+  color: #00FF66 !important;
+  border-color: #00FF66 !important;
 }
-.map-grid-lines {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(0,255,102,0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,255,102,0.05) 1px, transparent 1px);
-  background-size: 20px 20px;
+.gps-panel .badge-simulated {
+  border-color: #00FF66 !important;
+  color: #00FF66 !important;
+  background: rgba(0, 255, 102, 0.08) !important;
 }
 
 /* ─── Stats Table ────────────────────────────────────────────────────────── */
@@ -1846,5 +2057,14 @@ onUnmounted(() => {
   .gps-readout-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* ─── Blinking 1Hz dot for tactical node markers ───────────────────────── */
+:global(.blinking-dot) {
+  animation: blink-1hz 1s infinite steps(1);
+}
+@keyframes blink-1hz {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 </style>

@@ -342,18 +342,15 @@ class HugoPerceptionBridgeNode(Node):
         if "accelerometer" in sensor_map:
             values = sensor_map["accelerometer"]
             if isinstance(values, dict):
-                raw_x = float(values.get("x", values.get("X", 0.0)))
-                raw_y = float(values.get("y", values.get("Y", 0.0)))
-                raw_z = float(values.get("z", values.get("Z", 9.80665)))
+                raw_x = self._extract_float(values.get("x", values.get("X")), 0.0)
+                raw_y = self._extract_float(values.get("y", values.get("Y")), 0.0)
+                raw_z = self._extract_float(values.get("z", values.get("Z")), 9.80665)
                 found_accel = True
             elif isinstance(values, (list, tuple)) and len(values) >= 3:
-                try:
-                    raw_x = float(values[0])
-                    raw_y = float(values[1])
-                    raw_z = float(values[2])
-                    found_accel = True
-                except (ValueError, TypeError):
-                    pass
+                raw_x = self._extract_float(values[0], 0.0)
+                raw_y = self._extract_float(values[1], 0.0)
+                raw_z = self._extract_float(values[2], 9.80665)
+                found_accel = True
         elif "accelerometerX" in sensor_map and "accelerometerY" in sensor_map and "accelerometerZ" in sensor_map:
             raw_x = self._extract_float(sensor_map["accelerometerX"], 0.0)
             raw_y = self._extract_float(sensor_map["accelerometerY"], 0.0)
@@ -441,18 +438,15 @@ class HugoPerceptionBridgeNode(Node):
         if "gyroscope" in sensor_map:
             vals = sensor_map["gyroscope"]
             if isinstance(vals, dict):
-                self.gx = float(vals.get("x", vals.get("X", 0.0)))
-                self.gy = float(vals.get("y", vals.get("Y", 0.0)))
-                self.gz = float(vals.get("z", vals.get("Z", 0.0)))
+                self.gx = self._extract_float(vals.get("x", vals.get("X")), 0.0)
+                self.gy = self._extract_float(vals.get("y", vals.get("Y")), 0.0)
+                self.gz = self._extract_float(vals.get("z", vals.get("Z")), 0.0)
                 found_gyro = True
             elif isinstance(vals, (list, tuple)) and len(vals) >= 3:
-                try:
-                    self.gx = float(vals[0])
-                    self.gy = float(vals[1])
-                    self.gz = float(vals[2])
-                    found_gyro = True
-                except (ValueError, TypeError):
-                    pass
+                self.gx = self._extract_float(vals[0], 0.0)
+                self.gy = self._extract_float(vals[1], 0.0)
+                self.gz = self._extract_float(vals[2], 0.0)
+                found_gyro = True
         elif "gyroX" in sensor_map and "gyroY" in sensor_map and "gyroZ" in sensor_map:
             self.gx = self._extract_float(sensor_map["gyroX"], 0.0)
             self.gy = self._extract_float(sensor_map["gyroY"], 0.0)
@@ -463,23 +457,20 @@ class HugoPerceptionBridgeNode(Node):
             self.gy = self._extract_float(sensor_map["rotationRateY"], 0.0)
             self.gz = self._extract_float(sensor_map["rotationRateZ"], 0.0)
             found_gyro = True
-
+ 
         found_mag = False
         if "magnetometer" in sensor_map:
             mag_vals = sensor_map["magnetometer"]
             if isinstance(mag_vals, dict):
-                self.mag_x = float(mag_vals.get("x", mag_vals.get("X", 0.0)))
-                self.mag_y = float(mag_vals.get("y", mag_vals.get("Y", 0.0)))
-                self.mag_z = float(mag_vals.get("z", mag_vals.get("Z", 0.0)))
+                self.mag_x = self._extract_float(mag_vals.get("x", mag_vals.get("X")), 0.0)
+                self.mag_y = self._extract_float(mag_vals.get("y", mag_vals.get("Y")), 0.0)
+                self.mag_z = self._extract_float(mag_vals.get("z", mag_vals.get("Z")), 0.0)
                 found_mag = True
             elif isinstance(mag_vals, (list, tuple)) and len(mag_vals) >= 3:
-                try:
-                    self.mag_x = float(mag_vals[0])
-                    self.mag_y = float(mag_vals[1])
-                    self.mag_z = float(mag_vals[2])
-                    found_mag = True
-                except (ValueError, TypeError):
-                    pass
+                self.mag_x = self._extract_float(mag_vals[0], 0.0)
+                self.mag_y = self._extract_float(mag_vals[1], 0.0)
+                self.mag_z = self._extract_float(mag_vals[2], 0.0)
+                found_mag = True
         elif "magnetometerX" in sensor_map and "magnetometerY" in sensor_map and "magnetometerZ" in sensor_map:
             self.mag_x = self._extract_float(sensor_map["magnetometerX"], 0.0)
             self.mag_y = self._extract_float(sensor_map["magnetometerY"], 0.0)
@@ -502,37 +493,37 @@ class HugoPerceptionBridgeNode(Node):
                 # Primary field from SensorLogger app: magneticBearing
                 bearing = values.get("magneticBearing") or values.get("magnetic_bearing")
                 if bearing is not None:
-                    self.compass_heading = float(bearing)
+                    self.compass_heading = self._extract_float(bearing, self.compass_heading)
                     found_compass = True
                 else:
                     heading = values.get("heading") or values.get("trueHeading") or values.get("magneticHeading")
                     if heading is not None:
-                        self.compass_heading = float(heading)
+                        self.compass_heading = self._extract_float(heading, self.compass_heading)
                         found_compass = True
-            elif isinstance(values, (int, float)):
-                self.compass_heading = float(values)
+            elif isinstance(values, (int, float, str)):
+                self.compass_heading = self._extract_float(values, self.compass_heading)
                 found_compass = True
         elif "magneticHeading" in sensor_map:
             values = sensor_map["magneticHeading"]
             if isinstance(values, dict):
-                self.compass_heading = float(values.get("heading", values.get("magneticBearing", 0.0)))
+                self.compass_heading = self._extract_float(values.get("heading") or values.get("magneticBearing"), 0.0)
                 found_compass = True
-            elif isinstance(values, (int, float)):
-                self.compass_heading = float(values)
+            elif isinstance(values, (int, float, str)):
+                self.compass_heading = self._extract_float(values, self.compass_heading)
                 found_compass = True
-
+ 
         # Fallback: derive compass_heading from magnetometer when magnetometer has magneticBearing
         if not found_compass and "magnetometer" in sensor_map:
             mag_vals = sensor_map["magnetometer"]
             if isinstance(mag_vals, dict):
                 bearing = mag_vals.get("magneticBearing") or mag_vals.get("magnetic_bearing")
                 if bearing is not None:
-                    self.compass_heading = float(bearing)
+                    self.compass_heading = self._extract_float(bearing, self.compass_heading)
                     found_compass = True
                 elif mag_vals.get("x") is not None and mag_vals.get("y") is not None:
                     # Derive 2D heading from raw Gauss X/Y if no magneticBearing provided
-                    mx = float(mag_vals.get("x", 0.0))
-                    my = float(mag_vals.get("y", 0.0))
+                    mx = self._extract_float(mag_vals.get("x"), 0.0)
+                    my = self._extract_float(mag_vals.get("y"), 0.0)
                     if mx != 0.0 or my != 0.0:
                         heading_rad = math.atan2(my, mx)
                         self.compass_heading = (math.degrees(heading_rad) + 360.0) % 360.0
@@ -630,16 +621,16 @@ class HugoPerceptionBridgeNode(Node):
                             alt_val = val_dict.get("altitude") or val_dict.get("alt")
                             
                     if lat_val is not None:
-                        self.latitude = float(lat_val)
+                        self.latitude = self._extract_float(lat_val, self.latitude)
                     if lon_val is not None:
-                        self.longitude = float(lon_val)
+                        self.longitude = self._extract_float(lon_val, self.longitude)
                     if alt_val is not None:
-                        self.altitude = float(alt_val)
+                        self.altitude = self._extract_float(alt_val, self.altitude)
                     found_location = True
                 elif isinstance(loc, (list, tuple)):
-                    self.latitude = float(loc[0]) if len(loc) > 0 else 0.0
-                    self.longitude = float(loc[1]) if len(loc) > 1 else 0.0
-                    self.altitude = float(loc[2]) if len(loc) > 2 else 0.0
+                    self.latitude = self._extract_float(loc[0], 0.0) if len(loc) > 0 else 0.0
+                    self.longitude = self._extract_float(loc[1], 0.0) if len(loc) > 1 else 0.0
+                    self.altitude = self._extract_float(loc[2], 0.0) if len(loc) > 2 else 0.0
                     found_location = True
             elif "locationLatitude" in sensor_map and "locationLongitude" in sensor_map:
                 self.latitude = self._extract_float(sensor_map["locationLatitude"], 0.0)

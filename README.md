@@ -60,8 +60,18 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 * **Description:** Real-time 13-channel system telemetry monitor. Displays current sensor states, dynamic session min/max tracking, status indicators (OK / WARNING / DANGER), and a high-performance CSV exporter for medical data audit.
 
 ---
+### 4. Tactical GIS Navigation & Pathfinding Viewport
+![Map](./asset/map.jpg)
+* **Description:** A military-grade 2D graticule navigation map widget that supports:
+  * **Localized Geocoding (Nominatim API):** Real-time address resolution restricted strictly to Vietnam boundaries. Includes local search intercepts for quick regional targets .
+  * **Shortest Path Road Routing (OSRM API):** Calculates actual road network coordinates and displays a scrollable step-by-step navigation maneuvers list.
+  * **Dynamic Camera Control:** Operators can choose between `LKD_CENTER` (re-centering map tracking automatically onto the robot's coordinates) or `FREE_CAM` (manual map panning).
+  * **Telemetry Integration:** Fully synchronized with the robot's real-time published GPS coordinates.
+  * **Tactical Visuals:** Centered compass trajectory dial HUD overlay and high-contrast terminal cyber green map tile filters.
 
-### 4. Robotics & Spatial Safety Systems
+---
+
+### 5. Robotics & Spatial Safety Systems
 
 #### A. Three.js Holographic Twin & Occupancy Costmap
 ![Holographic Twin](./asset/holographic_twin.jpg)
