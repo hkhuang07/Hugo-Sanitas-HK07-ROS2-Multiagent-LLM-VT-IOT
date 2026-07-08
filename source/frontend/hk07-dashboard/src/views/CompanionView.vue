@@ -49,11 +49,13 @@
         <div class="panel-header">
           <div class="header-title">
             <span class="pulse-dot text-cyan mr-2">●</span>
-            <span>AGENT_COMPANION_UPLINK // ID: HUGO-AGENT-007</span>
+            <span>AGENT_COMPANION_UPLINK // ID: {{ agentsStore.agentId || 'HUGO-AGENT-007' }}</span>
           </div>
           <div class="connection-status">
             <span class="status-label">UPLINK_STATE:</span>
-            <span class="status-value text-green">SECURE_ESTABLISHED</span>
+            <span :class="['status-value', agentsStore.isConnected ? 'text-green' : 'text-danger']">
+              {{ agentsStore.isConnected ? 'SECURE_ESTABLISHED' : 'DISCONNECTED' }}
+            </span>
           </div>
         </div>
 
@@ -106,25 +108,12 @@
         <div class="chat-input-bar">
           <button 
             type="button" 
-            class="cmd-btn mic-btn"
-            :class="{ active: isRecording }"
-            @mousedown="startRecording"
-            @mouseup="stopRecording"
-            @mouseleave="cancelRecording"
-            @touchstart.prevent="startRecording"
-            @touchend.prevent="stopRecording"
-            title="Hold to speak / Nhấn giữ để nói"
-          >
-            {{ isRecording ? '🎤 RECORDING...' : '🎤 SPEAK' }}
-          </button>
-          <button 
-            type="button" 
             class="cmd-btn mute-btn"
             :class="{ active: isMuted }"
             @click="toggleMute"
             :title="isMuted ? 'Unmute voice response' : 'Mute voice response'"
           >
-            {{ isMuted ? '🔇 MUTED' : '🔊 VOICE ON' }}
+            {{ isMuted ? '🔇 MUTED' : '🔊 AGENT VOICE' }}
           </button>
           <input v-model="userInput" 
                  class="tactical-input font-mono w-full" 
@@ -134,7 +123,7 @@
           <button class="cmd-btn send-btn" 
                   @click="sendChat" 
                   :disabled="!userInput.trim() || chatLoading">
-            TRANSMIT_CMD
+            SEND
           </button>
         </div>
       </section>
@@ -146,7 +135,7 @@
         <div class="terminal-card scope-card">
           <div class="terminal-card-header">[ AGENT_COGNITIVE_SCOPE ]</div>
           <div class="scope-container">
-            <div :class="['scope-wave', chatLoading || isSpeaking ? 'active' : (isRecording ? 'recording' : 'idle')]">
+            <div :class="['scope-wave', chatLoading || isSpeaking ? 'active' : 'idle']">
               <div class="circle outer"></div>
               <div class="circle middle"></div>
               <div class="circle inner"></div>
@@ -156,7 +145,6 @@
               COGNITIVE STATE: 
               <span v-if="chatLoading" class="text-orange animate-pulse">COMPUTING_RESPONSE</span>
               <span v-else-if="isSpeaking" class="text-green animate-pulse">SPEAKING_TO_USER</span>
-              <span v-else-if="isRecording" class="text-[#00E5FF] blink-fast">RECORDING_OPERATOR_VOICE</span>
               <span v-else class="text-green">STANDBY_LISTENING</span>
             </div>
           </div>
@@ -168,76 +156,75 @@
           <div class="spec-grid font-mono text-[10px]">
             <div class="spec-row">
               <span class="label">MODEL_CORE:</span>
-              <span class="val text-cyan">Llama3-Groq-8B</span>
+              <span class="val" :class="agentsStore.isConnected ? 'text-cyan' : 'text-dim'">
+                {{ agentsStore.isConnected ? (llmStats?.model || 'LOADING...') : 'OFFLINE' }}
+              </span>
             </div>
             <div class="spec-row">
-              <span class="label">TEMPERATURE:</span>
-              <span class="val text-cyan">0.45 (STABLE)</span>
+              <span class="label">PROVIDER:</span>
+              <span class="val" :class="agentsStore.isConnected ? 'text-cyan' : 'text-dim'">
+                {{ agentsStore.isConnected ? (llmStats?.provider || 'LOADING...') : 'OFFLINE' }}
+              </span>
             </div>
             <div class="spec-row">
-              <span class="label">SPEED_RATING:</span>
-              <span class="val text-green">~78.4 Tok/s</span>
-            </div>
-            <div class="spec-row">
-              <span class="label">CONTEXT_LEN:</span>
-              <span class="val text-cyan">8,192 Tok</span>
-            </div>
-            <div class="spec-row">
-              <span class="label">EMPATHY_BIAS:</span>
-              <span class="val text-green">94.8% ALPHA</span>
+              <span class="label">INFERENCE:</span>
+              <span class="val" :class="agentsStore.isConnected ? 'text-green' : 'text-dim'">
+                {{ agentsStore.isConnected ? `ONLINE (${llmStats?.temperature || 0.45})` : 'OFFLINE' }}
+              </span>
             </div>
           </div>
         </div>
 
-        <!-- Live Vitals Reference Panel -->
+        <!-- SENSORS FUSION MATRIX (Merged Vitals + rPPG) -->
         <div class="terminal-card">
-          <div class="terminal-card-header">[ LIVE_TELEMETRY_REF ]</div>
+          <div class="terminal-card-header">[ SENSORS_FUSION_MATRIX ]</div>
           <div class="spec-grid font-mono text-[10px] mb-2" style="padding-bottom: 6px;">
             <div class="spec-row">
-              <span class="label">HEART RATE:</span>
-              <span :class="['val font-bold', hrClass]">{{ vitalsStore.current.heartRate || '--' }} BPM</span>
+              <span class="label">WRISTBAND HR:</span>
+              <span :class="['val font-bold', vitalsStore.isSimulated ? 'text-orange' : (vitalsStore.current.heartRate ? hrClass : 'text-dim')]">
+                {{ vitalsStore.current.heartRate ? vitalsStore.current.heartRate + ' BPM' : 'OFFLINE' }}
+                <span v-if="vitalsStore.isSimulated && vitalsStore.current.heartRate" class="text-[8px]">(SIM)</span>
+              </span>
             </div>
             <div class="spec-row">
-              <span class="label">OXYGEN SAT:</span>
-              <span :class="['val font-bold', spo2Class]">{{ vitalsStore.current.spo2?.toFixed(1) || '--' }} %</span>
-            </div>
-            <div class="spec-row">
-              <span class="label">BLOOD PRESS:</span>
-              <span class="val text-cyan">{{ vitalsStore.current.systolic || '--' }}/{{ vitalsStore.current.diastolic || '--' }}</span>
-            </div>
-            <div class="spec-row">
-              <span class="label">BODY TEMP:</span>
-              <span class="val text-cyan">{{ vitalsStore.current.bodyTemperature?.toFixed(1) || '--' }} °C</span>
+              <span class="label">CAMERA rPPG HR:</span>
+              <span :class="['val font-bold', kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? rppgHrClass : 'text-cyan') : 'text-dim']">
+                {{ kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? kinematicsStore.rppgHeartRate.toFixed(1) + ' BPM' : 'ANALYZING...') : 'OFFLINE' }}
+              </span>
             </div>
             <div class="spec-row border-t border-dashed border-[#0052ff]/30 pt-1 mt-1">
+              <span class="label">OXYGEN SAT (WRIST):</span>
+              <span :class="['val font-bold', vitalsStore.isSimulated ? 'text-orange' : (vitalsStore.current.spo2 ? spo2Class : 'text-dim')]">
+                {{ vitalsStore.current.spo2 ? vitalsStore.current.spo2.toFixed(1) + ' %' : 'OFFLINE' }}
+                <span v-if="vitalsStore.isSimulated && vitalsStore.current.spo2" class="text-[8px]">(SIM)</span>
+              </span>
+            </div>
+            <div class="spec-row">
+              <span class="label">BLOOD PRESS (WRIST):</span>
+              <span :class="['val', vitalsStore.isSimulated ? 'text-orange' : (vitalsStore.current.systolic ? 'text-cyan' : 'text-dim')]">
+                {{ vitalsStore.current.systolic ? vitalsStore.current.systolic + '/' + vitalsStore.current.diastolic : 'OFFLINE' }}
+              </span>
+            </div>
+            <div class="spec-row border-t border-dashed border-[#0052ff]/30 pt-1 mt-1">
+              <span class="label">THERMAL VISION:</span>
+              <span :class="['val font-bold', kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? thermalTempClass : 'text-cyan') : 'text-dim']">
+                {{ kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? kinematicsStore.thermalTemperature.toFixed(2) + ' °C' : 'MEASURING...') : 'OFFLINE' }}
+              </span>
+            </div>
+            <div class="spec-row border-t border-dashed border-[#0052ff]/30 pt-1 mt-1">
+              <span class="label">AMB AUDIO:</span>
+              <span :class="['val font-mono text-[9px]', sensorStore.isHearingSimulated ? 'text-orange' : (sensorStore.hearing.intensity_label ? 'text-[#00E5FF]' : 'text-dim')]">
+                {{ sensorStore.hearing.intensity_label ? `${sensorStore.hearing.frequency}, ${sensorStore.hearing.intensity_label}` : 'OFFLINE' }}
+              </span>
+            </div>
+            <div class="spec-row pt-1 mt-1">
               <span class="label">ALERT STATE:</span>
-              <span :class="['val font-bold', vitalsStore.isEmergency ? 'text-red animate-pulse' : 'text-green']">
-                {{ vitalsStore.isEmergency ? '⚠ EMERGENCY' : '✓ NORMAL' }}
+              <span :class="['val font-bold', vitalsStore.isEmergency || (kinematicsStore.isLive && kinematicsStore.feverAlert) ? 'text-red animate-pulse' : 'text-green']">
+                {{ vitalsStore.isEmergency || (kinematicsStore.isLive && kinematicsStore.feverAlert) ? '⚠ EMERGENCY' : '✓ NORMAL' }}
               </span>
             </div>
           </div>
-          <EcgWaveform :width="240" :height="50" />
-        </div>
-
-        <!-- OpenCV rPPG & Thermal Vision Panel -->
-        <div class="terminal-card">
-          <div class="terminal-card-header">[ VISION_SENSORS_FEED ]</div>
-          <div class="spec-grid font-mono text-[10px] mb-2">
-            <div class="spec-row">
-              <span class="label">rPPG HEART RATE:</span>
-              <span :class="['val font-bold', rppgHrClass]">{{ kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? kinematicsStore.rppgHeartRate.toFixed(1) + ' BPM' : 'ANALYZING...') : 'OFFLINE' }}</span>
-            </div>
-            <div class="spec-row">
-              <span class="label">THERMAL TEMP:</span>
-              <span :class="['val font-bold', thermalTempClass]">{{ kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? kinematicsStore.thermalTemperature.toFixed(2) + ' °C' : 'MEASURING...') : 'OFFLINE' }}</span>
-            </div>
-            <div class="spec-row">
-              <span class="label">FEVER ALERT:</span>
-              <span :class="['val font-bold', kinematicsStore.isLive && kinematicsStore.feverAlert ? 'text-red animate-pulse' : 'text-green']">
-                {{ kinematicsStore.isLive ? (kinematicsStore.feverAlert ? '⚠ FEVER DETECTED' : '✓ NORMAL') : 'OFFLINE' }}
-              </span>
-            </div>
-          </div>
+          <EcgWaveform :width="240" :height="40" />
         </div>
 
         <!-- Phase 2: Perception Scan Panel -->
@@ -313,18 +300,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useVitalsStore } from '../stores/vitals'
 import { useAuthStore } from '../stores/auth'
 import { useKinematicsStore } from '../stores/kinematics'
 import { useAgentsStore } from '../stores/agents'
+import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
 import api from '../services/api'
 import EcgWaveform from '../components/EcgWaveform.vue'
 
-const isRecording = ref(false)
 const isMuted = ref(false)
 const isSpeaking = ref(false)
-let recognition: any = null
+const llmStats = ref<any>(null)
+
+async function fetchLlmStats() {
+  if (!agentsStore.isConnected) return
+  try {
+    const res = await api.get('/api/v1/health/llm-stats')
+    llmStats.value = res.data
+  } catch (err) {
+    console.warn('[LLM_STATS] Failed to fetch LLM stats', err)
+  }
+}
+let llmStatsInterval: any = null
 
 function toggleMute() {
   isMuted.value = !isMuted.value
@@ -339,6 +338,7 @@ function toggleMute() {
 const vitalsStore = useVitalsStore()
 const authStore = useAuthStore()
 const kinematicsStore = useKinematicsStore()
+const sensorStore = useSensorTelemetryStore()
 
 interface ChatMessage {
   role: 'user' | 'hugo'
@@ -381,7 +381,7 @@ async function executeScan() {
     console.error("CRITICAL: Access Token is missing from authStore. Attempting silent session refresh...");
     const restored = await authStore.refreshSession()
     if (!restored) {
-      chatLog.value.push({
+      agentsStore.chatLog.push({
         role: 'hugo',
         content: '[ERR_AUTH_REQUIRED] Yêu cầu đăng nhập để thực hiện quét sinh thể.',
         timestamp: getCurrentTimeString()
@@ -400,7 +400,7 @@ async function executeScan() {
       // Push scan context to chat log
       const risk = data.scan.overall_risk
       const notes = data.scan.notes || ''
-      chatLog.value.push({
+      agentsStore.chatLog.push({
         role: 'hugo',
         content: `[PERCEPTION_SCAN_COMPLETE] Đã quét toàn thân. Risk: ${risk}${notes ? ' — ' + notes : ''}. Kết quả chi tiết hiển thị trên bảng bên phải.`,
         timestamp: getCurrentTimeString()
@@ -410,7 +410,7 @@ async function executeScan() {
     }
   } catch (err) {
     console.error('[SCAN_ERROR]', err)
-    chatLog.value.push({
+    agentsStore.chatLog.push({
       role: 'hugo',
       content: '[SCAN_ERR] Không thể kết nối Perception Module. Kiểm tra kết nối agent engine.',
       timestamp: getCurrentTimeString()
@@ -425,7 +425,7 @@ const chatLoading = ref(false)
 const chatHistoryRef = ref<HTMLElement | null>(null)
 
 const agentsStore = useAgentsStore()
-const chatLog = computed(() => agentsStore.chatLog)
+const { chatLog } = storeToRefs(agentsStore)
 
 const suggestionChips = [
   { label: 'ANALYZE_VITALS', prompt: 'Hãy phân tích chỉ số sinh tồn (vitals) hiện tại của tôi.' },
@@ -478,16 +478,12 @@ async function sendChat() {
   const msg = userInput.value.trim()
   if (!msg) return
   
-  const token = authStore.accessToken
-  if (!token || token === 'undefined' || token === 'null') {
-    console.error("CRITICAL: Access Token is missing from authStore");
-  }
-  
   // Pre-flight: ensure we have a valid token before sending
   if (!authStore.accessToken || authStore.accessToken === 'undefined' || authStore.accessToken === 'null') {
+    console.error("CRITICAL: Access Token is missing from authStore. Attempting silent session refresh...");
     const restored = await authStore.refreshSession()
     if (!restored) {
-      chatLog.value.push({
+      agentsStore.chatLog.push({
         role: 'hugo',
         content: '[ERR_AUTH_REQUIRED] Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
         timestamp: getCurrentTimeString()
@@ -495,23 +491,25 @@ async function sendChat() {
       return
     }
   }
-  
-  userInput.value = ''
-  chatLoading.value = true
-  
-  chatLog.value.push({
-    role: 'user',
-    content: msg,
-    timestamp: getCurrentTimeString()
-  })
-  
-  await nextTick()
-  scrollChatToBottom()
 
   try {
+    chatLoading.value = true
+    
+    // Clear input immediately so user knows it has been sent
+    userInput.value = ''
+    
+    agentsStore.chatLog.push({
+      role: 'user',
+      content: msg,
+      timestamp: getCurrentTimeString()
+    })
+    
+    await nextTick()
+    scrollChatToBottom()
+
     const resp = await api.post('/agents/empathetic/interact', { message: msg }, { timeout: 30000 })
     const reply = resp.data.data?.response || 'Không nhận được câu trả lời hợp lệ từ Agent.'
-    chatLog.value.push({
+    agentsStore.chatLog.push({
       role: 'hugo',
       content: reply,
       timestamp: getCurrentTimeString()
@@ -520,7 +518,7 @@ async function sendChat() {
   } catch (err) {
     console.error("Agent Uplink Connection Failure Details:", err)
     const errText = '[ERR_CONNECTION_TIMEOUT] Không thể thiết lập kênh giao tiếp với Agent Engine. Vui lòng kiểm tra cổng dịch vụ backend.'
-    chatLog.value.push({
+    agentsStore.chatLog.push({
       role: 'hugo',
       content: errText,
       timestamp: getCurrentTimeString()
@@ -533,98 +531,163 @@ async function sendChat() {
   }
 }
 
-// ── Web Speech API Integration ──
+onMounted(() => {
+  fetchLlmStats()
+  llmStatsInterval = setInterval(fetchLlmStats, 5000)
+  nextTick(() => {
+    scrollChatToBottom()
+  })
+})
+
+onUnmounted(() => {
+  if (llmStatsInterval) clearInterval(llmStatsInterval)
+})
+
+// ── Web Speech API Integration & Language Detection ──
+
+function detectLanguage(text: string): 'en' | 'vi' {
+  const viAccents = /[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệđìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]/i
+  if (viAccents.test(text)) {
+    return 'vi'
+  }
+  
+  // Common Vietnamese words without accents
+  const commonViWords = /\b(chao sếp|chao sep|chào sếp|chào bạn|chao ban|toi|co|khong|di|dao|nhip|tim|suc|khoe|o|day|giup|chi|so|met|moi|dau|nguc|binh|thuong|thoi|tiet|hom|nay|the|nao|cho|loi|khuyen|bao|ve|cuu|voi|nga|roi|phat|tin|hieu|khan|cap|oi|sep|cam|thay|nho|lon|vua|tram|cao|nhanh|cham|trai|phai)\b/i
+  
+  const words = text.toLowerCase().split(/\s+/)
+  let viCount = 0
+  let enCount = 0
+  
+  const commonEnWords = new Set([
+    "hello", "hi", "hey", "you", "there", "is", "are", "am", "how", "what", "weather", "today", "go", "walk", 
+    "robot", "check", "sensor", "status", "connection", "heart", "rate", "health", "vitals", "feel", "tired", 
+    "dizzy", "pain", "chest", "severe", "help", "me", "fall", "emergency", "signal", "please", "advice", 
+    "protect", "who", "where", "why", "can", "do", "should", "thank", "thanks"
+  ])
+  
+  for (const w of words) {
+    if (viAccents.test(w) || commonViWords.test(w)) {
+      viCount++
+    } else if (commonEnWords.has(w)) {
+      enCount++
+    }
+  }
+  
+  if (enCount > viCount) {
+    return 'en'
+  }
+  return 'vi'
+}
+
+let availableVoices: SpeechSynthesisVoice[] = []
+function initVoices() {
+  if ('speechSynthesis' in window) {
+    availableVoices = window.speechSynthesis.getVoices()
+  }
+}
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  initVoices()
+  window.speechSynthesis.onvoiceschanged = initVoices
+}
 
 function speakResponse(text: string) {
   if (isMuted.value) return
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel()
-    const cleanText = text.replace(/\[.*?\]/g, '').trim() // Strip brackets for cleaner readout
-    const utterance = new SpeechSynthesisUtterance(cleanText)
     
-    // Choose warm Vietnamese or standard voice
-    const voices = window.speechSynthesis.getVoices()
-    const viVoice = voices.find(v => v.lang.includes('vi') || v.lang.includes('VI'))
-    if (viVoice) {
-      utterance.voice = viVoice
-    }
-    utterance.rate = 0.95
-    utterance.pitch = 0.95
-    
-    utterance.onstart = () => {
-      isSpeaking.value = true
-    }
-    utterance.onend = () => {
-      isSpeaking.value = false
-    }
-    utterance.onerror = () => {
-      isSpeaking.value = false
+    // Ensure voices are loaded
+    if (availableVoices.length === 0) {
+      availableVoices = window.speechSynthesis.getVoices()
     }
     
-    window.speechSynthesis.speak(utterance)
+    const getBestVoice = (langCode: 'vi-VN' | 'en-US') => {
+      let voice = availableVoices.find(v => {
+        const l = v.lang.toLowerCase().replace('_', '-')
+        return l === langCode.toLowerCase()
+      })
+      if (!voice) {
+        const prefix = langCode.split('-')[0].toLowerCase()
+        voice = availableVoices.find(v => {
+          const l = v.lang.toLowerCase().replace('_', '-')
+          return l === prefix || l.startsWith(prefix + '-')
+        })
+      }
+      return voice
+    }
+    
+    const viVoice = getBestVoice('vi-VN')
+    const enVoice = getBestVoice('en-US')
+    
+    // Check if the text matches something like [TAG] Rest
+    const bracketMatch = text.match(/^\[(.*?)\](.*)$/s)
+    if (bracketMatch) {
+      const tagText = bracketMatch[1].replace(/_/g, ' ') // e.g. "ERR_CONNECTION_TIMEOUT" -> "ERR CONNECTION TIMEOUT"
+      const bodyText = bracketMatch[2].trim()
+      
+      const utteranceTag = new SpeechSynthesisUtterance(tagText)
+      utteranceTag.lang = 'en-US'
+      if (enVoice) utteranceTag.voice = enVoice
+      utteranceTag.rate = 1.0
+      utteranceTag.pitch = 1.0
+      
+      const utteranceBody = new SpeechSynthesisUtterance(bodyText)
+      const bodyLang = detectLanguage(bodyText)
+      if (bodyLang === 'en') {
+        utteranceBody.lang = 'en-US'
+        if (enVoice) utteranceBody.voice = enVoice
+      } else {
+        utteranceBody.lang = 'vi-VN'
+        if (viVoice) utteranceBody.voice = viVoice
+      }
+      utteranceBody.rate = 1.0
+      utteranceBody.pitch = 1.0
+      
+      utteranceTag.onstart = () => {
+        isSpeaking.value = true
+      }
+      utteranceBody.onend = () => {
+        isSpeaking.value = false
+      }
+      utteranceTag.onerror = () => {
+        isSpeaking.value = false
+      }
+      utteranceBody.onerror = () => {
+        isSpeaking.value = false
+      }
+      
+      window.speechSynthesis.speak(utteranceTag)
+      window.speechSynthesis.speak(utteranceBody)
+    } else {
+      const cleanText = text.trim()
+      const utterance = new SpeechSynthesisUtterance(cleanText)
+      
+      const lang = detectLanguage(cleanText)
+      if (lang === 'en') {
+        utterance.lang = 'en-US'
+        if (enVoice) utterance.voice = enVoice
+      } else {
+        utterance.lang = 'vi-VN'
+        if (viVoice) utterance.voice = viVoice
+      }
+      utterance.rate = 1.0
+      utterance.pitch = 1.0
+      
+      utterance.onstart = () => {
+        isSpeaking.value = true
+      }
+      utterance.onend = () => {
+        isSpeaking.value = false
+      }
+      utterance.onerror = () => {
+        isSpeaking.value = false
+      }
+      
+      window.speechSynthesis.speak(utterance)
+    }
   }
 }
 
-function initSpeechRecognition() {
-  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    recognition = new SpeechRec()
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.lang = 'vi-VN'
-
-    recognition.onstart = () => {
-      isRecording.value = true
-    }
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript
-      userInput.value = transcript
-      sendChat()
-    }
-
-    recognition.onerror = (event: any) => {
-      console.error('[SPEECH_RECOGNITION_ERROR]', event.error)
-      isRecording.value = false
-    }
-
-    recognition.onend = () => {
-      isRecording.value = false
-    }
-  }
-}
-
-function startRecording() {
-  if (!recognition) {
-    initSpeechRecognition()
-  }
-  if (recognition && !isRecording.value) {
-    if ('speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance('')
-      window.speechSynthesis.speak(u)
-    }
-    try {
-      recognition.start()
-    } catch (e) {
-      console.warn('Recognition start caught error:', e)
-    }
-  } else if (!recognition) {
-    console.warn('Speech recognition not supported')
-  }
-}
-
-function stopRecording() {
-  if (recognition && isRecording.value) {
-    recognition.stop()
-  }
-}
-
-function cancelRecording() {
-  if (recognition && isRecording.value) {
-    recognition.abort()
-    isRecording.value = false
-  }
-}
+// Continuous voice stream is handled by the backend's semantic audio analyzer via SensorLogs payload.
 
 function applySuggestion(prompt: string) {
   userInput.value = prompt
@@ -673,7 +736,7 @@ async function confirmAction(confirm: boolean) {
   }
   try {
     const resp = await api.post('/agents/action/confirm', { plan_id: planId, confirm }, { timeout: 30000 })
-    chatLog.value.push({
+    agentsStore.chatLog.push({
       role: 'hugo',
       content: `[ACTION_PLAN_CONFIRMATION] ${confirm ? 'Đã xác nhận thực thi hành động.' : 'Đã hủy thực thi hành động.'} Kết quả: ${resp.data?.data?.result || ''}`,
       timestamp: getCurrentTimeString()
@@ -682,7 +745,7 @@ async function confirmAction(confirm: boolean) {
     scrollChatToBottom()
   } catch (err) {
     console.error('[ACTION_CONFIRM_ERR]', err)
-    chatLog.value.push({
+    agentsStore.chatLog.push({
       role: 'hugo',
       content: `[ACTION_CONFIRM_ERR] Lỗi xác nhận hành động.`,
       timestamp: getCurrentTimeString()
@@ -696,6 +759,65 @@ function handleUnauthorized() {
     checkInterval = null
   }
 }
+
+let lastProcessedHearingTs = 0
+watch(
+  () => sensorStore.lastHearingMs,
+  async (newVal) => {
+    if (newVal === 0) return
+    const hearing = sensorStore.hearing
+    if (hearing.timestamp_ms > lastProcessedHearingTs && hearing.transcript && hearing.transcript.trim() !== '') {
+      lastProcessedHearingTs = hearing.timestamp_ms
+      
+      // 1. Push user message to chat log (acting as if operator spoke via phone mic)
+      agentsStore.chatLog.push({
+        role: 'user',
+        content: hearing.transcript,
+        timestamp: getCurrentTimeString()
+      })
+      
+      await nextTick()
+      scrollChatToBottom()
+      
+      // 2. Set loading state to show Hugo is computing
+      chatLoading.value = true
+      
+      try {
+        // Ensure valid session token
+        if (!authStore.accessToken || authStore.accessToken === 'undefined' || authStore.accessToken === 'null') {
+          await authStore.refreshSession()
+        }
+        
+        // 3. Interact with AI agent core to generate response
+        const resp = await api.post('/agents/empathetic/interact', { message: hearing.transcript }, { timeout: 30000 })
+        const reply = resp.data.data?.response || 'Không nhận được phản hồi hợp lệ.'
+        
+        // 4. Push agent's reply to chat log
+        agentsStore.chatLog.push({
+          role: 'hugo',
+          content: reply,
+          timestamp: getCurrentTimeString()
+        })
+        
+        // 5. Output voice speech response
+        speakResponse(reply)
+      } catch (err) {
+        console.error("Empathetic agent voice interaction failed:", err)
+        const errText = '[HEARING_RESP_ERR] Có lỗi xảy ra khi robot phản hồi âm thanh.'
+        agentsStore.chatLog.push({
+          role: 'hugo',
+          content: errText,
+          timestamp: getCurrentTimeString()
+        })
+        speakResponse(errText)
+      } finally {
+        chatLoading.value = false
+        await nextTick()
+        scrollChatToBottom()
+      }
+    }
+  }
+)
 
 onMounted(() => {
   agentsStore.initSession(authStore.user?.id)

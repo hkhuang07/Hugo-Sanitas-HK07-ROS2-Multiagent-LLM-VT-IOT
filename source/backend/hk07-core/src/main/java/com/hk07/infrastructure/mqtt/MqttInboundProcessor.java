@@ -84,6 +84,8 @@ public class MqttInboundProcessor {
                 handleMobileLocation(payload);
             } else if (topic.equals("hk07/sensors/activity/metrics")) {
                 handleMobileActivity(payload);
+            } else if (topic.equals("hk07/sensors/audio/hearing")) {
+                handleMobileHearing(payload);
             // ── Robot Telemetry Topics ──
             } else if (topic.equals("hk07/telemetry/imu")) {
                 handleTelemetryImu(payload);
@@ -310,6 +312,15 @@ public class MqttInboundProcessor {
     private void handleMobileActivity(String payload) {
         log.debug("[MOBILE_ACTIVITY] {}", payload);
         wsTemplate.convertAndSend("/topic/hk07/sensors/activity", payload);
+    }
+
+    /**
+     * Inferred hearing parameters and voice-to-text transcript from phone microphone.
+     * Bridged from MQTT hk07/sensors/audio/hearing → WebSocket /topic/hk07/sensors/hearing.
+     */
+    private void handleMobileHearing(String payload) {
+        log.debug("[MOBILE_HEARING] {}", payload);
+        wsTemplate.convertAndSend("/topic/hk07/sensors/hearing", payload);
     }
 
     private void handlePerceptionBiomarkers(String payload) {

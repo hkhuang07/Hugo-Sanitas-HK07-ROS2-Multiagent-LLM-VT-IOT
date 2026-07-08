@@ -99,6 +99,10 @@ services:
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_MAX_QUEUE=512
     # GPU Acceleration Setup (Production Ready / Nvidia Docker Toolkits)
     # Uncomment the following block if host machine has GPU passthrough enabled:
     # deploy:

@@ -79,67 +79,12 @@
       </div>
     </div>
 
-    <!-- 2. SPLIT LAYOUT FOR BATTERY, ACTIVITY (LEFT 30%) & IMU (RIGHT 70%) -->
+    <!-- 2. SPLIT LAYOUT FOR SENSOR TELEMETRY METRICS & REAL-TIME LOGGING -->
     <div class="sv-split-layout" style="margin-bottom: 16px;">
-      <!-- Left Column (30%) -->
+      <!-- Left Column (40%) -->
       <div class="sv-left-col">
-        <!-- SYSTEM POWER // BATTERY -->
-        <div class="sv-panel battery-panel">
-          <div class="panel-header">
-            <span class="panel-tag">[ SYSTEM POWER // BATTERY ]</span>
-            <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
-          </div>
-          <div class="battery-stats">
-            <div class="bat-level-row">
-              <span class="bat-lbl">CHARGE:</span>
-              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_level < 20 ? 'text-danger' : ''">
-                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level ?? 100.0, 1, '100.0') + '%' : 'OFFLINE' }}
-              </span>
-            </div>
-            <!-- Segmented block bar -->
-            <div class="bat-progress-bar font-mono text-success">
-              {{ getBatteryBar(sensorStore.environment.battery_level) }}
-            </div>
-            <div class="bat-temp-row">
-              <span class="bat-lbl">BATTERY TEMP:</span>
-              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_temp > 45 ? 'text-danger' : ''">
-                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_temp ?? 32.0, 1, '32.0') + '°C' : 'OFFLINE' }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- ACTIVITY // MOTION -->
-        <div class="sv-panel activity-panel">
-          <div class="panel-header">
-            <span class="panel-tag">[ ACTIVITY // MOTION ]</span>
-            <span class="panel-status" :class="sensorStore.actStatus.toLowerCase()">{{ sensorStore.actStatus }}</span>
-          </div>
-          <!-- Pedometer Odometer -->
-          <div class="odometer-wrap">
-            <div class="odometer-label">PEDOMETER</div>
-            <div class="odometer-display">
-              <span v-for="(d, i) in stepDigits" :key="i" class="step-digit">{{ d }}</span>
-            </div>
-            <span class="odometer-unit">STEPS</span>
-          </div>
-          <!-- Activity Type Badge -->
-          <div class="activity-type-wrap">
-            <span class="activity-icon">{{ activityIcon }}</span>
-            <div class="activity-label-group">
-              <span class="activity-type-label">ACTIVITY STATE</span>
-              <span class="activity-type-value" :class="`act-${sensorStore.activity.activity_type.toLowerCase()}`">
-                {{ isActive(sensorStore.actStatus) ? sensorStore.activity.activity_type.toUpperCase() : 'OFFLINE' }}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right Column (70%) -->
-      <div class="sv-right-col">
         <!-- IMU 9-DOF PANEL -->
-        <div class="sv-panel imu-panel" style="height: 100%;">
+        <div class="sv-panel imu-panel">
           <div class="panel-header">
             <span class="panel-tag">[ IMU // 9-DOF ]</span>
             <span class="panel-status" :class="sensorStore.imuStatus.toLowerCase()">{{ sensorStore.imuStatus }}</span>
@@ -220,6 +165,140 @@
               <div class="mag-item"><span>MX</span><b>{{ sensorStore.imu.magnetometer.x === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.x, 2) : 'OFFLINE') }}</b></div>
               <div class="mag-item"><span>MY</span><b>{{ sensorStore.imu.magnetometer.y === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.y, 2) : 'OFFLINE') }}</b></div>
               <div class="mag-item"><span>MZ</span><b>{{ sensorStore.imu.magnetometer.z === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.z, 2) : 'OFFLINE') }}</b></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SYSTEM POWER // BATTERY -->
+        <div class="sv-panel battery-panel">
+          <div class="panel-header">
+            <span class="panel-tag">[ SYSTEM POWER // BATTERY ]</span>
+            <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
+          </div>
+          <div class="battery-stats">
+            <div class="bat-level-row">
+              <span class="bat-lbl">CHARGE:</span>
+              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_level < 20 ? 'text-danger' : ''">
+                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level ?? 100.0, 1, '100.0') + '%' : 'OFFLINE' }}
+              </span>
+            </div>
+            <!-- Segmented block bar -->
+            <div class="bat-progress-bar font-mono text-success">
+              {{ getBatteryBar(sensorStore.environment.battery_level) }}
+            </div>
+            <div class="bat-temp-row">
+              <span class="bat-lbl">BATTERY TEMP:</span>
+              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_temp > 45 ? 'text-danger' : ''">
+                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_temp ?? 32.0, 1, '32.0') + '°C' : 'OFFLINE' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACTIVITY // MOTION -->
+        <div class="sv-panel activity-panel">
+          <div class="panel-header">
+            <span class="panel-tag">[ ACTIVITY // MOTION ]</span>
+            <span class="panel-status" :class="sensorStore.actStatus.toLowerCase()">{{ sensorStore.actStatus }}</span>
+          </div>
+          <!-- Pedometer Odometer -->
+          <div class="odometer-wrap">
+            <div class="odometer-label">PEDOMETER</div>
+            <div class="odometer-display">
+              <span v-for="(d, i) in stepDigits" :key="i" class="step-digit">{{ d }}</span>
+            </div>
+            <span class="odometer-unit">STEPS</span>
+          </div>
+          <!-- Activity Type Badge -->
+          <div class="activity-type-wrap">
+            <span class="activity-icon">{{ activityIcon }}</span>
+            <div class="activity-label-group">
+              <span class="activity-type-label">ACTIVITY STATE</span>
+              <span class="activity-type-value" :class="`act-${sensorStore.activity.activity_type.toLowerCase()}`">
+                {{ isActive(sensorStore.actStatus) ? sensorStore.activity.activity_type.toUpperCase() : 'OFFLINE' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- HEARING // AUDIO PERCEPTION -->
+        <div class="sv-panel hearing-panel" style="margin-top: 16px;">
+          <div class="panel-header">
+            <span class="panel-tag">[ HEARING // AUDIO PERCEPTION ]</span>
+            <span class="panel-status" :class="sensorStore.hearingStatus.toLowerCase()">{{ sensorStore.hearingStatus }}</span>
+          </div>
+          <div class="hearing-body font-mono text-[10px]" style="padding: 10px; display: flex; flex-direction: column; gap: 8px; border: 1px solid rgba(0, 255, 102, 0.15); background: rgba(0, 0, 0, 0.4);">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed rgba(0,255,102,0.2); padding-bottom: 6px;">
+              <span class="text-dim">MIC INTENSITY:</span>
+              <span :class="['font-bold', sensorStore.hearing.intensity > -25 ? 'text-warn' : 'text-live']">
+                {{ isActive(sensorStore.hearingStatus) ? safeToFixed(sensorStore.hearing.intensity, 1, 'OFFLINE') + ' dBFS' : 'OFFLINE' }}
+              </span>
+            </div>
+            <!-- Segmented block bar for mic level -->
+            <div style="color: #00FF66; letter-spacing: 1px; font-size: 11px;">
+              {{ getMicBar(sensorStore.hearing.intensity) }}
+            </div>
+            
+            <!-- Dynamic equalizer waveform visual when sound is heard -->
+            <div v-if="isActive(sensorStore.hearingStatus) && sensorStore.hearing.intensity > -45" style="display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: 18px; margin-top: 4px; padding: 2px;">
+              <span class="bar-osc" style="animation-delay: 0.1s;"></span>
+              <span class="bar-osc" style="animation-delay: 0.3s;"></span>
+              <span class="bar-osc" style="animation-delay: 0.5s;"></span>
+              <span class="bar-osc" style="animation-delay: 0.2s;"></span>
+              <span class="bar-osc" style="animation-delay: 0.4s;"></span>
+              <span class="bar-osc" style="animation-delay: 0.6s;"></span>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;">
+              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
+                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">FREQUENCY (PITCH)</span>
+                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.frequency.toUpperCase() : 'OFFLINE' }}</span>
+              </div>
+              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
+                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">VOLUME LEVEL</span>
+                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.intensity_label.toUpperCase() : 'OFFLINE' }}</span>
+              </div>
+              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
+                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">RHYTHM (TEMPO)</span>
+                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.rhythm.toUpperCase() : 'OFFLINE' }}</span>
+              </div>
+              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
+                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">SOUND DIRECTION</span>
+                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.direction.toUpperCase() : 'OFFLINE' }}</span>
+              </div>
+            </div>
+            <div style="border-top: 1px dashed rgba(0,255,102,0.2); padding-top: 6px; margin-top: 4px;">
+              <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">INFERRED SPEECH TO TEXT:</span>
+              <div style="background: rgba(0,229,255,0.05); border: 1px solid rgba(0,229,255,0.25); color: #00E5FF; padding: 6px; font-family: 'Roboto Mono', monospace; font-size: 11px; min-height: 28px;">
+                {{ isActive(sensorStore.hearingStatus) ? (sensorStore.hearing.transcript || '>> STANDBY: LISTENING FOR VOICE PATTERNS...') : 'OFFLINE' }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column (60%) -->
+      <div class="sv-right-col">
+        <!-- Sensor Streaming Log Widget -->
+        <div class="sv-panel sensor-streaming-log-panel font-mono">
+          <div class="panel-header">
+            <span class="panel-tag">[ SENSOR STREAMING LOG // LIVE TERMINAL ]</span>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span class="panel-status live">ACTIVE</span>
+              <button class="export-btn" @click="copyAllLogs" style="font-size: 8px; padding: 2px 6px; border: 1px solid rgba(0,255,102,0.3); background: transparent; color: #00FF66; cursor: pointer;">COPY ALL</button>
+              <button class="export-btn" @click="clearLogs" style="font-size: 8px; padding: 2px 6px; border: 1px solid rgba(255,51,51,0.3); background: transparent; color: #FF3333; cursor: pointer;">CLEAR</button>
+            </div>
+          </div>
+          
+          <div class="console-logs-window" ref="sensorLogsContainerRef">
+            <div v-for="(log, idx) in sensorStreamingLogs" :key="idx" class="term-line">
+              <span class="log-ts">[{{ log.timestamp }}]</span>
+              <span :class="['log-level', log.type]">[{{ log.level }}]</span>
+              <span class="log-source">{{ log.source }}</span>
+              <span class="log-content">— {{ log.content }}</span>
+            </div>
+            <div v-if="sensorStreamingLogs.length === 0" class="text-dim italic" style="padding: 10px; text-align: center; color: rgba(0, 255, 102, 0.4);">
+              &gt;&gt; UPLINK ACTIVE: STANDBY FOR TELEMETRY PACKETS...
             </div>
           </div>
         </div>
@@ -331,17 +410,47 @@
             <!-- BOTTOM-LEFT: Telemetry console stream -->
             <div class="hud-terminal-overlay font-mono">
               <div class="term-header">// TELEMETRY_STREAM</div>
-              <div v-for="(log, idx) in telemetryLogs" :key="idx" class="term-line">{{ log }}</div>
+              <div v-for="(log, idx) in telemetryLogs" :key="idx" class="term-line">
+                <span class="log-ts">[{{ log.timestamp }}]</span>
+                <span :class="['log-level', log.type]">[{{ log.level }}]</span>
+                <span class="log-source">{{ log.source }}</span>
+                <span class="log-content">— {{ log.content }}</span>
+              </div>
             </div>
 
             <!-- BOTTOM-RIGHT: Target tracking & system parameters -->
             <div class="hud-sys-parameters font-mono">
               <div class="sys-title">// UPLINK_TELEMETRY</div>
-              <div class="sys-row"><span class="sys-lbl">SYS_STATE</span><span class="sys-val text-live">NOMINAL</span></div>
-              <div class="sys-row"><span class="sys-lbl">DEV_ID</span><span class="sys-val">HK07_MOBILE</span></div>
-              <div class="sys-row"><span class="sys-lbl">BATTERY</span><span class="sys-val">{{ safeToFixed(sensorStore.environment?.battery_level, 1, '100') }}% ({{ safeToFixed(sensorStore.environment?.battery_temp, 1, '32.0') }}°C)</span></div>
-              <div class="sys-row"><span class="sys-lbl">HR_RATE</span><span class="sys-val text-danger">{{ vitalsStore.current.heartRate > 0 ? vitalsStore.current.heartRate : '72' }} BPM</span></div>
-              <div class="sys-row"><span class="sys-lbl">ACTIVITY</span><span class="sys-val text-blue">{{ (sensorStore.activity?.activity_type || 'still').toUpperCase() }}</span></div>
+              <div class="sys-row">
+                <span class="sys-lbl">SYS_STATE</span>
+                <span class="sys-val" :class="sysStateClass">{{ sysState }}</span>
+              </div>
+              <div class="sys-row">
+                <span class="sys-lbl">DEV_ID</span>
+                <span :class="['sys-val', sensorStore.isLive ? 'text-cyan' : 'text-dim']">{{ sensorStore.isLive ? 'HK07_MOBILE' : 'OFFLINE' }}</span>
+              </div>
+              <div class="sys-row">
+                <span class="sys-lbl">BATTERY</span>
+                <span class="sys-val">
+                  {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level, 1) + '%' : 'OFFLINE' }}
+                  <span v-if="isActive(sensorStore.envStatus)" style="font-size: 8px; opacity: 0.7;">
+                    ({{ safeToFixed(sensorStore.environment?.battery_temp, 1) }}°C)
+                  </span>
+                </span>
+              </div>
+              <div class="sys-row">
+                <span class="sys-lbl">HR_RATE</span>
+                <span :class="['sys-val', vitalsStore.isSimulated ? 'text-orange' : (isActive(heartStatus) ? 'text-danger' : 'text-dim')]">
+                  {{ isActive(heartStatus) ? vitalsStore.current.heartRate + ' BPM' : 'OFFLINE' }}
+                  <span v-if="vitalsStore.isSimulated && vitalsStore.current.heartRate" class="text-[8px]">(SIM)</span>
+                </span>
+              </div>
+              <div class="sys-row">
+                <span class="sys-lbl">ACTIVITY</span>
+                <span class="sys-val text-blue">
+                  {{ isActive(sensorStore.actStatus) ? (sensorStore.activity?.activity_type || 'still').toUpperCase() : 'OFFLINE' }}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -439,8 +548,8 @@ const heartStatus = computed(() => {
 // Barometer hardware availability — null means no sensor on this device
 const baroStatus = computed(() => {
   if (!isActive(sensorStore.envStatus)) return sensorStore.envStatus
-  // Always SIMULATED since phone has no barometer hardware
-  return 'SIMULATED'
+  // No barometer hardware on phone and cannot be inferred -> OFFLINE
+  return 'OFFLINE'
 })
 
 // Wrist Motion hardware status
@@ -448,6 +557,23 @@ const wristStatus = computed(() => {
   if (!isActive(sensorStore.actStatus)) return sensorStore.actStatus
   // Always SIMULATED since phone has no wristband sensor (derived from accelerometer)
   return 'SIMULATED'
+})
+
+const sysState = computed(() => {
+  if (!sensorStore.isLive) return 'OFFLINE'
+  if (sensorStore.imuStatus === 'OFFLINE' && sensorStore.locStatus === 'OFFLINE' && sensorStore.envStatus === 'OFFLINE' && sensorStore.actStatus === 'OFFLINE') {
+    return 'OFFLINE'
+  }
+  if (sensorStore.imuStatus === 'STALE' || sensorStore.locStatus === 'STALE' || sensorStore.envStatus === 'STALE' || sensorStore.actStatus === 'STALE') {
+    return 'STALE'
+  }
+  return 'NOMINAL'
+})
+
+const sysStateClass = computed(() => {
+  if (sysState.value === 'NOMINAL') return 'text-live'
+  if (sysState.value === 'STALE') return 'text-warn'
+  return 'text-danger'
 })
 
 const sensorBadges = computed(() => [
@@ -465,6 +591,7 @@ const sensorBadges = computed(() => [
   { key: 'act',    name: 'ACTIVITY', icon: '⊿', status: sensorStore.actStatus },
   { key: 'wrist',  name: 'WRIST',    icon: '〜', status: wristStatus.value },
   { key: 'hr',     name: 'HEART',    icon: '♥', status: heartStatus.value },
+  { key: 'hearing', name: 'HEARING', icon: '👂', status: sensorStore.hearingStatus },
 ])
 
 // ── 3D Cube transform ─────────────────────────────────────────────────────────
@@ -490,6 +617,13 @@ function getBatteryBar(level: number | undefined) {
   const lvl = level ?? 100.0
   const blocks = Math.max(0, Math.min(10, Math.round(lvl / 10)))
   return `[${'█'.repeat(blocks)}${'░'.repeat(10 - blocks)}]`
+}
+
+function getMicBar(dbfs: number | undefined) {
+  if (!isActive(sensorStore.hearingStatus)) return '[░░░░░░░░░░]'
+  const val = dbfs ?? -120.0
+  const normalized = Math.max(0, Math.min(10, Math.round((val + 80) / 8)))
+  return `[${'█'.repeat(normalized)}${'░'.repeat(10 - normalized)}]`
 }
 
 // ── Light/pressure status classes ─────────────────────────────────────────────
@@ -739,33 +873,7 @@ function updateCharts() {
     stepsChart.update('none')
   }
 
-  // Real-time scrolling telemetry logging inside the 10 FPS loop
-  logUpdateTick++
-  if (logUpdateTick >= 5) {
-    logUpdateTick = 0
-    const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude.toFixed(6) : '10.395500'
-    const lng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude.toFixed(6) : '105.421300'
-    const step = sensorStore.activity.pedometer_steps
-    const type = sensorStore.activity.activity_type.toUpperCase()
-    const batt = sensorStore.environment.battery_level.toFixed(1)
-    
-    const possibleLogs = [
-      `> RX_PKT: SEC_FLOW_${sensorStore.stepsHistory.length}_OK`,
-      `> GPS_LOCK: LAT=${lat} | LNG=${lng}`,
-      `> ACCEL_XYZ: [${sensorStore.imu.linear_acceleration?.x?.toFixed(2) ?? '0.00'}, ${sensorStore.imu.linear_acceleration?.y?.toFixed(2) ?? '0.00'}, ${sensorStore.imu.linear_acceleration?.z?.toFixed(2) ?? '9.81'}]`,
-      `> COMPASS: YAW=${sensorStore.eulerAngles.yaw}° | HEADING=${sensorStore.imu.compass_heading ?? 0}°`,
-      `> PEDOMETER: TOTAL_STEPS=${step} | STATE=${type}`,
-      `> BATT_MON: CAP=${batt}% | TEMP=${sensorStore.environment.battery_temp.toFixed(1)}°C`,
-      `> SYS_STAT: HEAP_ALLOC_OK | THREADS=4`,
-      `> LINK_UPLINK: ACTIVE_PORT_3005`,
-      `> CALIBRATING REACTOR_CORE_C... COMPLETE`
-    ]
-    const randomLog = possibleLogs[Math.floor(Math.random() * possibleLogs.length)]
-    telemetryLogs.value.push(randomLog)
-    if (telemetryLogs.value.length > 5) {
-      telemetryLogs.value.shift()
-    }
-  }
+
 
   // Update rotating tactical scan sweep sector on Leaflet map
   if (mapInstance && (window as any).L) {
@@ -876,6 +984,8 @@ const statsTableRows = computed(() => {
     },
     { sensor: 'BATTERY LEVEL', current: isActive(sensorStore.envStatus) ? safeToFixed(env?.battery_level ?? 100.0, 1) : 'OFFLINE', unit: '%', key: 'bat_lvl', val: env?.battery_level ?? 100.0, statusClass: getStatusClass(sensorStore.envStatus), status: sensorStore.envStatus },
     { sensor: 'BATTERY TEMP', current: isActive(sensorStore.envStatus) ? safeToFixed(env?.battery_temp ?? 32.0, 1) : 'OFFLINE', unit: '°C', key: 'bat_temp', val: env?.battery_temp ?? 32.0, statusClass: getStatusClass(sensorStore.envStatus), status: sensorStore.envStatus },
+    { sensor: 'MIC INTENSITY', current: isActive(sensorStore.hearingStatus) ? safeToFixed(sensorStore.hearing?.intensity, 1) : 'OFFLINE', unit: 'dBFS', key: 'mic_int', val: sensorStore.hearing?.intensity, statusClass: getStatusClass(sensorStore.hearingStatus), status: sensorStore.hearingStatus },
+    { sensor: 'HEARING TRANSCRIPT', current: isActive(sensorStore.hearingStatus) ? (sensorStore.hearing?.transcript || 'STANDBY...') : 'OFFLINE', unit: '', key: 'mic_tx', val: 0, statusClass: getStatusClass(sensorStore.hearingStatus), status: sensorStore.hearingStatus },
   ]
 
   return rows.map(r => {
@@ -909,14 +1019,154 @@ const mapContainer = ref<HTMLElement | null>(null)
 let mapInstance: any = null
 let markerInstance: any = null
 let tacticalLayersGroup: any = null
-const telemetryLogs = ref<string[]>([
-  '> CONNECTING SAT_LINK_9... OK',
-  '> SEC_UPLINK: LOCK_ACTIVE',
-  '> RESOLVING TRACKING NODES...',
-  '> TELEMETRY_STREAM: RUNNING',
-  '> ALL_SYSTEMS_NOMINAL'
+
+interface TelemetryLogEntry {
+  timestamp: string
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG'
+  type: 'info' | 'warn' | 'error' | 'debug'
+  source: string
+  content: string
+}
+
+function getFormattedTime(): string {
+  const d = new Date()
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${d.getMilliseconds().toString().padStart(3, '0')}`
+}
+
+const telemetryLogs = ref<TelemetryLogEntry[]>([
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'Connecting SAT_LINK_9... OK' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'SEC_UPLINK: LOCK_ACTIVE' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'Resolving tracking nodes...' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'TELEMETRY_STREAM: RUNNING' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'ALL_SYSTEMS_NOMINAL' }
 ])
-let logUpdateTick = 0
+
+const sensorStreamingLogs = ref<TelemetryLogEntry[]>([
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'Connecting SAT_LINK_9... OK' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'SEC_UPLINK: LOCK_ACTIVE' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'Resolving tracking nodes...' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'TELEMETRY_STREAM: RUNNING' },
+  { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'ALL_SYSTEMS_NOMINAL' }
+])
+
+const sensorLogsContainerRef = ref<HTMLDivElement | null>(null)
+
+function addTelemetryLog(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', source: string, content: string) {
+  const typeMap = { INFO: 'info', WARN: 'warn', ERROR: 'error', DEBUG: 'debug' } as const
+  const entry = {
+    timestamp: getFormattedTime(),
+    level,
+    type: typeMap[level],
+    source,
+    content
+  }
+  
+  telemetryLogs.value.push(entry)
+  if (telemetryLogs.value.length > 5) {
+    telemetryLogs.value.shift()
+  }
+
+  sensorStreamingLogs.value.push(entry)
+  if (sensorStreamingLogs.value.length > 100) {
+    sensorStreamingLogs.value.shift()
+  }
+
+  nextTick(() => {
+    if (sensorLogsContainerRef.value) {
+      sensorLogsContainerRef.value.scrollTop = sensorLogsContainerRef.value.scrollHeight
+    }
+  })
+}
+
+function copyAllLogs() {
+  const text = sensorStreamingLogs.value.map(log => `[${log.timestamp}] [${log.level}] ${log.source} — ${log.content}`).join('\n')
+  navigator.clipboard.writeText(text).then(() => {
+    alert('Real-time log buffer copied to clipboard.')
+  }).catch(err => {
+    console.error('Failed to copy logs:', err)
+  })
+}
+
+function clearLogs() {
+  sensorStreamingLogs.value = []
+}
+
+let lastImuLogTime = 0
+watch(
+  () => sensorStore.lastImuMs,
+  (newVal) => {
+    if (newVal === 0) return
+    const now = Date.now()
+    if (now - lastImuLogTime >= 3000) {
+      lastImuLogTime = now
+      const la = sensorStore.imu.linear_acceleration
+      const yaw = sensorStore.eulerAngles.yaw
+      const heading = sensorStore.imu.compass_heading ?? 0
+      addTelemetryLog('INFO', 'hk07.sensors.imu', `ACCEL=[${la.x.toFixed(2)}, ${la.y.toFixed(2)}, ${la.z.toFixed(2)}] | YAW=${yaw}° | HEADING=${heading}°`)
+    }
+  }
+)
+
+let lastLocLogTime = 0
+watch(
+  () => sensorStore.lastLocMs,
+  (newVal) => {
+    if (newVal === 0) return
+    const now = Date.now()
+    if (now - lastLocLogTime >= 3000) {
+      lastLocLogTime = now
+      const lat = sensorStore.location.latitude
+      const lng = sensorStore.location.longitude
+      addTelemetryLog('INFO', 'hk07.sensors.location', `GPS_LOCK: LAT=${lat.toFixed(6)} | LNG=${lng.toFixed(6)}`)
+    }
+  }
+)
+
+let lastEnvLogTime = 0
+watch(
+  () => sensorStore.lastEnvMs,
+  (newVal) => {
+    if (newVal === 0) return
+    const now = Date.now()
+    if (now - lastEnvLogTime >= 3000) {
+      lastEnvLogTime = now
+      const batt = sensorStore.environment.battery_level
+      const temp = sensorStore.environment.battery_temp
+      addTelemetryLog('INFO', 'hk07.sensors.environment', `BATT: CAP=${batt.toFixed(1)}% | TEMP=${temp.toFixed(1)}°C`)
+    }
+  }
+)
+
+let lastActLogTime = 0
+ watch(
+   () => sensorStore.lastActMs,
+   (newVal) => {
+     if (newVal === 0) return
+     const now = Date.now()
+     if (now - lastActLogTime >= 3000) {
+       lastActLogTime = now
+       const steps = sensorStore.activity.pedometer_steps
+       const type = sensorStore.activity.activity_type.toUpperCase()
+       addTelemetryLog('INFO', 'hk07.sensors.activity', `PEDOMETER: STEPS=${steps} | STATE=${type}`)
+     }
+   }
+ )
+ 
+ let lastHearingLogTime = 0
+ watch(
+   () => sensorStore.lastHearingMs,
+   (newVal) => {
+     if (newVal === 0) return
+     const now = Date.now()
+     if (now - lastHearingLogTime >= 1000) {
+       lastHearingLogTime = now
+       const hearing = sensorStore.hearing
+       addTelemetryLog('INFO', 'hk07.sensors.hearing', `MICROPHONE: DBFS=${hearing.intensity.toFixed(1)} | PITCH=${hearing.frequency} | RHYTHM=${hearing.rhythm} | DIR=${hearing.direction} | TXT="${hearing.transcript}"`)
+     }
+   }
+ )
+
 let _blueprintAnimFrame: number | null = null
 
 const currentZoom = ref(17)
@@ -1288,14 +1538,48 @@ onUnmounted(() => {
 }
 
 .sv-left-col {
-  width: 30%;
+  width: 40%;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
 .sv-right-col {
-  width: 70%;
+  width: 60%;
+  position: relative;
+}
+
+/* Sensor Streaming Log Panel */
+.sensor-streaming-log-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.sensor-streaming-log-panel .console-logs-window {
+  flex: 1;
+  background: rgba(3, 3, 3, 0.96);
+  border: 1px solid rgba(0, 255, 102, 0.15);
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 10px;
+  line-height: 1.5;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  max-height: 800px;
+}
+.sensor-streaming-log-panel .console-logs-window::-webkit-scrollbar {
+  width: 4px;
+}
+.sensor-streaming-log-panel .console-logs-window::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.2);
+}
+.sensor-streaming-log-panel .console-logs-window::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 102, 0.3);
+  border-radius: 2px;
 }
 
 .sv-panel {
@@ -1448,16 +1732,16 @@ onUnmounted(() => {
   background: rgba(10, 10, 10, 0.88);
   border: 1px solid rgba(0, 255, 102, 0.25);
   border-left: 3px solid #00FF66;
-  padding: 6px 10px;
+  padding: 8px 12px;
   z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 4px;
   pointer-events: auto; /* enable clicks! */
-  width: 110px;
+  width: 130px;
 }
 .zoom-title {
-  font-size: 7.5px;
+  font-size: 9px;
   color: #00FF66;
   opacity: 0.7;
   letter-spacing: 1px;
@@ -1467,7 +1751,7 @@ onUnmounted(() => {
   border: none;
   color: rgba(0, 255, 102, 0.5);
   font-family: 'Roboto Mono', monospace;
-  font-size: 9px;
+  font-size: 10.5px;
   text-align: left;
   padding: 2px 0;
   cursor: pointer;
@@ -1493,16 +1777,16 @@ onUnmounted(() => {
   background: rgba(10, 10, 10, 0.88);
   border: 1px solid rgba(0, 255, 102, 0.25);
   border-left: 3px solid #00FF66;
-  padding: 6px 10px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  width: 140px;
+  gap: 4px;
+  width: 170px;
 }
 .coord-line {
   display: flex;
   justify-content: space-between;
-  font-size: 9px;
+  font-size: 10.5px;
 }
 .coord-lbl {
   color: #00FF66;
@@ -1514,7 +1798,7 @@ onUnmounted(() => {
   font-weight: 700;
 }
 .coord-unit {
-  font-size: 8px;
+  font-size: 9.5px;
   opacity: 0.8;
   margin-left: 1px;
 }
@@ -1524,18 +1808,17 @@ onUnmounted(() => {
   position: absolute;
   bottom: 10px;
   left: 10px;
-  width: 220px;
-  background: rgba(10, 10, 10, 0.88);
+  width: 380px;
+  background: rgba(5, 5, 5, 0.92);
   border: 1px solid rgba(0, 255, 102, 0.25);
   border-left: 3px solid #00FF66;
-  padding: 6px 10px;
+  padding: 8px 12px;
   z-index: 15;
-  font-size: 7.5px;
+  font-size: 9.5px;
   line-height: 1.4;
-  color: rgba(0, 255, 102, 0.9);
 }
 .term-header {
-  font-size: 8px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #00FF66;
   margin-bottom: 4px;
@@ -1546,6 +1829,35 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.term-line .log-ts {
+  color: rgba(255, 255, 255, 0.4);
+}
+.term-line .log-level {
+  font-weight: bold;
+}
+.term-line .log-level.info {
+  color: #00FF66;
+}
+.term-line .log-level.warn {
+  color: #FFB000;
+}
+.term-line .log-level.error {
+  color: #FF3333;
+}
+.term-line .log-level.debug {
+  color: #00E5FF;
+}
+.term-line .log-source {
+  color: #ffffff;
+  font-weight: 600;
+}
+.term-line .log-content {
+  color: #00FF66;
+  opacity: 0.95;
 }
 
 /* BOTTOM-RIGHT: Target tracking & system parameters */
@@ -1553,18 +1865,18 @@ onUnmounted(() => {
   position: absolute;
   bottom: 10px;
   right: 10px;
-  width: 180px;
+  width: 200px;
   background: rgba(10, 10, 10, 0.88);
   border: 1px solid rgba(0, 255, 102, 0.25);
   border-left: 3px solid #00FF66;
-  padding: 6px 10px;
+  padding: 8px 12px;
   z-index: 15;
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
 .sys-title {
-  font-size: 8px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #00FF66;
   margin-bottom: 4px;
@@ -1574,7 +1886,7 @@ onUnmounted(() => {
 .sys-row {
   display: flex;
   justify-content: space-between;
-  font-size: 8.5px;
+  font-size: 10.5px;
 }
 .sys-lbl {
   color: #00FF66;
@@ -2066,5 +2378,17 @@ onUnmounted(() => {
 @keyframes blink-1hz {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* ─── Audio Hearing Equalizer Wave OSC ─────────────────────────────────── */
+.bar-osc {
+  width: 3px;
+  height: 100%;
+  background: #00FF66;
+  animation: osc-anim 0.8s ease-in-out infinite alternate;
+}
+@keyframes osc-anim {
+  from { height: 15%; }
+  to { height: 100%; }
 }
 </style>

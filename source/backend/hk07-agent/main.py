@@ -1238,12 +1238,14 @@ async def run_auto_perception_scan_loop():
             async with _cache_lock:
                 cam_status = _sensor_cache.get("daemon_status", "")
                 frame_ts = _sensor_cache.get("frame_ts")
+                frame_bytes = _sensor_cache.get("frame_bytes")
 
             frame_is_fresh = frame_ts is not None and (time.time() - frame_ts) < 15.0
 
             if frame_is_fresh or cam_status == "OK":
                 log.info("[AUTO_VISION] Triggering auto perception scan...")
-                scan = await perception_agent.execute_full_body_scan()
+                # Pass the fresh frame directly to avoid duplicate HTTP fetching
+                scan = await perception_agent.execute_full_body_scan(frame_bytes=frame_bytes)
                 # Cache scan result for faster frontend retrieval
                 async with _cache_lock:
                     _sensor_cache["latest_perception_scan"] = scan.to_dict()
@@ -1394,6 +1396,10 @@ app.add_middleware(
 async def health():
     return {"status": "ok", "engine": "MiroFish-MAS-Standard", "agents": 4}
 
+@app.get("/api/v1/health/llm-stats")
+async def llm_stats():
+    from services.llm_client import get_llm_stats
+    return get_llm_stats()
 
 @app.get("/agents/status")
 async def agents_status():

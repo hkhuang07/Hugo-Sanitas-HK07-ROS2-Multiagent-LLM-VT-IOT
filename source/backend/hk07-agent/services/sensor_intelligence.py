@@ -270,38 +270,9 @@ class ActivityClassifier:
         accel_delta = abs(accel_mag - self._prev_accel_mag)
         now = time.time()
 
-        # ── Fall Detection (Priority 1) ──────────────────────────────────────
-        # Pattern: large spike (> 25 m/s²) followed within 0.5s by near-zero (< 3 m/s²)
-        if accel_mag > self.FALL_SPIKE_THRESHOLD:
-            self._fall_spike_ts = now
-            log.debug("[ACTIVITY] Fall spike detected: accel_mag=%.2f", accel_mag)
-
-        if self._fall_spike_ts > 0 and (now - self._fall_spike_ts) < 0.5:
-            if accel_mag < self.FALL_FLOOR_THRESHOLD:
-                self._prev_accel_mag = accel_mag
-                self._prev_state = "falling"
-                return ("falling", 0.95)
-
-        # ── Lying Down (Priority 2) ─────────────────────────────────────────
-        # Very low total accel (gravity dominates one axis, very little else)
-        deviation_from_gravity = abs(accel_mag - 9.81)
-        if deviation_from_gravity < self.STILL_THRESHOLD and gyro_mag < 0.2:
-            # Differentiate lying vs still-sitting by orientation
-            # If Z-axis is near 0 and X or Y near 9.81 → horizontal = lying
-            if abs(accel_z) < 3.0 and (abs(accel_x) > 7.0 or abs(accel_y) > 7.0):
-                state = "lying"
-                conf = 0.80
-                self._inactivity_start = now  # lying = inactivity
-            else:
-                state = "still"
-                conf = 0.85
-                self._inactivity_start = self._inactivity_start  # unchanged
-
-            self._prev_accel_mag = accel_mag
-            self._prev_state = state
-            return (state, conf)
-
-        # ── Pose keypoint override (if MediaPipe available) ─────────────────
+        # ── Pose keypoint (Primary for Owner Activity) ──────────────────────
+        # Note: IMU is on the Robot (Phone), so we MUST NOT use it to infer Owner's
+        # falling or lying states. We only use vision (MediaPipe) for Owner state.
         if pose_keypoints:
             pose_state = self._classify_from_pose(pose_keypoints)
             if pose_state != "unknown":
@@ -309,18 +280,13 @@ class ActivityClassifier:
                 self._prev_state = pose_state
                 return (pose_state, 0.88)
 
-        # ── Walking / Running from accel magnitude ──────────────────────────
-        if accel_mag >= self.RUN_ACCEL_MIN and gyro_mag > 0.5:
-            state, conf = "running", 0.75
-        elif self.WALK_ACCEL_MIN <= accel_mag < self.WALK_ACCEL_MAX and gyro_mag >= self.GYRO_WALK_MIN:
-            state, conf = "walking", 0.70
-        elif accel_delta > 2.0:
-            state, conf = "moving", 0.60
-        else:
-            state, conf = "standing", 0.65
-
-        if state in ("walking", "running", "moving"):
+        # ── General motion from Robot's IMU (Fallback) ──────────────────────
+        # We don't say 'falling' or 'lying' because it's the robot's sensor
+        if accel_delta > 2.0 or gyro_mag > 0.5:
+            state, conf = "moving", 0.50
             self._inactivity_start = now
+        else:
+            state, conf = "still", 0.50
 
         self._prev_accel_mag = accel_mag
         self._prev_state = state

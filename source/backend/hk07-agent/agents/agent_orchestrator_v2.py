@@ -216,7 +216,7 @@ class AgentOrchestratorV2:
                 state["outputs"]["_error"] = str(e)
 
         # Step 5: Compose final output (aggregate medical + empathetic if both present)
-        if any("[SYSTEM_PERCEPTION_ERROR]" in str(v) for v in state["outputs"].values()) or any("SYSTEM_ERROR_BLIND" in str(v) for v in state["outputs"].values()):
+        if any("SYSTEM_PERCEPTION_ERROR" in str(v) or "SYSTEM_ERROR_BLIND" in str(v) for v in state["outputs"].values()):
             state["output"] = "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
             state["alert_level"] = "CRITICAL"
         elif not state["outputs"] or all(v.startswith("[ERROR]") for v in state["outputs"].values()):
@@ -262,6 +262,19 @@ class AgentOrchestratorV2:
                 parts.append(sos_res)
                 
             state["output"] = "\n\n".join(parts)
+
+        # ── ERROR-01 FIX: Local aggregate fallback when output is null/empty ──
+        # Prevents "Không nhận được câu trả lời hợp lệ" when LLM synthesis fails
+        # after tool execution succeeded (e.g. GROQ truncation + retry context loss).
+        if not state.get("output") or not state["output"].strip():
+            local_agg = self._local_aggregate_tool_results(state["outputs"])
+            if local_agg:
+                log.warning("[ORCHESTRATOR_V2][ERROR01_FIX] LLM output was null — using local aggregate fallback.")
+                state["output"] = local_agg
+            else:
+                state["output"] = "Hugo đang xử lý. Vui lòng thử lại sau giây lát."
+        # ─────────────────────────────────────────────────────────────────────
+
         
         # Map back to single fields for compatibility
         state["current_agent"] = state["current_agents"][0] if state["current_agents"] else "EMPATHETIC_CHAT"
@@ -656,6 +669,99 @@ class AgentOrchestratorV2:
             log.error("[TOOL_EXECUTION_ERROR] Tool %s failed: %s", tool_name, e)
             raise
 
+    def _local_aggregate_tool_results(self, outputs: Dict[str, str]) -> str:
+        """
+        Deterministic local aggregation fallback — ERROR-01 FIX.
+
+        Called when LLM synthesis returns null/empty after tool execution.
+        Ensures a meaningful response is always returned to the frontend even
+        when cloud LLM is degraded, rate-limited, or timed out.
+
+        Priority order: empathetic > medical > sensor > scan > fallback
+        """
+        if not outputs:
+            return None
+
+        # Filter out error outputs
+        valid = {k: v for k, v in outputs.items() if v and not str(v).startswith("[ERROR]")}
+        if not valid:
+            return None
+
+        parts = []
+
+        # 1. Empathetic response takes priority (user-facing conversation)
+        emp = valid.get("speak_empathetic_response")
+        if emp:
+            parts.append(emp)
+
+        # 2. Medical analysis next
+        med = valid.get("analyze_clinical_symptoms")
+        if med and not emp:
+            parts.append(med)
+
+        # 3. System query (sensor telemetry)
+        sys_q = valid.get("execute_system_query")
+        if sys_q:
+            # Extract readable part — strip JSON if present
+            try:
+                import json as _json
+                data = _json.loads(sys_q)
+                # Format sensor data into human-readable Vietnamese
+                sensor_parts = []
+                if "light" in data:
+                    sensor_parts.append(f"Ánh sáng: {data['light']:.1f} lux")
+                if "heart_rate" in data:
+                    sensor_parts.append(f"Nhịp tim: {data['heart_rate']:.0f} BPM")
+                if "spo2" in data:
+                    sensor_parts.append(f"SpO2: {data['spo2']:.1f}%")
+                if "battery" in data or "battery_level" in data:
+                    batt = data.get("battery_level", data.get("battery", 0))
+                    sensor_parts.append(f"Pin: {batt:.0f}%")
+                if sensor_parts:
+                    parts.append("📊 Dữ liệu cảm biến: " + ", ".join(sensor_parts))
+                else:
+                    parts.append(sys_q)
+            except Exception:
+                parts.append(sys_q)
+
+        # 4. Scan results
+        scan = valid.get("execute_full_body_scan")
+        if scan and not emp and not med:
+            parts.append(scan)
+
+        # 5. Environment scan
+        env = valid.get("execute_environment_scan")
+        if env:
+            parts.append(env)
+
+        # 6. Action plan
+        action = valid.get("execute_action_plan")
+        if action:
+            parts.append(action)
+
+        # 7. SOS
+        sos = valid.get("trigger_sos_protocol")
+        if sos:
+            parts.append(sos)
+
+        # 8. Care action
+        care = valid.get("propose_care_action")
+        if care and not emp:
+            parts.append(care)
+
+        if parts:
+            result = "\n\n".join(p for p in parts if p and p.strip())
+            if result.strip():
+                log.info("[ORCHESTRATOR_V2][LOCAL_AGGREGATE] Synthesized response from %d tool outputs", len(parts))
+                return result
+
+        # Last resort: return first valid output
+        first_valid = next(iter(valid.values()), None)
+        if first_valid:
+            return first_valid
+
+        return None
+
     def _aggregate_alert_levels(self, outputs: Dict[str, str]) -> str:
         """Aggregate alert levels from all tool outputs"""
         # Priority: CRITICAL > WARNING > NORMAL
@@ -664,6 +770,7 @@ class AgentOrchestratorV2:
         if any("WARNING" in v or "警告" in v for v in outputs.values()):
             return "WARNING"
         return "NORMAL"
+
 
     async def close(self):
         await self.router_agent.close()

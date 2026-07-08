@@ -58,6 +58,16 @@ export interface ActivitySnapshot {
   timestamp_ms: number
 }
 
+export interface HearingSnapshot {
+  frequency: string
+  intensity: number
+  intensity_label: string
+  rhythm: string
+  direction: string
+  transcript: string
+  timestamp_ms: number
+}
+
 export interface TimestampedValue {
   value: number
   ts: number
@@ -85,8 +95,8 @@ const DEFAULT_ENV: EnvironmentSnapshot = {
 }
 
 const DEFAULT_LOCATION: LocationSnapshot = {
-  latitude: 0,
-  longitude: 0,
+  latitude: 10.3955,
+  longitude: 105.4213,
   altitude: 0,
   timestamp_ms: 0,
 }
@@ -95,6 +105,16 @@ const DEFAULT_ACTIVITY: ActivitySnapshot = {
   pedometer_steps: 0,
   activity_type: 'unknown',
   wrist_motion: [],
+  timestamp_ms: 0,
+}
+
+const DEFAULT_HEARING: HearingSnapshot = {
+  frequency: 'trầm',
+  intensity: -120,
+  intensity_label: 'im lặng',
+  rhythm: 'chậm',
+  direction: 'xa',
+  transcript: '',
   timestamp_ms: 0,
 }
 
@@ -111,18 +131,21 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
   const environment = ref<EnvironmentSnapshot>({ ...DEFAULT_ENV })
   const location = ref<LocationSnapshot>({ ...DEFAULT_LOCATION })
   const activity = ref<ActivitySnapshot>({ ...DEFAULT_ACTIVITY })
+  const hearing = ref<HearingSnapshot>({ ...DEFAULT_HEARING })
 
   // ── Live status ─────────────────────────────────────────────────────────────
   const lastImuMs = ref(0)
   const lastEnvMs = ref(0)
   const lastLocMs = ref(0)
   const lastActMs = ref(0)
+  const lastHearingMs = ref(0)
   const isLive = ref(false)
 
   const isImuSimulated = ref(false)
   const isEnvSimulated = ref(false)
   const isLocSimulated = ref(false)
   const isActSimulated = ref(false)
+  const isHearingSimulated = ref(false)
 
   // ── Rolling history arrays for charts ───────────────────────────────────────
   // IMU — accel XYZ
@@ -161,6 +184,9 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     if (lastActMs.value !== 0 && now - lastActMs.value > STALE_TIMEOUT) {
       activity.value = { ...DEFAULT_ACTIVITY }
     }
+    if (lastHearingMs.value !== 0 && now - lastHearingMs.value > STALE_TIMEOUT) {
+      hearing.value = { ...DEFAULT_HEARING }
+    }
 
     if (isLive.value && now - lastImuMs.value > 30000 && now - lastEnvMs.value > 30000) {
       isLive.value = false
@@ -191,6 +217,12 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     if (lastActMs.value === 0) return 'OFFLINE'
     if (age > 15000) return 'STALE'
     return isActSimulated.value ? 'SIMULATED' : 'LIVE'
+  })
+  const hearingStatus = computed<'LIVE' | 'SIMULATED' | 'STALE' | 'OFFLINE'>(() => {
+    const age = Date.now() - lastHearingMs.value
+    if (lastHearingMs.value === 0) return 'OFFLINE'
+    if (age > 15000) return 'STALE'
+    return isHearingSimulated.value ? 'SIMULATED' : 'LIVE'
   })
 
   // ── Derived: Euler angles from quaternion (degrees) ──────────────────────────
@@ -354,20 +386,39 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     wristMagHistory.value = pushHistory(wristMagHistory.value, { value: wristMagnitude.value, ts: now })
   }
 
+  function updateHearing(data: any) {
+    const now = Date.now()
+    lastHearingMs.value = now
+    isLive.value = true
+    isHearingSimulated.value = data.is_simulated ?? false
+    hearing.value = {
+      frequency: data.frequency ?? DEFAULT_HEARING.frequency,
+      intensity: data.intensity ?? DEFAULT_HEARING.intensity,
+      intensity_label: data.intensity_label ?? DEFAULT_HEARING.intensity_label,
+      rhythm: data.rhythm ?? DEFAULT_HEARING.rhythm,
+      direction: data.direction ?? DEFAULT_HEARING.direction,
+      transcript: data.transcript ?? DEFAULT_HEARING.transcript,
+      timestamp_ms: data.timestamp_ms ?? now
+    }
+  }
+
   function reset() {
     imu.value = { ...DEFAULT_IMU }
     environment.value = { ...DEFAULT_ENV }
     location.value = { ...DEFAULT_LOCATION }
     activity.value = { ...DEFAULT_ACTIVITY }
+    hearing.value = { ...DEFAULT_HEARING }
     lastImuMs.value = 0
     lastEnvMs.value = 0
     lastLocMs.value = 0
     lastActMs.value = 0
+    lastHearingMs.value = 0
     isLive.value = false
     isImuSimulated.value = false
     isEnvSimulated.value = false
     isLocSimulated.value = false
     isActSimulated.value = false
+    isHearingSimulated.value = false
     accelXHistory.value = []
     accelYHistory.value = []
     accelZHistory.value = []
@@ -384,9 +435,9 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
 
   return {
     // State
-    imu, environment, location, activity,
-    isLive, lastImuMs, lastEnvMs, lastLocMs, lastActMs,
-    isImuSimulated, isEnvSimulated, isLocSimulated, isActSimulated,
+    imu, environment, location, activity, hearing,
+    isLive, lastImuMs, lastEnvMs, lastLocMs, lastActMs, lastHearingMs,
+    isImuSimulated, isEnvSimulated, isLocSimulated, isActSimulated, isHearingSimulated,
     // History
     accelXHistory, accelYHistory, accelZHistory,
     gyroXHistory, gyroYHistory, gyroZHistory,
@@ -394,10 +445,10 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     lightHistory, pressureHistory, pressureDeltaHistory,
     stepsHistory, wristMagHistory,
     // Computed
-    imuStatus, envStatus, locStatus, actStatus,
+    imuStatus, envStatus, locStatus, actStatus, hearingStatus,
     eulerAngles, wristMagnitude,
     // Actions
-    updateImu, updateEnvironment, updateLocation, updateActivity, reset,
+    updateImu, updateEnvironment, updateLocation, updateActivity, updateHearing, reset,
     HISTORY_SIZE,
   }
 })

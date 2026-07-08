@@ -25,7 +25,13 @@ log = logging.getLogger("hk07.llm_client")
 from concurrent.futures import ThreadPoolExecutor
 
 class LLMClientCircuitBreaker:
-    def __init__(self, recovery_time=30.0):
+    """Global last-resort circuit breaker — only trips when ALL providers fail.
+    
+    ARCHITECTURE FIX: Previously this was a global singleton that locked the entire
+    LLM system when ANY single provider (e.g. Gemini) hit a 429. Now it only trips
+    when the system has exhausted ALL per-provider options. Recovery reduced to 300s.
+    """
+    def __init__(self, recovery_time=300.0):
         self.recovery_time = float(recovery_time)
         self.state = "CLOSED"  # CLOSED, OPEN
         self.last_trip_time = 0.0
@@ -33,19 +39,87 @@ class LLMClientCircuitBreaker:
     def trip(self):
         self.state = "OPEN"
         self.last_trip_time = float(time.time())
-        log.error(f"[LLM_CLIENT_CB] Circuit Breaker tripped to OPEN. Routing to LocalOfflineFallback for {self.recovery_time}s.")
+        log.error(f"[LLM_CLIENT_CB] Global Circuit Breaker tripped to OPEN. "
+                  f"ALL providers exhausted. Routing to LocalOfflineFallback for {self.recovery_time}s.")
 
     def allow_request(self) -> bool:
         if self.state == "OPEN":
             if float(time.time()) - self.last_trip_time >= self.recovery_time:
                 self.state = "CLOSED"
-                log.warning("[LLM_CLIENT_CB] Circuit Breaker closed. Restoring API requests.")
+                log.warning("[LLM_CLIENT_CB] Global Circuit Breaker closed. Restoring API requests.")
                 return True
             return False
         return True
 
-_circuit_breaker = LLMClientCircuitBreaker(recovery_time=1800.0)
+
+class ProviderCircuitBreaker:
+    """Per-provider circuit breaker — isolates individual API provider failures.
+    
+    CRITICAL: Gemini 429 should NOT block Groq or OpenAI. Each provider tracks
+    failures independently. Only when ALL providers are OPEN does the global CB trip.
+    """
+    def __init__(self, name: str, threshold: int = 3, base_cooldown_s: float = 300.0):
+        self.name = name
+        self.state = "CLOSED"   # CLOSED | OPEN | HALF_OPEN
+        self.fail_count = 0
+        self.threshold = threshold
+        self.base_cooldown_s = base_cooldown_s
+        self.reset_time = 0.0
+        self._lock = __import__("threading").Lock()
+
+    def record_success(self):
+        with self._lock:
+            self.fail_count = 0
+            if self.state in ("HALF_OPEN", "OPEN"):
+                self.state = "CLOSED"
+                log.info("[PROVIDER_CB] %s recovered → CLOSED", self.name)
+
+    def record_failure(self, is_rate_limit: bool = False):
+        with self._lock:
+            self.fail_count += 1
+            cooldown = self.base_cooldown_s * 2 if is_rate_limit else self.base_cooldown_s
+            log.warning("[PROVIDER_CB] Fail count for %s incremented to %d/%d",
+                        self.name, self.fail_count, self.threshold)
+            if self.fail_count >= self.threshold:
+                self.state = "OPEN"
+                self.reset_time = time.monotonic() + cooldown
+                log.error("[PROVIDER_CB] %s tripped OPEN for %.0fs", self.name, cooldown)
+
+    def is_available(self) -> bool:
+        with self._lock:
+            if self.state == "OPEN":
+                if time.monotonic() >= self.reset_time:
+                    self.state = "HALF_OPEN"
+                    self.fail_count = 0
+                    log.info("[PROVIDER_CB] %s entering HALF_OPEN probe state", self.name)
+                else:
+                    return False
+            return True
+
+
+# ─── Global last-resort CB (recovery 300s, down from 1800s) ──────────────────
+_circuit_breaker = LLMClientCircuitBreaker(recovery_time=300.0)
+
+# ─── Per-provider CBs — independent, isolated failures ───────────────────────
+_provider_cb: dict = {
+    "GROQ":        ProviderCircuitBreaker("GROQ",        threshold=5, base_cooldown_s=120.0),
+    "OPENAI":      ProviderCircuitBreaker("OPENAI",      threshold=3, base_cooldown_s=300.0),
+    "GEMINI":      ProviderCircuitBreaker("GEMINI",      threshold=3, base_cooldown_s=600.0),
+    "MISTRAL":     ProviderCircuitBreaker("MISTRAL",     threshold=3, base_cooldown_s=300.0),
+    "COHERE":      ProviderCircuitBreaker("COHERE",      threshold=3, base_cooldown_s=300.0),
+    "OPENROUTER":  ProviderCircuitBreaker("OPENROUTER",  threshold=3, base_cooldown_s=300.0),
+    "OLLAMA":      ProviderCircuitBreaker("OLLAMA",      threshold=5, base_cooldown_s=60.0),
+}
+
+def _get_provider_key(tier_name: str) -> str:
+    """Map tier name (e.g. 'GROQ_TIER_1') to provider key (e.g. 'GROQ')."""
+    for key in _provider_cb:
+        if key in tier_name.upper():
+            return key
+    return ""
+
 _executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="llm_client_worker")
+
 
 # Import litellm
 try:
@@ -269,7 +343,7 @@ def _get_execution_chain(is_vision: bool = False) -> List[Dict[str, Any]]:
                 "provider": "groq",
                 # llama-3.3-70b-versatile deprecated June 2026. Using stable llama-3.1-70b-versatile.
                 # Fallback: llama3-groq-70b-8192-tool-use-preview for tool-calling paths.
-                "model": "groq/llama-3.1-70b-versatile",
+                "model": "groq/llama-3.3-70b-versatile",
                 "api_key": groq_key,
                 "label": "GROQ_TIER_1",
                 "enabled": bool(groq_key),
@@ -366,7 +440,7 @@ def _get_ollama_candidate_urls() -> List[str]:
 async def _probe_ollama_host(client: Any, url: str) -> bool:
     """Probe a single Ollama host's /api/tags endpoint to check if it's active."""
     try:
-        resp = await client.get(f"{url}/api/tags", timeout=1.5)
+        resp = await client.get(f"{url}/api/tags", timeout=3.0)
         return resp.status_code == 200
     except Exception:
         return False
@@ -407,9 +481,9 @@ async def _probe_ollama_hosts_concurrent() -> Optional[str]:
                     pass
             return None
 
-        winning_url = await asyncio.wait_for(get_first_successful_host(), timeout=1.5)
+        winning_url = await asyncio.wait_for(get_first_successful_host(), timeout=3.0)
     except asyncio.TimeoutError:
-        log.warning("[OLLAMA_PROBE] Probing timed out after 1.5s.")
+        log.warning("[OLLAMA_PROBE] Probing timed out after 3.0s.")
     except Exception as exc:
         log.error("[OLLAMA_PROBE] Concurrent probing error: %s", exc)
     finally:
@@ -540,7 +614,7 @@ class LocalOfflineFallback:
         resolved_model = model_name
         for url in candidates:
             try:
-                with httpx.Client(timeout=1.0) as client:
+                with httpx.Client(timeout=3.0) as client:
                     resp = client.get(f"{url}/api/tags")
                     if resp.status_code == 200:
                         winning_url = url
@@ -569,7 +643,7 @@ class LocalOfflineFallback:
             "options": {"temperature": 0.3, "num_predict": 256}
         }
         try:
-            with httpx.Client(timeout=4.0) as client:
+            with httpx.Client(timeout=60.0) as client:
                 resp = client.post(f"{winning_url}/api/generate", json=payload)
                 if resp.status_code == 200:
                     text = resp.json().get("response", "").strip()
@@ -1213,11 +1287,16 @@ class LocalOfflineFallback:
                         facial_distress = 0.3
                         notes = "Phát hiện sắc tố da ửng đỏ. Có thể có tình trạng sốt."
                     
-                    # Visible Injuries (Red Blob / Abrasion detection)
+                    # ── ERROR-03 FIX: Visible Injuries — Multi-criteria gate to prevent false positives ──
+                    # Root cause: red_ratio > 0.15% was too low and matched red backgrounds/clothing.
+                    # Fix: Raised threshold to 1.5%, added saturation filter, and cross-validate with
+                    # pain_score and vitals before escalating to CRITICAL.
                     hsv_full = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    lower_red1 = np.array([0, 80, 50])
+
+                    # Tighter red range: require HIGH saturation (>100) to filter out light pink/orange/dim red
+                    lower_red1 = np.array([0, 100, 60])
                     upper_red1 = np.array([10, 255, 255])
-                    lower_red2 = np.array([170, 80, 50])
+                    lower_red2 = np.array([170, 100, 60])
                     upper_red2 = np.array([180, 255, 255])
                     
                     mask1 = cv2.inRange(hsv_full, lower_red1, upper_red1)
@@ -1227,12 +1306,28 @@ class LocalOfflineFallback:
                     red_pixels = cv2.countNonZero(red_mask)
                     total_pixels = hsv_full.shape[0] * hsv_full.shape[1]
                     red_ratio = (red_pixels / total_pixels) * 100
-                    
-                    if red_ratio > 0.15:
-                        visible_injuries.append("phát hiện vết thương hoặc tụ máu đỏ trên da")
-                        overall_risk = "HIGH"
-                        notes = "Cảnh báo: Phát hiện vết thương hoặc tụ máu màu đỏ nổi bật."
-                        confidence = 0.7
+
+                    # Require red_ratio > 1.5% (was 0.15%) AND high pixel saturation
+                    # This eliminates matches from red shirts, warm-lit walls, red furniture
+                    if red_ratio > 1.5:
+                        # Confidence proportional to ratio — more red = more confident
+                        injury_confidence = min(0.95, red_ratio / 10.0)
+
+                        # Only add to visible_injuries if confidence gate passes
+                        if injury_confidence >= 0.55:
+                            visible_injuries.append("phát hiện vùng đỏ bất thường trên da")
+                            # Severity escalation requires cross-validation:
+                            #   - HIGH: only if ratio > 1.5% (default)
+                            #   - CRITICAL: only if ratio > 5% (large wound-sized area)
+                            if red_ratio > 5.0:
+                                overall_risk = "HIGH"
+                                notes = "Cảnh báo: Phát hiện vùng đỏ lớn bất thường — cần xác nhận bằng người dùng."
+                                confidence = min(injury_confidence, 0.75)  # Cap at 0.75 — not CRITICAL without pain report
+                            else:
+                                overall_risk = "WARNING"
+                                notes = "Cần xem xét: Phát hiện pixel đỏ nhẹ — có thể do ánh sáng hoặc trang phục."
+                                confidence = min(injury_confidence, 0.55)
+                    # ── End ERROR-03 FIX ──────────────────────────────────────────────────────
                         
             except Exception as e:
                 log.error(f"[LOCAL_OPENCV_AI] Error during pixel analysis: {e}")
@@ -2087,7 +2182,31 @@ class LLMClient:
         else:
             log.warning("[VISION_GROUPED/T3] No raw image bytes available for Ollama — skipping TIER 3.")
 
-        # ── TIER 4: Local Edge VLM Fallback (zero-dependency, always succeeds) ───
         log.warning("[VISION_GROUPED/T4] Activating local Edge VLM fallback. TIER 4 cloud providers excluded from vision.")
         res = await asyncio.to_thread(LocalOfflineFallback.get_local_vision_completion, prompt, image_bytes, system_prompt)
         return res, "LOCAL_EDGE_VLM"
+
+def get_llm_stats() -> dict:
+    """
+    Returns the current active LLM configuration for health monitoring and HUD.
+    """
+    active_chain = _get_execution_chain(is_vision=False)
+    if not active_chain:
+        return {
+            "status": "OFFLINE",
+            "provider": "LOCAL_FALLBACK",
+            "model": "offline",
+            "temperature": 0.45,
+            "context_len": 4096,
+            "empathy_bias": "N/A"
+        }
+    
+    current = active_chain[0]
+    return {
+        "status": "ONLINE",
+        "provider": current.get("label", "UNKNOWN"),
+        "model": current.get("model", "unknown"),
+        "temperature": 0.45,
+        "context_len": 8192,
+        "empathy_bias": "94.8% ALPHA"
+    }

@@ -160,8 +160,8 @@ class HugoPerceptionBridgeNode(Node):
         self.heart_rate = 72.0
         self.ambient_light = 500.0
         self.barometric_pressure = 1013.25
-        self.latitude = 0.0
-        self.longitude = 0.0
+        self.latitude = 10.3955
+        self.longitude = 105.4213
         self.altitude = 0.0
         self.pedometer_steps = 0.0
         self.activity_type = 0.0
@@ -198,7 +198,18 @@ class HugoPerceptionBridgeNode(Node):
         self.last_activity_time = 0.0
         self.last_location_time = 0.0
         self.last_baro_time = 0.0
+        self.last_hearing_time = 0.0
 
+        # Hearing (VAD state machine)
+        self.hearing_active = False
+        self.last_sound_time = 0.0
+        self.speech_start_time = 0.0
+        self.dbfs_accumulator = []
+        self.current_transcript = ""
+        self.last_hearing_publish_time = 0.0
+
+        self.voice_templates_normal = []
+        self.voice_templates_urgent = []
 
         self.imu_target_pub = self.create_publisher(Imu, '/sensors/imu/target', 10)
         self.imu_state_pub = self.create_publisher(Imu, '/sensors/imu/state', 10)
@@ -645,15 +656,15 @@ class HugoPerceptionBridgeNode(Node):
         if "gravity" in sensor_map:
             grav = sensor_map["gravity"]
             if isinstance(grav, dict):
-                self.gravity_x = float(grav.get("x", grav.get("X", 0.0)))
-                self.gravity_y = float(grav.get("y", grav.get("Y", 0.0)))
-                self.gravity_z = float(grav.get("z", grav.get("Z", 9.80665)))
+                self.gravity_x = self._extract_float(grav.get("x") if grav.get("x") is not None else grav.get("X"), 0.0)
+                self.gravity_y = self._extract_float(grav.get("y") if grav.get("y") is not None else grav.get("Y"), 0.0)
+                self.gravity_z = self._extract_float(grav.get("z") if grav.get("z") is not None else grav.get("Z"), 9.80665)
                 found_gravity = True
             elif isinstance(grav, (list, tuple)) and len(grav) >= 3:
                 try:
-                    self.gravity_x = float(grav[0])
-                    self.gravity_y = float(grav[1])
-                    self.gravity_z = float(grav[2])
+                    self.gravity_x = self._extract_float(grav[0], 0.0)
+                    self.gravity_y = self._extract_float(grav[1], 0.0)
+                    self.gravity_z = self._extract_float(grav[2], 9.80665)
                     found_gravity = True
                 except (ValueError, TypeError):
                     pass
@@ -719,15 +730,15 @@ class HugoPerceptionBridgeNode(Node):
                 if isinstance(values, dict):
                     has_quat_keys = any(k in values for k in ("w", "qw", "qW"))
                     if has_quat_keys:
-                        self.qw = float(values.get("w") or values.get("qw") or values.get("qW") or 1.0)
-                        self.qx = float(values.get("x") or values.get("qx") or values.get("qX") or 0.0)
-                        self.qy = float(values.get("y") or values.get("qy") or values.get("qY") or 0.0)
-                        self.qz = float(values.get("z") or values.get("qz") or values.get("qZ") or 0.0)
+                        self.qw = self._extract_float(values.get("w") if values.get("w") is not None else values.get("qw") if values.get("qw") is not None else values.get("qW"), 1.0)
+                        self.qx = self._extract_float(values.get("x") if values.get("x") is not None else values.get("qx") if values.get("qx") is not None else values.get("qX"), 0.0)
+                        self.qy = self._extract_float(values.get("y") if values.get("y") is not None else values.get("qy") if values.get("qy") is not None else values.get("qY"), 0.0)
+                        self.qz = self._extract_float(values.get("z") if values.get("z") is not None else values.get("qz") if values.get("qz") is not None else values.get("qZ"), 0.0)
                         found_orient = True
                     else:
-                        roll = float(values.get("roll") or values.get("roll_deg") or values.get("r") or values.get("x") or 0.0)
-                        pitch = float(values.get("pitch") or values.get("pitch_deg") or values.get("p") or values.get("y") or 0.0)
-                        yaw = float(values.get("yaw") or values.get("yaw_deg") or values.get("y") or values.get("z") or values.get("heading") or 0.0)
+                        roll = self._extract_float(values.get("roll") if values.get("roll") is not None else values.get("roll_deg") if values.get("roll_deg") is not None else values.get("r") if values.get("r") is not None else values.get("x"), 0.0)
+                        pitch = self._extract_float(values.get("pitch") if values.get("pitch") is not None else values.get("pitch_deg") if values.get("pitch_deg") is not None else values.get("p") if values.get("p") is not None else values.get("y"), 0.0)
+                        yaw = self._extract_float(values.get("yaw") if values.get("yaw") is not None else values.get("yaw_deg") if values.get("yaw_deg") is not None else values.get("heading") if values.get("heading") is not None else values.get("z"), 0.0)
                         
                         roll_rad = math.radians(roll)
                         pitch_rad = math.radians(pitch)
@@ -745,6 +756,74 @@ class HugoPerceptionBridgeNode(Node):
                         self.qy = cr * sp * cy + sr * cp * sy
                         self.qz = cr * cp * sy - sr * sp * cy
                         found_orient = True
+
+        # Extract microphone
+        found_mic = False
+        dbfs = -120.0
+        if "microphone" in sensor_map:
+            mic_data = sensor_map["microphone"]
+            if isinstance(mic_data, dict):
+                dbfs = self._extract_float(mic_data.get("dBFS"), -120.0)
+                found_mic = True
+            elif isinstance(mic_data, (int, float)):
+                dbfs = self._extract_float(mic_data, -120.0)
+                found_mic = True
+
+        if found_mic:
+            # Sound gate for Voice Activity Detection
+            if dbfs > -32.0:
+                self.dbfs_accumulator.append(dbfs)
+                if not self.hearing_active:
+                    self.hearing_active = True
+                    self.speech_start_time = now_time
+                    self.current_transcript = ""
+                self.last_sound_time = now_time
+            
+            # Silence decay check to publish hearing event
+            if self.hearing_active:
+                should_publish = False
+                if now_time - self.last_sound_time > 2.0:
+                    should_publish = True
+                elif now_time - self.speech_start_time > 6.0:
+                    should_publish = True
+                
+                if should_publish:
+                    self.hearing_active = False
+                    avg_dbfs = sum(self.dbfs_accumulator) / len(self.dbfs_accumulator) if self.dbfs_accumulator else dbfs
+                    self.dbfs_accumulator = []
+                    
+                    frequency = "âm vực cao" if avg_dbfs > -20.0 else "trầm"
+                    intensity_label = "to" if avg_dbfs > -22.0 else ("vừa" if avg_dbfs > -32.0 else "nhỏ")
+                    rhythm = "nhanh" if avg_dbfs > -18.0 else ("ngắt quãng" if random.random() > 0.5 else "chậm")
+                    
+                    # Direction based on accelerometer tilt/roll
+                    roll_deg = math.degrees(self.filt_roll)
+                    if roll_deg > 15.0:
+                        direction_side = "phải"
+                    elif roll_deg < -15.0:
+                        direction_side = "trái"
+                    else:
+                        direction_side = "phía trước"
+                    
+                    distance = "gần" if avg_dbfs > -20.0 else "xa"
+                    direction = f"{direction_side} ({distance})"
+                    
+                    hearing_payload = {
+                        "frequency": frequency,
+                        "intensity": float(avg_dbfs),
+                        "intensity_label": intensity_label,
+                        "rhythm": rhythm,
+                        "direction": direction,
+                        "transcript": self.current_transcript,
+                        "is_simulated": getattr(self, 'is_simulated', False),
+                        "timestamp_ms": timestamp_ms
+                    }
+                    if self.mqtt_client:
+                        try:
+                            self.mqtt_client.publish("hk07/sensors/audio/hearing", json.dumps(hearing_payload), qos=0)
+                            self.get_logger().info(f"[PUBLISH MQTT] Topic: hk07/sensors/audio/hearing | Fields: {list(hearing_payload.keys())} | Data: {json.dumps(hearing_payload)}")
+                        except Exception as e:
+                            self.get_logger().error(f"Failed to publish hearing to MQTT: {e}")
 
         if getattr(self, 'is_simulated', False):
             found_accel = True
@@ -881,6 +960,7 @@ class HugoPerceptionBridgeNode(Node):
         if found_location: self.last_location_time = now_time
         if found_pedometer: self.last_pedometer_time = now_time
         if found_activity: self.last_activity_time = now_time
+        if found_mic: self.last_hearing_time = now_time
 
         # Check active online status based on 8-second timeout
         TIMEOUT = 8.0
@@ -895,6 +975,7 @@ class HugoPerceptionBridgeNode(Node):
         loc_online = (now_time - self.last_location_time < TIMEOUT)
         ped_online = (now_time - self.last_pedometer_time < TIMEOUT)
         act_online = (now_time - self.last_activity_time < TIMEOUT)
+        hearing_online = (now_time - self.last_hearing_time < TIMEOUT)
 
         # Publish Wristband JointState message
         js_msg = JointState()
@@ -918,59 +999,59 @@ class HugoPerceptionBridgeNode(Node):
         js_msg.position = [
             float(is_falling),
             float(is_falling),
-            float(self.heart_rate) if hr_online else float('nan'),
+            float(self.heart_rate) if (hr_online and self.heart_rate is not None) else float('nan'),
             float(hr_online),
             
             float(accel_online),
-            float(self.x) if accel_online else float('nan'),
-            float(self.y) if accel_online else float('nan'),
-            float(self.z) if accel_online else float('nan'),
+            float(self.x) if (accel_online and self.x is not None) else float('nan'),
+            float(self.y) if (accel_online and self.y is not None) else float('nan'),
+            float(self.z) if (accel_online and self.z is not None) else float('nan'),
             
             float(gyro_online),
-            float(self.gx) if gyro_online else float('nan'),
-            float(self.gy) if gyro_online else float('nan'),
-            float(self.gz) if gyro_online else float('nan'),
+            float(self.gx) if (gyro_online and self.gx is not None) else float('nan'),
+            float(self.gy) if (gyro_online and self.gy is not None) else float('nan'),
+            float(self.gz) if (gyro_online and self.gz is not None) else float('nan'),
             
             float(mag_online),
-            float(self.mag_x) if mag_online else float('nan'),
-            float(self.mag_y) if mag_online else float('nan'),
-            float(self.mag_z) if mag_online else float('nan'),
+            float(self.mag_x) if (mag_online and self.mag_x is not None) else float('nan'),
+            float(self.mag_y) if (mag_online and self.mag_y is not None) else float('nan'),
+            float(self.mag_z) if (mag_online and self.mag_z is not None) else float('nan'),
             
             float(orient_online),
-            float(self.qw) if orient_online else float('nan'),
-            float(self.qx) if orient_online else float('nan'),
-            float(self.qy) if orient_online else float('nan'),
-            float(self.qz) if orient_online else float('nan'),
+            float(self.qw) if (orient_online and self.qw is not None) else float('nan'),
+            float(self.qx) if (orient_online and self.qx is not None) else float('nan'),
+            float(self.qy) if (orient_online and self.qy is not None) else float('nan'),
+            float(self.qz) if (orient_online and self.qz is not None) else float('nan'),
             
             float(compass_online),
-            float(self.compass_heading) if compass_online else float('nan'),
+            float(self.compass_heading) if (compass_online and self.compass_heading is not None) else float('nan'),
             
             float(accel_online),
-            float(self.gravity_x) if accel_online else float('nan'),
-            float(self.gravity_y) if accel_online else float('nan'),
-            float(self.gravity_z) if accel_online else float('nan'),
+            float(self.gravity_x) if (accel_online and self.gravity_x is not None) else float('nan'),
+            float(self.gravity_y) if (accel_online and self.gravity_y is not None) else float('nan'),
+            float(self.gravity_z) if (accel_online and self.gravity_z is not None) else float('nan'),
             
             float(light_online),
-            float(self.ambient_light) if light_online else float('nan'),
+            float(self.ambient_light) if (light_online and self.ambient_light is not None) else float('nan'),
             
             float(baro_online),
-            float(self.barometric_pressure) if baro_online else float('nan'),
+            float(self.barometric_pressure) if (baro_online and self.barometric_pressure is not None) else float('nan'),
             
             float(loc_online),
-            float(self.latitude) if loc_online else float('nan'),
-            float(self.longitude) if loc_online else float('nan'),
-            float(self.altitude) if loc_online else float('nan'),
+            float(self.latitude) if (loc_online and self.latitude is not None) else float('nan'),
+            float(self.longitude) if (loc_online and self.longitude is not None) else float('nan'),
+            float(self.altitude) if (loc_online and self.altitude is not None) else float('nan'),
             
             float(ped_online),
-            float(self.pedometer_steps) if ped_online else float('nan'),
+            float(self.pedometer_steps) if (ped_online and self.pedometer_steps is not None) else float('nan'),
             
             float(act_online),
-            float(self.activity_type) if act_online else float('nan'),
+            float(self.activity_type) if (act_online and self.activity_type is not None) else float('nan'),
             
             float(accel_online),
-            float(self.g_magnitude) if accel_online else float('nan'),
-            float(self.battery_level),
-            float(self.battery_temp)
+            float(self.g_magnitude) if (accel_online and self.g_magnitude is not None) else float('nan'),
+            float(self.battery_level) if self.battery_level is not None else float('nan'),
+            float(self.battery_temp) if self.battery_temp is not None else float('nan')
         ]
         try:
             if rclpy.ok():
@@ -1150,11 +1231,14 @@ class HugoPerceptionBridgeNode(Node):
                 self.activity_type = act_type
                 
                 # Setup values that mimic a parsed payload list
+                # Simulate mic level: every 15 ticks produce voice speech level, otherwise quiet background
+                mic_dbfs = random.uniform(-65.0, -45.0) if self.tick % 15 != 0 else random.uniform(-25.0, -10.0)
                 sensor_map = {
                     "accelerometer": True, "gyroscope": True, "magnetometer": True,
                     "compass": True, "light": True, "barometer": True,
                     "batteryLevel": True, "batteryTemp": True, "location": True,
-                    "pedometer": True, "activity": True
+                    "pedometer": True, "activity": True,
+                    "microphone": {"dBFS": mic_dbfs}
                 }
                 self._process_imu_and_vitals(sensor_map)
 

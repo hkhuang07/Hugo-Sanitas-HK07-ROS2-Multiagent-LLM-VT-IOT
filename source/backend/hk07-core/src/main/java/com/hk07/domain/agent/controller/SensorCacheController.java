@@ -52,7 +52,7 @@ public class SensorCacheController {
     private static final long MAX_ERRORS_PER_WINDOW = 3;
 
     public SensorCacheController(
-            @Value("${hk07.ai.agent-url:http://localhost:8000}") String agentUrl) {
+            @Value("${hk07.ai.agent-url:http://127.0.0.1:8889}") String agentUrl) {
         this.agentClient = WebClient.builder()
                 .baseUrl(agentUrl)
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
@@ -74,7 +74,7 @@ public class SensorCacheController {
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(m -> (Map<String, Object>) m)
-                    .block(Duration.ofSeconds(15)); // [FIX] 15s timeout for devmode
+                    .block(Duration.ofMillis(500)); // [FIX] 500ms timeout to prevent thread starvation
 
             if (payload != null) {
                 // Update the stale cache on successful fetch
@@ -132,7 +132,7 @@ public class SensorCacheController {
                     .uri("/api/v1/sensor-cache/frame")
                     .retrieve()
                     .bodyToMono(byte[].class)
-                    .block(Duration.ofSeconds(15)); // [FIX] 15s timeout for devmode
+                    .block(Duration.ofMillis(500)); // [FIX] 500ms timeout to prevent thread starvation
 
             if (frame == null || frame.length == 0) {
                 return ResponseEntity.notFound().build();
@@ -157,7 +157,7 @@ public class SensorCacheController {
                     .retrieve()
                     .bodyToMono(Map.class)
                     .map(m -> (Map<String, Object>) m)
-                    .block(Duration.ofSeconds(15)); // 15s timeout for devmode
+                    .block(Duration.ofMillis(500)); // [FIX] 500ms timeout to prevent thread starvation
 
             if (payload != null) {
                 _visionCacheRef.set(payload);

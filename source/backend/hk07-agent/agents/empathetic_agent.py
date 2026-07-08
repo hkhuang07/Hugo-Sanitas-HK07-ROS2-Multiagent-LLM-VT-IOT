@@ -250,10 +250,30 @@ EMPATHY_SYSTEM_PROMPT = (
 
 
 def execute_sensor_ping(device: str) -> dict:
-    """Mock function to ping a hardware device"""
-    if device == "lidar":
-        return {"status": "ABSENT", "message": "Cảm biến Lidar không có trong cấu hình phần cứng hiện tại."}
-    return {"status": "ONLINE", "latency": "12ms"}
+    """Real ping function based on actual data"""
+    try:
+        from main import _sensor_cache
+        import time
+        import random
+        
+        if "lidar" in device.lower():
+            return {"status": "ABSENT", "message": "Cảm biến Lidar không có trong cấu hình phần cứng hiện hành."}
+            
+        key = "last_update"
+        if "camera" in device.lower() or "vision" in device.lower():
+            key = "frame_ts"
+            
+        last_ts = _sensor_cache.get(key)
+        if last_ts is not None:
+            latency_ms = (time.time() - last_ts) * 1000.0
+            if latency_ms > 15000:
+                return {"status": "OFFLINE", "latency": f"{latency_ms:.0f}ms", "message": "Dữ liệu quá cũ, cảm biến có thể đang mất kết nối."}
+            # ERROR-05 FIX: No mock jitter -- latency is the actual elapsed time since last packet
+            return {"status": "ONLINE", "latency": f"{latency_ms:.0f}ms"}
+        else:
+            return {"status": "OFFLINE", "message": "Chưa nhận được gói tin dữ liệu nào."}
+    except Exception as e:
+        return {"status": "ERROR", "message": str(e)}
 
 def execute_vital_scan() -> dict:
     """Mock function to scan vitals sensors"""
@@ -566,6 +586,53 @@ class EmpatheticAgent:
             return base + "\n" + self._last_care_context
         return base
 
+    def _analyze_language_percentage(self, text: str) -> tuple:
+        import re
+        cleaned = re.sub(r'[^\w\s]', '', text.lower())
+        words = cleaned.split()
+        if not words:
+            return 0.0, 100.0  # Default to Vietnamese
+        
+        COMMON_VI_WORDS = {
+            "chào", "bạn", "tôi", "có", "không", "đi", "dạo", "nhịp", "tim", "sức", "khỏe", "ở", "đây", "giúp", "robot", 
+            "chỉ", "số", "mệt", "mỏi", "đau", "ngực", "bình", "thường", "thời", "tiết", "hôm", "nay", "thế", "nào", 
+            "cho", "lời", "khuyên", "bảo", "vệ", "cứu", "với", "ngã", "rồi", "phát", "tín", "hiệu", "khẩn", "cấp", 
+            "chao", "ban", "toi", "co", "khong", "di", "dao", "nhip", "suc", "khoe", "o", "day", "giup", 
+            "chi", "so", "met", "moi", "dau", "nguc", "binh", "thuong", "thoi", "tiet", "hom", "nay", "the", "nao", 
+            "cho", "loi", "khuyen", "bao", "ve", "cuu", "voi", "nga", "roi", "phat", "tin", "hieu", "khan", "cap",
+            "ơi", "oi", "sếp", "sep", "cảm", "thấy", "cam", "thay", "nhỏ", "nho", "lớn", "lon", "vừa", "vua",
+            "trầm", "tram", "cao", "nhanh", "chậm", "cham", "trái", "trai", "phải", "phai"
+        }
+        COMMON_EN_WORDS = {
+            "hello", "hi", "hey", "you", "there", "is", "are", "am", "how", "what", "weather", "today", "go", "walk", 
+            "robot", "check", "sensor", "status", "connection", "heart", "rate", "health", "vitals", "feel", "tired", 
+            "dizzy", "pain", "chest", "severe", "help", "me", "fall", "emergency", "signal", "please", "advice", 
+            "protect", "who", "where", "why", "can", "do", "should", "thank", "thanks"
+        }
+        
+        vi_accent_pattern = re.compile(r'[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệđìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]')
+        
+        vi_count = 0
+        en_count = 0
+        
+        for w in words:
+            if vi_accent_pattern.search(w):
+                vi_count += 1
+            elif w in COMMON_VI_WORDS:
+                vi_count += 1
+            elif w in COMMON_EN_WORDS:
+                en_count += 1
+                
+        total = vi_count + en_count
+        if total == 0:
+            if any(g in cleaned for g in ["hi", "hello", "are you", "thank", "please"]):
+                return 100.0, 0.0
+            return 0.0, 100.0
+            
+        en_pct = (en_count / total) * 100.0
+        vi_pct = (vi_count / total) * 100.0
+        return en_pct, vi_pct
+
     async def process_text_interaction(self, user_message: str, user_id: Optional[str] = None) -> str:
         if user_id is None:
             user_id = current_user_id.get()
@@ -736,10 +803,17 @@ class EmpatheticAgent:
         except Exception as e:
             log.warning("Failed to generate rich sensor context: %s", e)
 
+        # Determine response language instruction based on input text language analysis
+        en_pct, vi_pct = self._analyze_language_percentage(user_message)
+        if en_pct > vi_pct:
+            lang_instruction = "Respond in English since the user communicates in English, maintaining the warm and calm tone of Baymax.\n\n"
+        else:
+            lang_instruction = "Respond in Vietnamese since the user communicates in Vietnamese, maintaining the warm and calm tone of Baymax.\n\n"
+
         system_instruction = (
             "You are Hugo (Sanitas HK-07), a highly empathetic, slow-speaking, non-judgmental personal healthcare companion. "
             "You DO NOT diagnose diseases. Your goal is to listen, comfort, and suggest physical actions like hugging or bringing water.\n"
-            "Respond in Vietnamese since the user communicates in Vietnamese, maintaining the warm and calm tone of Baymax.\n\n"
+            f"{lang_instruction}"
             f"{sensor_ctx_str}\n"
             "Rules:\n"
             "1. Be extremely compassionate, gentle, and comforting.\n"

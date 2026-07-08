@@ -227,8 +227,8 @@ function goToDigitalTwin() {
 }
 
 // ── Robot location telemetry state (with browser geolocation fallback) ────
-const robotLat = ref(10.0371) // default Can Tho city center
-const robotLng = ref(105.7883)
+const robotLat = ref(10.3955) // default Long Xuyen
+const robotLng = ref(105.4213)
 const robotAlt = ref(0)
 const locSource = ref('DEFAULT')
 
@@ -248,10 +248,10 @@ watch(
 
 // Default preset targets fallback
 const presets = [
-  { name: 'CAN_THO_CITY_HALL', lat: 10.0371, lng: 105.7883, type: 'Government Office' },
-  { name: 'NINH_KIEU_PARK', lat: 10.0333, lng: 105.7906, type: 'Public Park' },
-  { name: 'CAN_THO_UNIVERSITY', lat: 10.0298, lng: 105.7686, type: 'University' },
-  { name: 'BUS_STATION_PERIMETER', lat: 10.0156, lng: 105.7535, type: 'Transit Hub' }
+  { name: 'LONG_XUYEN_CITY_HALL', lat: 10.3759, lng: 105.4326, type: 'Government Office' },
+  { name: 'BINH_KHANH_PARK', lat: 10.3975, lng: 105.4190, type: 'Public Park' },
+  { name: 'AN_GIANG_UNIVERSITY', lat: 10.3705, lng: 105.4322, type: 'University' },
+  { name: 'NGOC_TRAI_NUI_COFFEE', lat: 10.39565, lng: 105.42075, type: 'Cafe / Coffee Shop' }
 ]
 
 // ── Address Geocoding Search (Nominatim API) ───────────────────────────────

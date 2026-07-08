@@ -173,7 +173,13 @@ class SafetyAgent:
                     dist = self._vision_dist
 
                 # 2. IMU / Fall risk
-                if not danger and imu_data:
+                # WARN-01 FIX: Only use IMU for robot fall detection if source is robot hardware.
+                # Phone IMU (entity=owner_device) measures the phone's orientation, NOT the robot's.
+                # A phone lying flat (orientation=0/180°) must NOT trigger "robot fell down".
+                imu_entity = imu_data.get("entity", "unknown") if imu_data else "unknown"
+                imu_is_robot = imu_entity in ("robot_hardware", "unknown")  # unknown = legacy compatibility
+
+                if not danger and imu_data and imu_is_robot:
                     raw_magnitude = float((ax**2 + ay**2 + (az if az != 0.0 else 9.80665)**2) ** 0.5)
                     if raw_magnitude > 5.0:
                         normalized_g_force = float(raw_magnitude / 9.80665)
@@ -212,9 +218,14 @@ class SafetyAgent:
                             self._freefall_start_time = None
                             self._freefall_duration_exceeded = False
                             self._freefall_ended_time = None
-                            
+                        
                     if not danger:
                         log.debug(f"[SAFETY_WORKER] Normalized G-force: {normalized_g_force:.2f}g - Status: CLEAR")
+
+                elif not danger and imu_data and not imu_is_robot:
+                    # Owner device IMU — assess OWNER movement, NOT robot posture
+                    # Log for debugging but never trigger robot safety actions
+                    log.debug("[SAFETY_WORKER] IMU entity=%s (owner device) — skipping robot fall detection.", imu_entity)
                 else:
                     # Reset freefall tracking if IMU data is not available (disconnected)
                     self._freefall_start_time = None

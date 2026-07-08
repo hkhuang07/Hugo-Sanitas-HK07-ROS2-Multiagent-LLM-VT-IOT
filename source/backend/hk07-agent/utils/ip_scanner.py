@@ -190,6 +190,23 @@ async def discover_ipwebcam_ip(
     """
     global _LAST_KNOWN_IP, _LAST_KNOWN_TS
 
+    # ── ERROR-02 FIX: Static IP override — skips all WiFi scanning ───────────
+    # Set IPWEBCAM_STATIC_IP in .env to permanently bypass autodiscovery.
+    # Use this when phone IP is fixed via DHCP reservation or manual assignment.
+    static_ip = os.getenv("IPWEBCAM_STATIC_IP", "").strip()
+    static_port = int(os.getenv("IPWEBCAM_PORT", str(port)))
+    if static_ip:
+        probe = await _probe_ip(static_ip, static_port, timeout=1.5)
+        if probe:
+            _LAST_KNOWN_IP = probe
+            _LAST_KNOWN_TS = time.monotonic()
+            _cb_reset()
+            log.info("[IP_SCANNER] Static IP override active — IPWebcam at %s:%d", static_ip, static_port)
+            return probe
+        else:
+            log.warning("[IP_SCANNER] IPWEBCAM_STATIC_IP=%s is set but unreachable. Falling back to discovery.", static_ip)
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Subsumption Architecture: Inhibit background/active subnet sweeps if an emergency or safety alert is active.
     # Safety Tier 0 has absolute priority and should bypass non-essential perception sweeps to avoid thread starvation.
     try:
@@ -198,7 +215,7 @@ async def discover_ipwebcam_ip(
         safety_tripped = await bb.read_value("safety:tripped")
         vitals_emergency = await bb.read_value("sensor:vitals:emergency")
         if safety_tripped or vitals_emergency:
-            log.warning("[IP_SCANNER] ⚠️ Subsumption Inhibit: Safety tripped or Vitals emergency active. Bypassing active subnet sweeps.")
+            log.warning("[IP_SCANNER] Subsumption Inhibit: Safety tripped or Vitals emergency active. Bypassing active subnet sweeps.")
             if _LAST_KNOWN_IP:
                 return _LAST_KNOWN_IP
             return None

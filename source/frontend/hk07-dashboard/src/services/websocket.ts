@@ -94,11 +94,11 @@ export function initWebSocket(onReady?: () => void): void {
         // Unpack nested VitalSignDto from the VitalSignWithAlertDto wrapper
         const vitalsData = {
           deviceId: data.vitals?.deviceId || data.deviceId || '',
-          heartRate: data.vitals?.heartRate ?? data.heartRate ?? 0,
-          spo2: data.vitals?.spo2 ?? data.spo2 ?? 99,
-          systolic: data.vitals?.systolic ?? data.systolic ?? 120,
-          diastolic: data.vitals?.diastolic ?? data.diastolic ?? 80,
-          bodyTemperature: data.vitals?.bodyTemperature ?? data.bodyTemperature ?? 36.6,
+          heartRate: Number(data.vitals?.heartRate ?? data.heartRate ?? 0),
+          spo2: Number(data.vitals?.spo2 ?? data.spo2 ?? 99),
+          systolic: Number(data.vitals?.systolic ?? data.systolic ?? 120),
+          diastolic: Number(data.vitals?.diastolic ?? data.diastolic ?? 80),
+          bodyTemperature: Number(data.vitals?.bodyTemperature ?? data.bodyTemperature ?? 36.6),
           alertLevel: data.alertLevel || 'NORMAL',
           userId: data.userId || '',
           epochTimestampMs: data.vitals?.epochTimestampMs || Date.now()
@@ -244,6 +244,13 @@ export function initWebSocket(onReady?: () => void): void {
         const data = JSON.parse(msg.body)
         const sensorStore = useSensorTelemetryStore()
         sensorStore.updateActivity(data)
+      })
+
+      // ── Subscribe: Mobile Phone Sensor Bridge — Audio / Hearing (microphone decibel & inferred text)
+      _client!.subscribe('/topic/hk07/sensors/hearing', (msg: IMessage) => {
+        const data = JSON.parse(msg.body)
+        const sensorStore = useSensorTelemetryStore()
+        sensorStore.updateHearing(data)
       })
 
       // ── Subscribe: Safety alerts / Subsumption (SafetyAgent inhibit bridge)

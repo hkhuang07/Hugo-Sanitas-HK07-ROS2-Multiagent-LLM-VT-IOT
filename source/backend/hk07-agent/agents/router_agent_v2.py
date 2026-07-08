@@ -12,7 +12,7 @@ Tools định nghĩa:
 - trigger_sos_protocol: Activate emergency response (Safety Agent)
 
 Tiered Fallback (Zero-wait on 429):
-  [ROUTER_ENGINE]   Tier-1: groq/llama-3.1-70b-versatile
+  [ROUTER_ENGINE]   Tier-1: groq/llama-3.3-70b-versatile
                     Tier-2: openrouter/openai/gpt-4o-mini
                     Tier-3: local rule-based
   [MEDICAL_ENGINE]  Tier-1: openai/gpt-4o
@@ -382,7 +382,7 @@ class RouterAgentV2:
                 system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=512,
-                timeout=8
+                timeout=15
             )
             if result:
                 self.last_provider_used = provider
@@ -407,7 +407,7 @@ class RouterAgentV2:
             tiers=MEDICAL_TIERS,
             temperature=0.3,
             max_tokens=1024,
-            timeout=12
+            timeout=20
         )
         return content
 
@@ -420,7 +420,7 @@ class RouterAgentV2:
             tiers=EMPATHY_TIERS,
             temperature=0.3,
             max_tokens=1024,
-            timeout=12
+            timeout=20
         )
         return content
 

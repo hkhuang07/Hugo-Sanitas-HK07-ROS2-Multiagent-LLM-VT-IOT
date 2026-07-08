@@ -28,7 +28,7 @@ public class ProfileService {
     public ProfileService(
             UserRepository userRepository,
             MedicalProfileRepository medicalProfileRepository,
-            @Value("${AGENT_ENGINE_URL:http://localhost:8000}") String agentEngineUrl) {
+            @Value("${AGENT_ENGINE_URL:http://127.0.0.1:8889}") String agentEngineUrl) {
         this.userRepository = userRepository;
         this.medicalProfileRepository = medicalProfileRepository;
         this.webClient = WebClient.builder()

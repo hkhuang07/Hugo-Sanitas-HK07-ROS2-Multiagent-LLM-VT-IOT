@@ -83,7 +83,7 @@
           <div class="status-row">
             <span class="label">OPERATOR:</span>
             <span class="val text-cyan" style="font-size:8px; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-              {{ authStore.user?.email || 'N/A' }}
+              {{ authStore.user?.email || 'owner@hk07.local' }}
             </span>
           </div>
           <div class="status-row">
@@ -92,8 +92,8 @@
           </div>
           <div class="status-row">
             <span class="label">UPLINK:</span>
-            <span :class="vitalsStore.isConnected ? 'text-green' : 'text-orange'">
-              {{ vitalsStore.isConnected ? 'CONNECTED' : 'STANDBY' }}
+            <span :class="vitalsStore.isConnected ? 'text-green' : 'text-red'">
+              {{ vitalsStore.isConnected ? 'CONNECTED' : 'DISCONNECTED' }}
             </span>
           </div>
         </div>

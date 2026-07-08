@@ -239,15 +239,15 @@ class SkeletonActivityClassifier:
         label = "unknown"
         confidence = 0.5
 
-        # ── 0. FALL (IMU spike cross-check) ───────────────────────────────────
-        if imu_accel_mag > 25.0:
-            self._fall_spike_ts = now
-
-        if self._fall_spike_ts > 0 and (now - self._fall_spike_ts) < 0.6:
-            if imu_accel_mag < 3.5 or (torso_height is not None and torso_height < 0.05):
-                label, confidence = "falling", 0.96
-                self._update_history(label)
-                return (label, confidence, details)
+        # ── 0. FALL (Vision cross-check) ───────────────────────────────────
+        # Note: imu_accel_mag comes from the Robot's IMU, so we shouldn't use it 
+        # to detect Owner's fall. We only rely on vision (torso_height drops rapidly).
+        if torso_height is not None and torso_height < 0.05:
+            # We don't have temporal history for fall velocity here, but very low 
+            # torso height indicates a collapsed state.
+            label, confidence = "falling", 0.90
+            self._update_history(label)
+            return (label, confidence, details)
 
         # ── 1. LYING / SLEEPING ───────────────────────────────────────────────
         if torso_height is not None and torso_height < 0.08:

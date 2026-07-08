@@ -348,7 +348,7 @@ body {
   user-select: none;
 }
 
-.cmd-btn:hover {
+.cmd-btn:hover:not(:disabled) {
   background: var(--color-accent-green);
   color: var(--color-bg-void);
 }
@@ -358,7 +358,7 @@ body {
   color: var(--color-accent-red);
 }
 
-.cmd-btn.danger:hover {
+.cmd-btn.danger:hover:not(:disabled) {
   background: var(--color-accent-red);
   color: var(--color-bg-void);
 }

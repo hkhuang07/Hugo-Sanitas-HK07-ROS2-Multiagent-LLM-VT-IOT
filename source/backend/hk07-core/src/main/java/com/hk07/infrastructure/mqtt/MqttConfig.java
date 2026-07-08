@@ -100,7 +100,8 @@ public class MqttConfig {
                 "hk07/sensors/imu/target",
                 "hk07/sensors/environment/state",
                 "hk07/sensors/location/gps",
-                "hk07/sensors/activity/metrics"
+                "hk07/sensors/activity/metrics",
+                "hk07/sensors/audio/hearing"
             );
 
         adapter.setCompletionTimeout(5000);

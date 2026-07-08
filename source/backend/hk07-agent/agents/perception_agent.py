@@ -461,14 +461,18 @@ Rules:
                 explicit_request=False,
             )
 
-        # ── [FIX-1] Dynamic IPWebcam IP Discovery ────────────────────────────
+        # ── [ERROR-02 FIX] IPWebcam IP resolution: static override → blackboard → env ──
         bb = get_blackboard()
-        env_phone_ip = await bb.read_value("PHONE_IP") or os.getenv("PHONE_IP", "")
+        # Priority: IPWEBCAM_STATIC_IP env > PHONE_IP blackboard > PHONE_IP env
+        static_ip = os.getenv("IPWEBCAM_STATIC_IP", "").strip()
+        env_phone_ip = static_ip or (await bb.read_value("PHONE_IP")) or os.getenv("PHONE_IP", "")
+        ipwebcam_port = int(os.getenv("IPWEBCAM_PORT", "8080"))
 
         phone_ip = None
         if frame_bytes is None and should_call_cloud:
             # discover_ipwebcam_ip: subnet scan + circuit breaker — never throws
-            phone_ip = await discover_ipwebcam_ip(env_phone_ip=env_phone_ip)
+            # If IPWEBCAM_STATIC_IP is set, ip_scanner will use it directly without WiFi scan
+            phone_ip = await discover_ipwebcam_ip(env_phone_ip=env_phone_ip, port=ipwebcam_port)
             if not phone_ip:
                 log.warning("[PERCEPTION] IPWebcam discovery failed. Activating disk fallback path.")
 

@@ -60,6 +60,9 @@
         </div>
       </div>
     </div>
+    
+    <!-- Global Voice Assistant -->
+    <GlobalVoiceWidget v-if="authStore.isAuthenticated" />
   </div>
 </template>
 
@@ -75,6 +78,7 @@ import NotificationToast from './components/NotificationToast.vue'
 import HeaderStatusStrip from './components/HeaderStatusStrip.vue'
 import RoleSidebar from './components/RoleSidebar.vue'
 import CommonFooter from './components/CommonFooter.vue'
+import GlobalVoiceWidget from './components/GlobalVoiceWidget.vue'
 
 import { useDeviceConfigStore } from './stores/deviceConfig'
 import { useKinematicsStore } from './stores/kinematics'
@@ -137,11 +141,26 @@ function handleWakeupEvent(e: Event) {
   const detail = (e as CustomEvent).detail
   const speechText = detail.outputDecision || "Phát hiện nhịp tim hoặc oxy máu tụt nguy hiểm. Bạn có ổn không?"
   
+  const getBestViVoice = () => {
+    const voices = window.speechSynthesis.getVoices()
+    let voice = voices.find(v => {
+      const l = v.lang.toLowerCase().replace('_', '-')
+      return l === 'vi-vn'
+    })
+    if (!voice) {
+      voice = voices.find(v => {
+        const l = v.lang.toLowerCase().replace('_', '-')
+        return l === 'vi' || l.startsWith('vi-')
+      })
+    }
+    return voice
+  }
+
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(speechText.replace(/\[.*?\]/g, ''))
-    const voices = window.speechSynthesis.getVoices()
-    const viVoice = voices.find(v => v.lang.includes('vi') || v.lang.includes('VI'))
+    utterance.lang = 'vi-VN'
+    const viVoice = getBestViVoice()
     if (viVoice) {
       utterance.voice = viVoice
     }
@@ -176,6 +195,27 @@ function cancelSos() {
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance("Khẩn cấp đã hủy.")
+    u.lang = 'vi-VN'
+    
+    const getBestViVoice = () => {
+      const voices = window.speechSynthesis.getVoices()
+      let voice = voices.find(v => {
+        const l = v.lang.toLowerCase().replace('_', '-')
+        return l === 'vi-vn'
+      })
+      if (!voice) {
+        voice = voices.find(v => {
+          const l = v.lang.toLowerCase().replace('_', '-')
+          return l === 'vi' || l.startsWith('vi-')
+        })
+      }
+      return voice
+    }
+    
+    const viVoice = getBestViVoice()
+    if (viVoice) {
+      u.voice = viVoice
+    }
     window.speechSynthesis.speak(u)
   }
 }

@@ -82,7 +82,7 @@ hk07:
     # No real secret in source — provide MQTT_PASSWORD via env / .env (see source/backend/.env.example)
     password: ${MQTT_PASSWORD:}
   ai:
-    agent-url: ${AGENT_ENGINE_URL:http://localhost:8000}
+    agent-url: ${AGENT_ENGINE_URL:http://127.0.0.1:8889}
     groq:
       api-key: ${GROQ_API_KEY:}     # Set via Docker env or .env file
     gemini:

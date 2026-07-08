@@ -38,7 +38,7 @@ export const useAgentsStore = defineStore('agents', () => {
   const chatLog = ref<ChatMessage[]>(savedChat ? JSON.parse(savedChat) : [
     {
       role: 'hugo',
-      content: 'Chào mừng Operator. Tôi là Hugo, Trợ lý Y tế Đồng hành của bạn. Tôi luôn trực tuyến để phân tích các chỉ số sức khỏe của bạn và đề xuất các hành động an toàn tối ưu.',
+      content: 'Xin chào. Tôi là Hugo, Trợ lý Y tế Đồng hành và chăm sóc sức khỏe của bạn. Có vẻ bạn đang có vấn đề, bạn có muốn tôi giúp đỡ không ?',
       timestamp: new Date().toTimeString().split(' ')[0]
     }
   ])
@@ -125,8 +125,8 @@ export const useAgentsStore = defineStore('agents', () => {
     }
   }
 
-  function clearEvents() { 
-    events.value = [] 
+  function clearEvents() {
+    events.value = []
   }
 
   // Watchers to update localStorage automatically on changes
@@ -138,17 +138,17 @@ export const useAgentsStore = defineStore('agents', () => {
     localStorage.setItem('hk07_agent_chat_log', JSON.stringify(newVal))
   }, { deep: true })
 
-  return { 
-    events, 
+  return {
+    events,
     stats,
     chatLog,
     sessionId,
-    agentStatus, 
-    subsumptionActive, 
+    agentStatus,
+    subsumptionActive,
     currentPriorityAgent,
     initSession,
-    addEvent, 
-    setSubsumptionActive, 
+    addEvent,
+    setSubsumptionActive,
     clearEvents,
     fetchLogs,
     fetchStats

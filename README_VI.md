@@ -13,7 +13,7 @@
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **HK-07 // HUGO SANITAS** là thế hệ robot bạn đồng hành chăm sóc sức khỏe thông minh thế hệ mới — hỗ trợ người cao tuổi và bệnh nhân mắc các hội chứng tim mạch trong sinh hoạt hàng ngày. Hệ thống tích hợp một lõi robot hiệu năng cao chạy **ROS 2 Humble**, trí tuệ nhân tạo đa tác nhân (multi-agent AI), truyền tải dữ liệu sinh tồn thời gian thực, thị giác máy tính nhận diện té ngã và cơ chế phản xạ an toàn khẩn cấp <5ms, vận hành mượt mà dưới ràng buộc tài nguyên cực kỳ khắt khe (<615MB RAM tổng).
+> **HK-07 // HUGO SANITAS** là thế hệ robot bạn đồng hành chăm sóc sức khỏe thông minh thế hệ mới — được thiết kế để ở bên cạnh, trò chuyện và hỗ trợ người dùng như một người bạn thân thiết, không đóng vai trò bác sĩ lâm sàng hay nhân viên cấp cứu y tế. Hệ thống tích hợp một lõi robot hiệu năng cao chạy **ROS 2 Humble**, trí tuệ nhân tạo đa tác nhân (multi-agent AI) cho giao tiếp đồng hành thấu cảm, truyền tải dữ liệu sinh tồn thời gian thực để thăm hỏi sức khỏe, thị giác máy tính nhận diện té ngã và cơ chế phản xạ an toàn <5ms, vận hành mượt mà dưới ràng buộc tài nguyên cực kỳ khắt khe (<615MB RAM tổng).
 
 ---
 
@@ -27,7 +27,7 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 
 #### A. Kênh Trò Chuyện Thấu Cảm AI & Giao Diện Giọng Nói (Voice UI)
 ![Companion Uplink](./asset/companion-uplink.jpg)
-* **Mô tả:** Khung hội thoại tương tác được cung cấp bởi động cơ AI Đa tác nhân (Multi-Agent Engine) qua API Groq/Gemini/Local-SLM. Tích hợp nút nhấn nói tiếng Việt (STT) và phát giọng nói phản hồi thấu cảm (TTS) cùng hiệu ứng hiển thị dao động kí nhận thức **AGENT_COGNITIVE_SCOPE** động.
+* **Mô tả:** Khung hội thoại tương tác được cung cấp bởi động cơ AI Đa tác nhân (Multi-Agent Engine) qua API Groq/Gemini/Local-SLM. Tích hợp hệ thống **Phân tích âm thanh nền liên tục (Continuous Background Audio Analysis)** tự động nhận diện và xử lý ngữ nghĩa mà không cần thao tác nút bấm, kết hợp phát giọng nói song ngữ Anh/Việt (TTS) cùng hiệu ứng nhận thức **AGENT_COGNITIVE_SCOPE** động. Fetch trực tiếp cấu hình model LLM từ backend API thay vì hardcode.
 
 #### B. Nhật Ký Hoạt Động Đa Tác Nhân & Blackboard
 ![Agent System Log](./asset/agent_system_log.jpg)
@@ -90,11 +90,11 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 
 ---
 
-### 6. Hồ Sơ Bệnh Nhân & Cài Đặt Bảo Mật
+### 6. Hồ Sơ Người Dùng & Cài Đặt Bảo Mật
 
 #### A. Cấu Hình Hồ Sơ Sức Khỏe & Quản Lý Khóa Bảo Mật MFA
 ![Profile Settings](./asset/profile-settings.jpg)
-* **Mô tả:** Bảng quản trị chứa thông tin tóm tắt hồ sơ y tế bệnh nhân, thông tin tài khoản cá nhân, và cấu hình kích hoạt khóa xác thực đa yếu tố.
+* **Mô tả:** Bảng quản trị chứa thông tin tóm tắt hồ sơ sức khỏe người dùng, thông tin tài khoản cá nhân, và cấu hình kích hoạt khóa xác thực đa yếu tố.
 
 ---
 
@@ -102,7 +102,7 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 
 #### A. Bảng Điều Khiển Cảm Biến Di Động (13 Kênh Dữ Liệu)
 ![Sensor Telemetry Dashboard](./asset/sensor-telemetry-dashboard.jpg)
-* **Mô tả:** Giao diện điều khiển giám sát cảm biến chuyên dụng. Hiển thị thông số IMU 9 trục thời gian thực (xoay mô hình hộp 3D, vòng la bàn cơ học, biểu đồ chuyển động gia tốc/con quay/từ trường), các biến môi trường (cường độ ánh sáng lux, áp suất khí quyển), và chỉ số vận động của bệnh nhân (đếm bước chân pedometer, trạng thái vận động, gia tốc cổ tay).
+* **Mô tả:** Giao diện điều khiển giám sát cảm biến chuyên dụng. Hiển thị thông số IMU 9 trục thời gian thực (xoay mô hình hộp 3D, vòng la bàn cơ học, biểu đồ chuyển động gia tốc/con quay/từ trường), các biến môi trường (cường độ ánh sáng lux, áp suất khí quyển), và chỉ số vận động của người dùng (đếm bước chân pedometer, trạng thái vận động, gia tốc cổ tay). Áp dụng quy tắc suy luận logic (Inference Engine) chặt chẽ: tự động gán mác `SIMULATED` cho dữ liệu có thể suy diễn (từ Camera, IMU) và báo `OFFLINE` nếu thiết bị thiếu phần cứng, loại bỏ hoàn toàn dữ liệu giả.
 
 #### B. Danh Sách Kênh Cảm Biến & Xuất Dữ Liệu CSV
 ![Sensor Telemetry Sensor List](./asset/sensor-telemetry-sensor-list.jpg)
@@ -128,28 +128,39 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 │                        HK-07 HUGO SANITAS — KIẾN TRÚC HỆ THỐNG                         │
 ├───────────────────────┬─────────────────────────┬──────────────────────────────────────┤
 │    [FRONTEND]         │     [BACKEND CORE]      │            [AGENT ENGINE]            │
-│    Vue 3 + Vite       │    Spring Boot 3.4      │            Python FastAPI            │
-│    Cổng: 5173         │     Java 21 VT          │            Cổng: 8000                │
+│    Vue 3 + Vite       │    Spring Boot 3.2.5    │            Python FastAPI            │
+│    Cổng: 3010         │     Java 21 VT          │            Cổng: 8889                │
 │    Three.js 3D Twin   │     Cổng: 8888          │            Vòng Lặp Đa Tác Nhân      │
 │    Giao diện Voice UI │     JWT Auth & RBAC     │            Redis Blackboard          │
-└──────────┬────────────┴──────────┬──────────────┴──────────────────┬───────────────────┘
-           │ WebSocket/REST        │ MQTT/WebSocket                  │ MQTT/REST
-           ▼                       ▼                                 ▼
-┌───────────────────────┐  ┌─────────────┐  ┌────────────────────────────────────────────┐
-│      MariaDB          │  │    Redis    │  │             Eclipse Mosquitto              │
-│  (Lưu Trữ Cổng: 3307) │  │(Bộ Nhớ Tạm) │  │             MQTT Broker :1883              │
-└───────────────────────┘  └─────────────┘  └─────────────────────┬──────────────────────┘
-                                                                  ▲
-                                                  Cầu nối MQTT    │ (ros2_mqtt_bridge_node)
-                                                                  ▼
-                                            ┌────────────────────────────────────────────┐
-                                            │             LÕI ROBOT ROS 2 HUMBLE         │
-                                            │  - balance_controller (Bộ điều khiển PID)  │
-                                            │  - navigation_agent (Lập quỹ đạo né APF)   │
-                                            │  - physics_node (Bộ giải IK & APF)         │
-                                            │  - rppg_thermal_node (Xử lý ảnh MediaPipe) │
-                                            │  - rtos_watchdog_simulator (Watchdog)      │
-                                            └────────────────────────────────────────────┘
+└──────────┬────────────┴────────────┬────────────┴──────────────────┬───────────────────┘
+           │ WebSocket (9090)        │ WebSocket/REST                │ HTTP/REST
+           │                         ▼                               │
+           │           ┌─────────────────────────────┐               │
+           │           │    [BACKEND CORE SERVICES]  │               │
+           │           └─────┬──────────────┬────────┘               │
+           │                 │              │                        │
+           │                 ▼              ▼                        │
+           │           ┌───────────┐  ┌───────────┐                  │
+           │           │ MySQL 8.4 │  │   Redis   │◄─────────────────┤ (Blackboard)
+           │           │   :3306   │  │   :6379   │                  │
+           │           └───────────┘  └─────▲─────┘                  │
+           │                                │                        │
+           │                                │                        ▼
+           │                                │          ┌────────────────────────────┐
+           │                                └─────────►│     Eclipse Mosquitto      │
+           │                                           │     MQTT Broker :1883      │
+           │                                           └─────────────▲──────────────┘
+           │                                                         │
+           │                                                         │ MQTT / ROS2 Bridge
+           ▼                                                         ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              ROS 2 HUMBLE ROBOTICS CORE                                │
+│  - balance_controller (Bộ điều khiển PID)  - navigation_agent (Lập quỹ đạo né APF)     │
+│  - hugo_telemetry_sim (Giả lập trạng thái) - rppg_thermal_node (Xử lý ảnh MediaPipe)   │
+│  - physics_node (Bộ giải IK & Vật lý)      - rtos_watchdog_simulator (Watchdog)        │
+│  - perception_bridge_node (Cầu nối Gateway)- sensor_fusion_node (Thị giác máy tính)    │
+│  - action_controller_node (Bộ thực thi lệnh)- rosbridge_server (Cổng 9090 WebSocket)   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -158,7 +169,7 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 
 1. **Độ Trễ Phản Xạ Khẩn Cấp Cực Thấp (<5ms):** Bỏ qua các khối ghi cơ sở dữ liệu đồng bộ thông thường để phát tín hiệu dừng khẩn cấp (như dừng bánh xe robot khi có chướng ngại vật hay gọi SOS) thông qua luồng MQTT được tối ưu hóa.
 2. **Tối Ưu Hóa Ràng Buộc Tài Nguyên:** Vận hành trơn tru toàn bộ các dịch vụ phức tạp (Spring Boot, Python Agents, hệ cơ sở dữ liệu và trung gian thông điệp) trên một máy chủ thử nghiệm cấu hình thấp, giới hạn tổng lượng RAM tiêu thụ dưới **<615MB RAM**.
-3. **Mô Hình Chẩn Đoán Lưỡng Tầng & Blackboard:** Kết hợp Lớp phản xạ cứng (Hard Reflex) ngưỡng cố định và Lớp suy luận mềm (Soft Cognitive) sử dụng các Agent, LLM, và bộ nhớ chia sẻ Blackboard qua Redis để trao đổi thông tin ngữ cảnh bệnh nhân.
+3. **Mô Hình Chẩn Đoán Lưỡng Tầng & Blackboard:** Kết hợp Lớp phản xạ cứng (Hard Reflex) ngưỡng cố định và Lớp suy luận mềm (Soft Cognitive) sử dụng các Agent, LLM, và bộ nhớ chia sẻ Blackboard qua Redis để trao đổi thông tin ngữ cảnh người dùng.
 4. **Bảo Mật Dữ Liệu Sinh Tồn Thời Gian Thực:** Bảo vệ luồng WebSocket truyền thông số y sinh bằng bộ chặn kênh Inbound của STOMP (JWT Channel Interceptor), ngăn chặn truy cập trái phép vào luồng dữ liệu y tế nhạy cảm.
 5. **Cầu Nối ROS 2 sang MQTT:** Chuyển đổi định dạng dữ liệu robot khớp chuẩn ROS 2 (`sensor_msgs/Imu`, `sensor_msgs/PointCloud2`, `sensor_msgs/JointState`, `geometry_msgs/Twist`) và bridge mượt mà sang MQTT Broker để đẩy lên Dashboard thời gian thực.
 6. **Cơ Chế Ngoại Tuyến Edge Fallback:** Tích hợp bộ xử lý tiếng Việt không dấu rule-based và engine chạy local GGUF SLM (`llama-cpp-python` hỗ trợ Phi-3/Llama-3) đảm bảo robot vẫn có thể trò chuyện và phân loại lệnh của người dùng khi mất Internet.
@@ -174,25 +185,35 @@ Giao diện ứng dụng được thiết kế theo triết lý thiết kế **F
 ```
 hk-07/
 ├── asset/                  ← Chứa ảnh chụp màn hình giao diện hệ thống
-├── docs/                   ← Tài liệu đặc tả kỹ thuật và hướng dẫn
-│   ├── 00_init/            ← Khởi tạo dự án, phân tích yêu cầu, techstack
-│   ├── 01_system_design/   ← Kiến trúc hệ thống, cơ sở dữ liệu, đặc tả API
-│   ├── 02_subsystems/      ← Tài liệu Backend, Deployment, Frontend và Testing
+├── docs/                   ← Tài liệu thiết kế kiến trúc hệ thống và giao diện UI/UX
+│   ├── 00_init/            ← Khởi tạo dự án, phân tích yêu cầu và thiết lập techstack
+│   ├── 01_system_design/   ← Kiến trúc hệ thống, cơ sở dữ liệu và đặc tả API
+│   ├── 02_subsystems/      ← Chi tiết về các phân hệ (Backend, Deployment, Frontend, Testing)
 │   ├── 03_evolution_specs/ ← Tài liệu nâng cấp và cải tiến hệ thống (Phases 1-22)
-│   ├── 04_walkthroughs/    ← Hướng dẫn chạy thử nghiệm các tính năng đã code
-│   └── MASTER_CHANGELOG.md ← Nhật ký kiểm toán thay đổi toàn bộ hệ thống
+│   ├── 04_walkthroughs/    ← Hướng dẫn chạy thử nghiệm các tính năng đã phát triển
+│   ├── MASTER_CHANGELOG.md ← Nhật ký kiểm toán thay đổi toàn bộ hệ thống
+│   ├── ROBOT_INTELLIGENCE_SPEC.md ← Đặc tả hệ thống AI Multi-Agent và phản xạ an toàn
+│   └── ROS2_UNIFIED_INTEGRATION.md ← Đặc tả hợp nhất ROS 2 và cấu trúc các node
 └── source/                 ← Mã nguồn các thành phần dự án
     ├── backend/
-    │   ├── hk07-core/      ← Mã nguồn Java Spring Boot Core (Hỗ trợ MariaDB 3307)
-    │   ├── hk07-agent/     ← Mã nguồn Python AI Multi-Agent (Tiers 0-2, Router V2, Blackboard)
-    │   └── docker/         ← Các tệp cấu hình hạ tầng Docker
+    │   ├── hk07-core/      ← Java Spring Boot core service (MySQL 8.4, WebSocket/STOMP, Flyway)
+    │   ├── hk07-agent/     ← Python AI Multi-Agent service (Subsumption agents, Redis Blackboard, LanceDB)
+    │   ├── docker/         ← Cấu hình trung gian thông điệp Mosquitto MQTT
+    │   └── docker-compose.yml ← Hạ tầng Docker (MySQL, Redis, Mosquitto, Ollama)
     ├── frontend/
-    │   └── hk07-dashboard/ ← Mã nguồn Vue 3 (Three.js 3D Twin, Voice UI)
+    │   └── hk07-dashboard/ ← Mã nguồn Vue 3 Dashboard (Three.js 3D Twin, Chart.js, StompJS, Voice UI)
+    ├── gitops/             ← Kịch bản vận hành GitOps và tự động hóa hạ tầng mạng
+    │   ├── clean-env.bat   ← Dọn dẹp cấu hình mạng tạm thời của host
+    │   ├── devmode.ps1     ← Khởi động hệ thống ở chế độ phát triển (Developer Mode)
+    │   ├── production.ps1  ← Khởi động hệ thống ở chế độ vận hành (Production Mode)
+    │   └── setup_network.bat ← Tự động hóa thiết lập IP bridge & phát hiện card mạng
     └── robotics/           ← Không gian làm việc ROS 2
-        ├── build/          ← Thư mục build ROS 2
-        ├── install/        ← Thư mục cài đặt ROS 2
-        ├── log/            ← Nhật ký chạy ROS 2
-        └── sensors/        ← ROS 2 Sensors Package (rclpy Nodes: physics, telemetry, lidar, bridge, watchdog)
+        ├── sensors/        ← Gói cảm biến hợp nhất (balance, telemetry, physics, navigation, vision)
+        │   ├── mobile_gateway/ ← Cầu nối HTTP-to-MQTT telemetry từ thiết bị di động
+        │   ├── simulation/ ← Các node giả lập (telemetry, kinematics, watchdog, APF planner)
+        │   └── vision_sensor/ ← Định vị trán bằng MediaPipe & đo rPPG không tiếp xúc
+        ├── build/          ← Thư mục build trung gian ROS 2
+        └── install/        ← Thư mục thiết lập môi trường chạy ROS 2
 ```
 
 ---
@@ -203,7 +224,7 @@ Hệ thống hỗ trợ 2 chế độ vận hành: **Chạy Tích Hợp Bằng D
 
 ### 1. Vận Hành Qua Docker Compose
 
-Việc chạy lệnh `docker compose up -d` tiêu chuẩn tại thư mục gốc repository hiện chỉ khởi chạy các dịch vụ hạ tầng nền tảng (MariaDB trên cổng 3307, Redis trên cổng 6379, và Mosquitto Broker trên cổng 1883). Điều này giúp các cổng dịch vụ ứng dụng 8888 và 8000 trống để bạn có thể chạy `hk07-core` và `hk07-agent` cục bộ trên các cửa sổ terminal phục vụ quá trình phát triển và gỡ lỗi trực tiếp.
+Việc chạy lệnh `docker compose up -d` tiêu chuẩn tại thư mục gốc repository hiện chỉ khởi chạy các dịch vụ hạ tầng nền tảng (MySQL trên cổng 3306, Redis trên cổng 6379, và Mosquitto Broker trên cổng 1883). Điều này giúp các cổng dịch vụ ứng dụng 8888 và 8889 trống để bạn có thể chạy `hk07-core` and `hk07-agent` cục bộ trên các cửa sổ terminal phục vụ quá trình phát triển và gỡ lỗi trực tiếp.
 
 Để chạy toàn bộ hệ thống khép kín đã được container hóa hoàn toàn trong môi trường production Docker, bạn cần truyền thêm cờ hiệu `--profile operation`:
 ```bash
@@ -217,7 +238,7 @@ docker compose --profile operation up -d --build
 # 3. Các cổng kết nối
 # Dashboard Frontend:  http://localhost:4205 (Định tuyến qua Nginx)
 # Backend Swagger Docs: http://localhost:8888/swagger-ui.html
-# AI Agent API Docs:   http://localhost:8000/docs
+# AI Agent API Docs:   http://localhost:8889/docs
 ```
 
 Để chạy các tệp kịch bản giả lập thị giác máy tính và điều khiển robot hướng tới cụm Docker, thiết lập các biến môi trường và chạy:
@@ -254,7 +275,7 @@ Sau khi hạ tầng đã hoạt động, khởi động từng phân hệ trên 
     ```
 
 * **[TERMINAL 2]: hk07-core Middleware Backend (Windows Host CMD / PowerShell)**
-  * **Mục đích**: Khởi chạy động cơ hạ tầng doanh nghiệp Java core chạy bằng Spring Boot 3.4 hoạt động trên Cổng 8888. Phân hệ này quản lý xác thực hệ thống, ghi nhật ký quan hệ nhất quán qua MariaDB ledger, xử lý ánh xạ ngưỡng sinh tồn lâm sàng động và đồng bộ hóa cấu hình thiết bị thời gian thực.
+  * **Mục đích**: Khởi chạy động cơ hạ tầng doanh nghiệp Java core chạy bằng Spring Boot 3.2.5 hoạt động trên Cổng 8888. Phân hệ này quản lý xác thực hệ thống, ghi nhật ký quan hệ nhất quán qua MySQL ledger, xử lý ánh xạ ngưỡng sinh tồn lâm sàng động và đồng bộ hóa cấu hình thiết bị thời gian thực.
   * **Đường dẫn thực thi**: `source/backend/hk07-core`
   * **Các lệnh thực hiện từng bước**:
     ```bash
@@ -262,8 +283,8 @@ Sau khi hạ tầng đã hoạt động, khởi động từng phân hệ trên 
     ./mvnw spring-boot:run
     ```
 
-* **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (Windows Host CMD)**
-  * **Mục đích**: Kích hoạt động cơ AI đưa ra quyết định nhận thức chính chạy trên FastAPI hoạt động trên Cổng 8000. Thành phần này triển khai kiến trúc phân tầng Subsumption (Tầng 0-2), khởi chạy các luồng kiểm soát heartbeat bất đồng bộ biệt lập, định tuyến truy vấn và quản lý bảng nhớ chia sẻ Redis blackboard.
+* **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (Windows/WSL2 Environment)**
+  * **Mục đích**: Kích hoạt động cơ AI đưa ra quyết định nhận thức chính chạy trên FastAPI hoạt động trên Cổng 8889. Thành phần này triển khai kiến trúc phân tầng Subsumption (Tầng 0-2), khởi chạy các luồng kiểm soát heartbeat bất đồng bộ biệt lập, định tuyến truy vấn và quản lý bảng nhớ chia sẻ Redis blackboard.
   * **Đường dẫn thực thi**: `source/backend/hk07-agent`
   * **Các lệnh thực hiện từng bước**:
     ```bash
@@ -272,18 +293,19 @@ Sau khi hạ tầng đã hoạt động, khởi động từng phân hệ trên 
     ```
 
 * **[TERMINAL 4]: ROS2 Sensors Orchestrator Node (Môi trường WSL2 Ubuntu)**
-  * **Mục đích**: Khởi chạy vòng lặp hấp thụ dữ liệu cảm biến robot hợp nhất. Node Python hiệu năng cao này tiếp nhận các dữ liệu cảm biến di động thô tần số cao từ cổng mạng hotspot gateway, giải mã các quaternion IMU, xử lý các chỉ số sinh hiệu video khuôn mặt không tiếp xúc rPPG và tính toán các vector lực đẩy né tránh APF.
+  * **Mục đích**: Khởi chạy vòng lặp hấp thụ dữ liệu cảm biến robot hợp nhất. Node Python hiệu năng cao này tiếp nhận các dữ liệu cảm biến di động thô tần số cao từ cổng mạng hotspot gateway, giải mã các quaternion IMU, xử lý các chỉ số sinh hiệu video khuôn mặt không tiếp xúc rPPG và tính toán các vector lực đẩy né tránh APF. Chạy các node được hợp nhất thông qua MultiThreadedExecutor.
   * **Đường dẫn thực thi**: `source/robotics`
   * **Các lệnh thực hiện từng bước**:
     ```bash
     cd source/robotics
     source /opt/ros/humble/setup.bash
+    colcon build --packages-select sensors --symlink-install
     source install/setup.bash
     ros2 run sensors hk07_runtime_orchestrator
     ```
 
 * **[TERMINAL 5]: hk07-dashboard Operator Interface Frontend (Windows Host CMD)**
-  * **Mục đích**: Khởi động máy chủ phát triển ứng dụng trang đơn chạy bằng Vite trên Cổng 5173. Thành phần này kết xuất giao diện điều khiển tác vụ y tế, trực quan hóa sóng điện tâm đồ ECG 60Hz trực tiếp bằng canvas, mô phỏng radar không gian 3D Holographic Twin bằng Three.js và triển khai mô-đun Voice UI tương tác.
+  * **Mục đích**: Khởi động máy chủ phát triển ứng dụng trang đơn chạy bằng Vite trên Cổng 3010. Thành phần này kết xuất giao diện điều khiển tác vụ y tế, trực quan hóa sóng điện tâm đồ ECG 60Hz trực tiếp bằng canvas, mô phỏng radar không gian 3D Holographic Twin bằng Three.js và triển khai mô-đun Voice UI tương tác.
   * **Đường dẫn thực thi**: `source/frontend/hk07-dashboard`
   * **Các lệnh thực hiện từng bước**:
     ```bash
@@ -307,7 +329,7 @@ Hãy cấu hình các thiết bị cảm biến và camera ngoại vi của bạ
 | :--- | :--- | :--- |
 | **Mosquitto** | 32 MB | Broker MQTT trao đổi dữ liệu cảm biến thời gian thực |
 | **Redis** | 64 MB | Bộ nhớ chung Blackboard, lưu token & kiểm soát tần suất |
-| **MariaDB** | 256 MB | Lưu trữ dữ liệu lịch sử sinh vật học & thông tin người dùng |
+| **MySQL 8.4** | 256 MB | Lưu trữ dữ liệu lịch sử sinh vật học & thông tin người dùng |
 | **hk07-core** | 512 MB | Máy ảo JVM chạy dịch vụ Spring Boot Core |
 | **hk07-agent** | 256 MB | Tiến trình Python chạy vòng lặp AI Multi-Agent & GGUF Local SLM |
 | **TỔNG CỘNG** | **~615 MB** | **Tối ưu hóa tuyệt đối cho môi trường nhúng WSL2/Docker** |

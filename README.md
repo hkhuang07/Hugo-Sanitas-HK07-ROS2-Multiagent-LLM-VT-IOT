@@ -12,7 +12,7 @@
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **HK-07 // HUGO SANITAS** is a next-generation healthcare companion robot designed to assist elderly patients and individuals with cardiovascular conditions. The system integrates a high-performance **ROS 2 Humble** robotics core, multi-agent AI cognitive loops, real-time vital signs telemetry, computer vision fall-detection, and a <5ms emergency safety reflex system, operating efficiently under strict hardware constraints (<615MB RAM total).
+> **HK-07 // HUGO SANITAS** is a next-generation healthcare companion robot designed as a friendly companion that chats with and supports its owner as a friend, rather than acting as a clinical doctor or an emergency medical responder. The system integrates a high-performance **ROS 2 Humble** robotics core, multi-agent AI cognitive loops for empathetic companion dialogue, real-time vital signs telemetry for wellness check-ins, computer vision fall-detection, and a <5ms safety reflex system, operating efficiently under strict hardware constraints (<615MB RAM total).
 
 ---
 
@@ -26,7 +26,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 #### A. Empathetic AI Companion Dialogue & Voice UI
 ![Companion Uplink](./asset/companion-uplink.jpg)
-* **Description:** Empathetic dialogue interface powered by a Groq/Gemini/Local-SLM Multi-Agent loop. Includes a Push-to-Talk Vietnamese speech recognition (STT) input and synthetic voice output (TTS) with an interactive **AGENT_COGNITIVE_SCOPE** status display.
+* **Description:** Empathetic dialogue interface powered by a Groq/Gemini/Local-SLM Multi-Agent loop. Features a **Continuous Background Audio Analysis** system via SensorLogs that semantically processes environmental voice streams without manual buttons, coupled with synthetic dual-language voice output (TTS) and an interactive **AGENT_COGNITIVE_SCOPE** status display. Includes real-time API integrations that fetch actual LLM runtime metrics (Provider, Model, Temperature).
 
 #### B. Multi-Agent System Logs Event Stream & Blackboard
 ![Agent System Log](./asset/agent_system_log.jpg)
@@ -53,7 +53,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 #### A. Simulated Sensor HUD Dashboard (13 Channels)
 ![Sensor Telemetry Dashboard](./asset/sensor-telemetry-dashboard.jpg)
-* **Description:** A dedicated sensor operations HUD. Displays real-time 9-DOF IMU data (3D cube rotation, compass dial, accelerometer/gyroscope/magnetometer line charts), environmental variables (light lux, barometric pressure), and user activity metrics (pedometer step count, movement states, wrist magnitude).
+* **Description:** A dedicated sensor operations HUD. Displays real-time 9-DOF IMU data (3D cube rotation, compass dial, accelerometer/gyroscope/magnetometer line charts), environmental variables (light lux, barometric pressure), and user activity metrics (pedometer step count, movement states, wrist magnitude). Features a strict logical inference engine that dynamically labels sensor channels as `SIMULATED` (derived via computer vision or alternative IMU data) or `OFFLINE` (hardware unsupported), completely eliminating mock data rendering.
 
 #### B. Live Sensor Channels & CSV Exporting
 ![Sensor Telemetry Sensor List](./asset/sensor-telemetry-sensor-list.jpg)
@@ -85,7 +85,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 ---
 
-### 5. Clinical Telemetry & Patient Monitoring
+### 5. Wellness Telemetry & Companion Health Monitoring
 
 #### A. Dynamic Vitals Telemetry Monitor (60FPS)
 ![Dynamic Telemetry](./asset/dynamic-telemetry.jpg)
@@ -93,7 +93,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 #### B. Vitals History Timeline Analytics
 ![History Metrics](./asset/history_metric.jpg)
-* **Description:** Allows operators to customize historical search ranges (From Date / To Date) to load, plot, and analyze patient physiological trends and anomalies.
+* **Description:** Allows operators to customize historical search ranges (From Date / To Date) to load, plot, and analyze user physiological trends and companion telemetry.
 
 ---
 
@@ -113,7 +113,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 #### A. Profile Configuration & MFA Controls
 ![Profile Settings](./asset/profile-settings.jpg)
-* **Description:** Management control panel containing patient medical profiles, user credentials, and active configuration of MFA keys.
+* **Description:** Management control panel containing user personal profiles, credentials, and active configuration of MFA keys.
 
 ---
 
@@ -124,28 +124,39 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 │                        HK-07 HUGO SANITAS — SYSTEM ARCHITECTURE                        │
 ├───────────────────────┬─────────────────────────┬──────────────────────────────────────┤
 │    [FRONTEND]         │     [BACKEND CORE]      │            [AGENT ENGINE]            │
-│    Vue 3 + Vite       │    Spring Boot 3.4      │            Python FastAPI            │
+│    Vue 3 + Vite       │    Spring Boot 3.2.5    │            Python FastAPI            │
 │    Port: 3010         │     Java 21 VT          │            Port: 8889                │
 │    Three.js 3D Twin   │     Port: 8888          │            Multi-Agent Loops         │
 │    Voice UI (TTS/STT) │     JWT Auth & RBAC     │            Redis Blackboard          │
-└──────────┬────────────┴──────────┬──────────────┴──────────────────┬───────────────────┘
-           │ WebSocket/REST        │ MQTT/WebSocket                  │ MQTT/REST
-           ▼                       ▼                                 ▼
-┌───────────────────────┐  ┌─────────────┐  ┌────────────────────────────────────────────┐
-│      MariaDB          │  │    Redis    │  │             Eclipse Mosquitto              │
-│    (Persist :3307)    │  │  (Buffer)   │  │             MQTT Broker :1883              │
-└───────────────────────┘  └─────────────┘  └─────────────────────┬──────────────────────┘
-                                                                  ▲
-                                                  MQTT Bridge     │ (ros2_mqtt_bridge_node)
-                                                                  ▼
-                                            ┌────────────────────────────────────────────┐
-                                            │         ROS 2 HUMBLE ROBOTICS CORE         │
-                                            │  - balance_controller (Stance PID)         │
-                                            │  - navigation_agent (APF Path Planner)      │
-                                            │  - physics_node (APF & IK Solver)          │
-                                            │  - rppg_thermal_node (MediaPipe ROI Vision)│
-                                            │  - rtos_watchdog_simulator (Fail-Safe)     │
-                                            └────────────────────────────────────────────┘
+└──────────┬────────────┴────────────┬────────────┴──────────────────┬───────────────────┘
+           │ WebSocket (9090)        │ WebSocket/REST                │ HTTP/REST
+           │                         ▼                               │
+           │           ┌─────────────────────────────┐               │
+           │           │    [BACKEND CORE SERVICES]  │               │
+           │           └─────┬──────────────┬────────┘               │
+           │                 │              │                        │
+           │                 ▼              ▼                        │
+           │           ┌───────────┐  ┌───────────┐                  │
+           │           │ MySQL 8.4 │  │   Redis   │◄─────────────────┤ (Blackboard)
+           │           │   :3306   │  │   :6379   │                  │
+           │           └───────────┘  └─────▲─────┘                  │
+           │                                │                        │
+           │                                │                        ▼
+           │                                │          ┌────────────────────────────┐
+           │                                └─────────►│     Eclipse Mosquitto      │
+           │                                           │     MQTT Broker :1883      │
+           │                                           └─────────────▲──────────────┘
+           │                                                         │
+           │                                                         │ MQTT / ROS2 Bridge
+           ▼                                                         ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              ROS 2 HUMBLE ROBOTICS CORE                                │
+│  - balance_controller (Stance PID)         - navigation_agent (APF Path Planner)       │
+│  - hugo_telemetry_sim (State Simulator)    - rppg_thermal_node (rPPG Face & Thermal)   │
+│  - hk07_physics_node (IK Solver)           - rtos_watchdog_simulator (Watchdog)        │
+│  - perception_bridge_node (Gateway Bridge) - sensor_fusion_node (MediaPipe Vision)     │
+│  - action_controller_node (Execution Node) - rosbridge_server (Port 9090 WebSocket)    │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -154,7 +165,7 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 1. **Emergency Reflex Latency (<5ms):** Bypasses standard database persistence blocks to execute critical safety scripts (e.g. stopping motors upon collision threat or triggering medical alarms) utilizing optimized MQTT pipelines.
 2. **Resource Constraints Optimization:** Runs a full suite of services (Spring Boot, Python Agents, databases, and message brokers) comfortably on host systems with limited resources, budgeting total memory usage to **<615MB RAM**.
-3. **Hybrid Diagnostic System (Blackboard):** Implements a two-layer control system. A *Hard Reflex Layer* executes static medical threshold rules to trigger immediate alerts, while a *Soft Cognitive Layer* leverages AI Agents, LLMs, and a shared Redis Blackboard for contextual medical evaluation and comforting communication.
+3. **Hybrid Diagnostic System (Blackboard):** Implements a two-layer control system. A *Hard Reflex Layer* executes static safety threshold rules to trigger immediate alerts, while a *Soft Cognitive Layer* leverages AI Agents, LLMs, and a shared Redis Blackboard for contextual health evaluation and comforting friendly communication.
 4. **Secured Real-Time Telemetry:** Secures live health streams over WebSockets via a JWT Inbound Channel Interceptor on STOMP, ensuring that only authenticated users can access real-time medical data.
 5. **DDS to MQTT Bridging:** Standardizes robotics messages to ROS 2 types (`sensor_msgs/Imu`, `sensor_msgs/PointCloud2`, `sensor_msgs/JointState`, `geometry_msgs/Twist`) and seamlessly bridges them to the lightweight MQTT broker for lightweight streaming to NUI dashboard components.
 6. **Local Edge Fallback Autonomy:** Features a Vietnamese-optimized rule-based backup and local GGUF SLM execution (`llama-cpp-python` supporting Phi-3/Llama-3 templates) to maintain agent capabilities and query routing without an internet connection.
@@ -170,25 +181,35 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 ```
 hk-07/
 ├── asset/                  ← System screenshots and UI graphics
-├── docs/                   ← Document specifications and walkthroughs
-│   ├── 00_init/            ← Project scope, requirements, techstack setup
-│   ├── 01_system_design/   ← Architecture, database design, API specs
-│   ├── 02_subsystems/      ← Backend, deployment, frontend, and testing docs
-│   ├── 03_evolution_specs/ ← System upgrade specs and post-mortems (Phases 1-22)
+├── docs/                   ← System architecture specifications and UI/UX design concepts
+│   ├── 00_init/            ← Project scope, requirements, and techstack setup
+│   ├── 01_system_design/   ← Architecture, database schemas, and API specs
+│   ├── 02_subsystems/      ← Subsystem details (Backend, Deployment, Frontend, Testing)
+│   ├── 03_evolution_specs/ ← Upgrade specifications and post-mortems (Phases 1-22)
 │   ├── 04_walkthroughs/    ← Walkthrough guides of key implemented phases
-│   └── MASTER_CHANGELOG.md ← Entire project version history audit report
+│   ├── MASTER_CHANGELOG.md ← Entire project version history and audit log
+│   ├── ROBOT_INTELLIGENCE_SPEC.md ← Specifications for multi-agent loops and safety subsumption
+│   └── ROS2_UNIFIED_INTEGRATION.md ← Specifications for ROS 2 node consolidation and bridges
 └── source/                 ← Target codebases
     ├── backend/
-    │   ├── hk07-core/      ← Java Spring Boot core service (MariaDB 3307 support)
-    │   ├── hk07-agent/     ← Python AI Multi-Agent service (Tiers 0-2, Router V2, Blackboard)
-    │   └── docker/         ← Infrastructure config files
+    │   ├── hk07-core/      ← Java Spring Boot core service (MySQL 8.4, WebSocket/STOMP, Flyway)
+    │   ├── hk07-agent/     ← Python AI Multi-Agent service (Subsumption agents, Redis Blackboard, LanceDB)
+    │   ├── docker/         ← Mosquitto MQTT broker configuration profiles
+    │   └── docker-compose.yml ← Infrastructure composition (MySQL, Redis, Mosquitto, Ollama)
     ├── frontend/
-    │   └── hk07-dashboard/ ← Vue 3 Single Page Application (Three.js 3D Holographic Twin, Voice UI)
+    │   └── hk07-dashboard/ ← Vue 3 Operator Dashboard (Three.js 3D Twin, Chart.js, StompJS, Voice UI)
+    ├── gitops/             ← Deployment scripts, environments setup, and network configs
+    │   ├── clean-env.bat   ← Cleans transient network/host configurations
+    │   ├── devmode.ps1     ← Launches the stack in Developer Mode
+    │   ├── production.ps1  ← Launches the stack in Production Mode
+    │   └── setup_network.bat ← Automates local networking & IP discovery bridges
     └── robotics/           ← ROS 2 Workspace
-        ├── build/          ← ROS 2 build files
-        ├── install/        ← ROS 2 installation scripts
-        ├── log/            ← ROS 2 running logs
-        └── sensors/        ← ROS 2 Sensors Package (rclpy Nodes: physics, telemetry, lidar, bridge, watchdog)
+        ├── sensors/        ← Consolidated Sensors package (balance, telemetry, physics, navigation, vision)
+        │   ├── mobile_gateway/ ← vivo_http_mqtt_bridge HTTP-to-MQTT telemetry bridge
+        │   ├── simulation/ ← Simulated nodes (telemetry, kinematics, watchdog, APF planner)
+        │   └── vision_sensor/ ← MediaPipe forehead tracking & rPPG sensor fusion
+        ├── build/          ← ROS 2 intermediate build files (local compilation)
+        └── install/        ← ROS 2 setup and environment scripts
 ```
 
 ---
@@ -199,7 +220,7 @@ The system supports two operating modes: **Docker Orchestration** (fully integra
 
 ### 1. Docker Deployment Mode
 
-Running the standard `docker compose up -d` command from the repository root directory exclusively launches the backing infrastructure services (MariaDB on Port 3307, Redis on Port 6379, and Mosquitto Broker on Port 1883). This leaves application ports 8888 and 8000 unoccupied so that you can run `hk07-core` and `hk07-agent` locally in terminal windows for active development and debugging.
+Running the standard `docker compose up -d` command from the repository root directory exclusively launches the backing infrastructure services (MySQL on Port 3306, Redis on Port 6379, and Mosquitto Broker on Port 1883). This leaves application ports 8888 and 8889 unoccupied so that you can run `hk07-core` and `hk07-agent` locally in terminal windows for active development and debugging.
 
 To run the fully containerized end-to-end operational production stack in Docker, you must pass the `--profile operation` flag:
 ```bash
@@ -213,7 +234,7 @@ docker compose --profile operation up -d --build
 # 3. Access endpoints
 # Frontend Dashboard:  http://localhost:4205 (Nginx Reverse Proxy)
 # Backend Swagger Docs: http://localhost:8888/swagger-ui.html
-# AI Agent API Docs:   http://localhost:8000/docs
+# AI Agent API Docs:   http://localhost:8889/docs
 ```
 
 To run localized edge simulation scripts against the Docker cluster, set the appropriate host parameters and execute:
@@ -251,7 +272,7 @@ Once infrastructure is active, launch each subsystem in a dedicated terminal win
     ```
 
 * **[TERMINAL 2]: hk07-core Middleware Backend (Windows Host CMD / PowerShell)**
-  * **Purpose**: Launches the core Enterprise Java enterprise infrastructure engine powered by Spring Boot 3.4 running on Port 8888. This subsystem governs system authentication, coordinates persistent relational logging via the MariaDB ledger, processes dynamic medical vital sign threshold mappings, and synchronizes real-time device configurations.
+  * **Purpose**: Launches the core Enterprise Java enterprise infrastructure engine powered by Spring Boot 3.2.5 running on Port 8888. This subsystem governs system authentication, coordinates persistent relational logging via the MySQL ledger, processes dynamic medical vital sign threshold mappings, and synchronizes real-time device configurations.
   * **Execution Path**: `source/backend/hk07-core`
   * **Step-by-Step Commands**:
     ```bash
@@ -260,12 +281,12 @@ Once infrastructure is active, launch each subsystem in a dedicated terminal win
     ```
 
 * **[TERMINAL 3]: hk07-agent Multi-Agent Cognitive Core (WSL2 Ubuntu Enviroment)**
-  * **Purpose**: Activates the primary artificial intelligence decision-making engine built on FastAPI running on Port 8000. This component deploys the multi-layered Subsumption architecture (Tiers 0-2), spins up the async isolated watchdog heartbeats, handles query routing, and manages the shared Redis blackboard memory matrix.
+  * **Purpose**: Activates the primary artificial intelligence decision-making engine built on FastAPI running on Port 8889. This component deploys the multi-layered Subsumption architecture (Tiers 0-2), spins up the async isolated watchdog heartbeats, handles query routing, and manages the shared Redis blackboard memory matrix.
   * **Execution Path**: `source/backend/hk07-agent`
   * **Step-by-Step Commands**:
     ```bash
     cd source/backend/hk07-agent
-    python3 main.py
+    python main.py
     ```
 
 * **[TERMINAL 4]: ROS2 Sensors Orchestrator Node (WSL2 Ubuntu Environment)**
@@ -281,7 +302,7 @@ Once infrastructure is active, launch each subsystem in a dedicated terminal win
     ```
 
 * **[TERMINAL 5]: hk07-dashboard Operator Interface Frontend (Windows Host CMD)**
-  * **Purpose**: Spins up the local Vite-powered single page application development server on Port 5173. This component renders the web operations cockpit, visualizes live 60Hz ECG canvas waveforms, maps spatial data via the Three.js 3D Holographic Twin, and deploys the Push-to-Talk Voice UI modules.
+  * **Purpose**: Spins up the local Vite-powered single page application development server on Port 3010. This component renders the web operations cockpit, visualizes live 60Hz ECG canvas waveforms, maps spatial data via the Three.js 3D Holographic Twin, and deploys the Push-to-Talk Voice UI modules.
   * **Execution Path**: `source/frontend/hk07-dashboard`
   * **Step-by-Step Commands**:
     ```bash
@@ -305,7 +326,7 @@ Point your diagnostic/mobile peripherals to the target addresses allocated by th
 | :--- | :--- | :--- |
 | **Mosquitto** | 32 MB | Real-time broker for sensor telemetry |
 | **Redis** | 64 MB | Blackboard shared memory, token cache & rate limiter |
-| **MariaDB** | 256 MB | Relational medical logs & user info |
+| **MySQL 8.4** | 256 MB | Relational medical logs & user info |
 | **hk07-core** | 512 MB | Spring Boot core backend JVM |
 | **hk07-agent** | 256 MB | Python multi-agent event loop & GGUF Local SLM |
 | **TOTAL** | **~615 MB** | **Highly optimized for low-spec WSL2/Docker** |
