@@ -893,7 +893,7 @@ class EmpatheticAgent:
             tools=tools_schema,
             temperature=0.1,
             max_tokens=256,
-            timeout=10
+            timeout=25
         )
 
         if result:

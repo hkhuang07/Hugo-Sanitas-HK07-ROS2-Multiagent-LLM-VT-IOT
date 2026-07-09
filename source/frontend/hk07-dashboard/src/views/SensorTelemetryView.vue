@@ -6,8 +6,6 @@
     </div>
 
     <!-- ═══ RETICLE CORNERS ═══ -->
-    <span class="corner tl">+</span>
-    <span class="corner tr">+</span>
     <span class="corner bl">+</span>
     <span class="corner br">+</span>
 
@@ -21,10 +19,17 @@
         </div>
       </div>
       <div class="sv-header-right">
-        <DeviceIpConfigModal />
-        <div class="sv-live-badge" :class="streamStatus === 'LIVE' ? 'badge-live' : streamStatus === 'SIMULATED' ? 'badge-simulated' : 'badge-offline'">
-          <span class="pulse-dot" v-if="isActive(streamStatus)"></span>
-          {{ streamStatus === 'LIVE' ? '◈ STREAMING' : streamStatus === 'SIMULATED' ? '◈ SIMULATED' : '○ OFFLINE' }}
+        <div class="sv-header-actions-row">
+          <button class="hud-btn-toggle-log header-action-item font-mono" @click="showLogsSidebar = !showLogsSidebar" :class="{ active: showLogsSidebar }">
+            {{ showLogsSidebar ? '[ HIDE_LIVE_LOG ]' : '[ SHOW_LIVE_LOG ]' }}
+          </button>
+          <div class="header-action-item">
+            <DeviceIpConfigModal />
+          </div>
+          <div class="sv-live-badge header-action-item" :class="streamStatus === 'LIVE' ? 'badge-live' : streamStatus === 'SIMULATED' ? 'badge-simulated' : 'badge-offline'">
+            <span class="pulse-dot" v-if="isActive(streamStatus)"></span>
+            {{ streamStatus === 'LIVE' ? '◈ STREAMING' : streamStatus === 'SIMULATED' ? '◈ SIMULATED' : '○ OFFLINE' }}
+          </div>
         </div>
         <div class="sv-timestamp">{{ currentTime }}</div>
       </div>
@@ -39,454 +44,350 @@
       </div>
     </div>
 
-    <!-- 1. ENVIRONMENT METRICS (top 100%) -->
-    <div class="sv-panel env-stats-panel full-width" style="margin-bottom: 16px;">
-      <div class="panel-header">
-        <span class="panel-tag">[ ENVIRONMENT METRICS ]</span>
-        <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
-      </div>
-      <div class="stat-row">
-        <div class="stat-card" :class="lightClass">
-          <span class="stat-icon">☀</span>
-          <span class="stat-val">{{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.ambient_light, 0, 'OFFLINE') : 'OFFLINE' }}</span>
-          <span class="stat-unit" v-if="isActive(sensorStore.envStatus)">LUX</span>
-          <span class="stat-name">AMBIENT LIGHT</span>
-        </div>
-        <!-- BAROMETER: Show 'NO HW' badge when phone has no barometer sensor -->
-        <div class="stat-card" :class="sensorStore.environment.barometric_pressure === null ? 'card-warn' : ''">
-          <span class="stat-icon">⟁</span>
-          <span class="stat-val" :class="sensorStore.environment.barometric_pressure === null ? 'text-warn' : ''">
-            {{ sensorStore.environment.barometric_pressure === null
-              ? 'NO HW'
-              : isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment.barometric_pressure, 1, 'OFFLINE') : 'OFFLINE' }}
-          </span>
-          <span class="stat-unit" v-if="isActive(sensorStore.envStatus) && sensorStore.environment.barometric_pressure !== null">hPa</span>
-          <span class="stat-name">BAROMETER</span>
-        </div>
-        <!-- PRESSURE DELTA: Show 'NO HW' when barometer absent -->
-        <div class="stat-card" :class="pressureDeltaClass">
-          <span class="stat-icon">△</span>
-          <span class="stat-val">
-            {{ sensorStore.environment.pressure_delta_hpa === null
-              ? 'NO HW'
-              : isActive(sensorStore.envStatus)
-                ? (sensorStore.environment.pressure_delta_hpa >= 0 ? '+' : '') + safeToFixed(sensorStore.environment.pressure_delta_hpa, 2, 'OFFLINE')
-                : 'OFFLINE' }}
-          </span>
-          <span class="stat-unit" v-if="isActive(sensorStore.envStatus) && sensorStore.environment.pressure_delta_hpa !== null">ΔhPa</span>
-          <span class="stat-name">PRESSURE DELTA</span>
-        </div>
-      </div>
-    </div>
+    <!-- ═══ MAIN GRID CONTAINER (Zero Scroll HUD Target) ═══ -->
+    <div class="hud-grid-container">
 
-    <!-- 2. SPLIT LAYOUT FOR SENSOR TELEMETRY METRICS & REAL-TIME LOGGING -->
-    <div class="sv-split-layout" style="margin-bottom: 16px;">
-      <!-- Left Column (40%) -->
-      <div class="sv-left-col">
-        <!-- IMU 9-DOF PANEL -->
-        <div class="sv-panel imu-panel">
-          <div class="panel-header">
-            <span class="panel-tag">[ IMU // 9-DOF ]</span>
-            <span class="panel-status" :class="sensorStore.imuStatus.toLowerCase()">{{ sensorStore.imuStatus }}</span>
-          </div>
-
-          <!-- Orientation Cube Visualizer -->
-          <div class="orientation-wrap">
-            <div class="cube-scene">
-              <div class="cube" :style="cubeStyle">
-                <div class="face front">FRONT</div>
-                <div class="face back">BACK</div>
-                <div class="face left">LEFT</div>
-                <div class="face right">RIGHT</div>
-                <div class="face top">TOP</div>
-                <div class="face bottom">BOT</div>
-              </div>
+      <!-- ─── UPPER ROW (30% / 70%) ─── -->
+      <div class="hud-row-upper">
+        <!-- ─── COLUMN 1: LEFT PANEL (30%, vertically scrollable) ─── -->
+        <div class="hud-column col-left">
+          <!-- System Power Card -->
+          <div class="sv-panel battery-panel">
+            <div class="panel-header">
+              <span class="panel-tag">[ SYSTEM POWER // BATTERY ]</span>
+              <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
             </div>
-            <div class="euler-readout">
-              <div class="euler-row">
-                <span class="euler-label">ROLL</span>
-                <span class="euler-val" :class="absVal(sensorStore.eulerAngles.roll) > 45 ? 'text-warn' : ''">
-                  {{ sensorStore.eulerAngles.roll }}°
+            <div class="battery-stats">
+              <div class="bat-level-row">
+                <span class="bat-lbl">CHARGE:</span>
+                <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_level < 20 ? 'text-danger' : ''">
+                  {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level ?? 100.0, 1, '100.0') + '%' : 'OFFLINE' }}
                 </span>
               </div>
-              <div class="euler-row">
-                <span class="euler-label">PITCH</span>
-                <span class="euler-val" :class="absVal(sensorStore.eulerAngles.pitch) > 45 ? 'text-warn' : ''">
-                  {{ sensorStore.eulerAngles.pitch }}°
+              <div class="bat-progress-bar font-mono text-success">
+                {{ getBatteryBar(sensorStore.environment.battery_level) }}
+              </div>
+              <div class="bat-temp-row">
+                <span class="bat-lbl">TEMP:</span>
+                <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_temp > 45 ? 'text-danger' : ''">
+                  {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_temp ?? 32.0, 1, '32.0') + '°C' : 'OFFLINE' }}
                 </span>
               </div>
-              <div class="euler-row">
-                <span class="euler-label">YAW</span>
-                <span class="euler-val">{{ sensorStore.eulerAngles.yaw }}°</span>
-              </div>
             </div>
           </div>
 
-          <!-- Compass Gauge -->
-          <div class="compass-wrap">
-            <svg class="compass-svg" viewBox="0 0 120 120">
-              <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF6622" stroke-width="1"/>
-              <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF66" stroke-width="1" stroke-dasharray="4 4"/>
-              <text x="60" y="14" text-anchor="middle" fill="#00FF66" font-size="9" font-family="Rajdhani">N</text>
-              <text x="106" y="63" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">E</text>
-              <text x="60" y="111" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">S</text>
-              <text x="12" y="63" text-anchor="middle" fill="#00FF6688" font-size="9" font-family="Rajdhani">W</text>
-              <!-- Needle -->
-              <g :transform="`rotate(${isActive(sensorStore.imuStatus) && sensorStore.imu.compass_heading !== null ? sensorStore.imu.compass_heading : 0}, 60, 60)`">
-                <polygon points="60,12 57,60 63,60" fill="#FF3333"/>
-                <polygon points="60,108 57,60 63,60" fill="#00FF66"/>
-              </g>
-              <circle cx="60" cy="60" r="4" fill="#00FF66"/>
-              <text x="60" y="76" text-anchor="middle" fill="#00FF66" font-size="11" font-family="Rajdhani,monospace">
-                {{ sensorStore.imu.compass_heading === null
-                  ? 'NO HW'
-                  : isActive(sensorStore.imuStatus)
-                    ? safeToFixed(sensorStore.imu.compass_heading, 1) + '°'
-                    : 'OFFLINE' }}
-              </text>
-            </svg>
-          </div>
-
-          <!-- Quaternion Readout -->
-          <div class="quat-panel">
-            <span class="panel-micro-label">QUATERNION</span>
-            <div class="quat-grid">
-              <div class="quat-item"><span>W</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.w, 4, 'N/A') : 'N/A' }}</b></div>
-              <div class="quat-item"><span>X</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.x, 4, 'N/A') : 'N/A' }}</b></div>
-              <div class="quat-item"><span>Y</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.y, 4, 'N/A') : 'N/A' }}</b></div>
-              <div class="quat-item"><span>Z</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.z, 4, 'N/A') : 'N/A' }}</b></div>
+          <!-- Environment Panel -->
+          <div class="sv-panel env-stats-panel">
+            <div class="panel-header">
+              <span class="panel-tag">[ ENVIRONMENT METRICS ]</span>
+              <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
             </div>
-          </div>
-
-          <!-- Magnetometer readout -->
-          <div class="mag-panel">
-            <span class="panel-micro-label">MAGNETOMETER (µT)</span>
-            <div class="mag-grid">
-              <div class="mag-item"><span>MX</span><b>{{ sensorStore.imu.magnetometer.x === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.x, 2) : 'OFFLINE') }}</b></div>
-              <div class="mag-item"><span>MY</span><b>{{ sensorStore.imu.magnetometer.y === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.y, 2) : 'OFFLINE') }}</b></div>
-              <div class="mag-item"><span>MZ</span><b>{{ sensorStore.imu.magnetometer.z === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.z, 2) : 'OFFLINE') }}</b></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- SYSTEM POWER // BATTERY -->
-        <div class="sv-panel battery-panel">
-          <div class="panel-header">
-            <span class="panel-tag">[ SYSTEM POWER // BATTERY ]</span>
-            <span class="panel-status" :class="sensorStore.envStatus.toLowerCase()">{{ sensorStore.envStatus }}</span>
-          </div>
-          <div class="battery-stats">
-            <div class="bat-level-row">
-              <span class="bat-lbl">CHARGE:</span>
-              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_level < 20 ? 'text-danger' : ''">
-                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level ?? 100.0, 1, '100.0') + '%' : 'OFFLINE' }}
-              </span>
-            </div>
-            <!-- Segmented block bar -->
-            <div class="bat-progress-bar font-mono text-success">
-              {{ getBatteryBar(sensorStore.environment.battery_level) }}
-            </div>
-            <div class="bat-temp-row">
-              <span class="bat-lbl">BATTERY TEMP:</span>
-              <span class="bat-val" :class="isActive(sensorStore.envStatus) && sensorStore.environment.battery_temp > 45 ? 'text-danger' : ''">
-                {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_temp ?? 32.0, 1, '32.0') + '°C' : 'OFFLINE' }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- ACTIVITY // MOTION -->
-        <div class="sv-panel activity-panel">
-          <div class="panel-header">
-            <span class="panel-tag">[ ACTIVITY // MOTION ]</span>
-            <span class="panel-status" :class="sensorStore.actStatus.toLowerCase()">{{ sensorStore.actStatus }}</span>
-          </div>
-          <!-- Pedometer Odometer -->
-          <div class="odometer-wrap">
-            <div class="odometer-label">PEDOMETER</div>
-            <div class="odometer-display">
-              <span v-for="(d, i) in stepDigits" :key="i" class="step-digit">{{ d }}</span>
-            </div>
-            <span class="odometer-unit">STEPS</span>
-          </div>
-          <!-- Activity Type Badge -->
-          <div class="activity-type-wrap">
-            <span class="activity-icon">{{ activityIcon }}</span>
-            <div class="activity-label-group">
-              <span class="activity-type-label">ACTIVITY STATE</span>
-              <span class="activity-type-value" :class="`act-${sensorStore.activity.activity_type.toLowerCase()}`">
-                {{ isActive(sensorStore.actStatus) ? sensorStore.activity.activity_type.toUpperCase() : 'OFFLINE' }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- HEARING // AUDIO PERCEPTION -->
-        <div class="sv-panel hearing-panel" style="margin-top: 16px;">
-          <div class="panel-header">
-            <span class="panel-tag">[ HEARING // AUDIO PERCEPTION ]</span>
-            <span class="panel-status" :class="sensorStore.hearingStatus.toLowerCase()">{{ sensorStore.hearingStatus }}</span>
-          </div>
-          <div class="hearing-body font-mono text-[10px]" style="padding: 10px; display: flex; flex-direction: column; gap: 8px; border: 1px solid rgba(0, 255, 102, 0.15); background: rgba(0, 0, 0, 0.4);">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed rgba(0,255,102,0.2); padding-bottom: 6px;">
-              <span class="text-dim">MIC INTENSITY:</span>
-              <span :class="['font-bold', sensorStore.hearing.intensity > -25 ? 'text-warn' : 'text-live']">
-                {{ isActive(sensorStore.hearingStatus) ? safeToFixed(sensorStore.hearing.intensity, 1, 'OFFLINE') + ' dBFS' : 'OFFLINE' }}
-              </span>
-            </div>
-            <!-- Segmented block bar for mic level -->
-            <div style="color: #00FF66; letter-spacing: 1px; font-size: 11px;">
-              {{ getMicBar(sensorStore.hearing.intensity) }}
-            </div>
-            
-            <!-- Dynamic equalizer waveform visual when sound is heard -->
-            <div v-if="isActive(sensorStore.hearingStatus) && sensorStore.hearing.intensity > -45" style="display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: 18px; margin-top: 4px; padding: 2px;">
-              <span class="bar-osc" style="animation-delay: 0.1s;"></span>
-              <span class="bar-osc" style="animation-delay: 0.3s;"></span>
-              <span class="bar-osc" style="animation-delay: 0.5s;"></span>
-              <span class="bar-osc" style="animation-delay: 0.2s;"></span>
-              <span class="bar-osc" style="animation-delay: 0.4s;"></span>
-              <span class="bar-osc" style="animation-delay: 0.6s;"></span>
-            </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;">
-              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
-                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">FREQUENCY (PITCH)</span>
-                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.frequency.toUpperCase() : 'OFFLINE' }}</span>
+            <div class="stat-vertical-list">
+              <div class="stat-card" :class="lightClass">
+                <span class="stat-name">AMBIENT LIGHT</span>
+                <div class="stat-val-row">
+                  <span class="stat-icon">☀</span>
+                  <span class="stat-val">{{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.ambient_light, 0, 'OFFLINE') : 'OFFLINE' }}</span>
+                  <span class="stat-unit" v-if="isActive(sensorStore.envStatus)">LUX</span>
+                </div>
               </div>
-              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
-                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">VOLUME LEVEL</span>
-                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.intensity_label.toUpperCase() : 'OFFLINE' }}</span>
-              </div>
-              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
-                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">RHYTHM (TEMPO)</span>
-                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.rhythm.toUpperCase() : 'OFFLINE' }}</span>
-              </div>
-              <div style="border: 1px solid rgba(0,255,102,0.1); padding: 5px; background: rgba(0,0,0,0.6);">
-                <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">SOUND DIRECTION</span>
-                <span class="text-live font-bold" style="font-size: 10px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.direction.toUpperCase() : 'OFFLINE' }}</span>
-              </div>
-            </div>
-            <div style="border-top: 1px dashed rgba(0,255,102,0.2); padding-top: 6px; margin-top: 4px;">
-              <span class="text-dim" style="font-size: 8px; display: block; margin-bottom: 2px;">INFERRED SPEECH TO TEXT:</span>
-              <div style="background: rgba(0,229,255,0.05); border: 1px solid rgba(0,229,255,0.25); color: #00E5FF; padding: 6px; font-family: 'Roboto Mono', monospace; font-size: 11px; min-height: 28px;">
-                {{ isActive(sensorStore.hearingStatus) ? (sensorStore.hearing.transcript || '>> STANDBY: LISTENING FOR VOICE PATTERNS...') : 'OFFLINE' }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right Column (60%) -->
-      <div class="sv-right-col">
-        <!-- Sensor Streaming Log Widget -->
-        <div class="sv-panel sensor-streaming-log-panel font-mono">
-          <div class="panel-header">
-            <span class="panel-tag">[ SENSOR STREAMING LOG // LIVE TERMINAL ]</span>
-            <div style="display: flex; gap: 8px; align-items: center;">
-              <span class="panel-status live">ACTIVE</span>
-              <button class="export-btn" @click="copyAllLogs" style="font-size: 8px; padding: 2px 6px; border: 1px solid rgba(0,255,102,0.3); background: transparent; color: #00FF66; cursor: pointer;">COPY ALL</button>
-              <button class="export-btn" @click="clearLogs" style="font-size: 8px; padding: 2px 6px; border: 1px solid rgba(255,51,51,0.3); background: transparent; color: #FF3333; cursor: pointer;">CLEAR</button>
-            </div>
-          </div>
-          
-          <div class="console-logs-window" ref="sensorLogsContainerRef">
-            <div v-for="(log, idx) in sensorStreamingLogs" :key="idx" class="term-line">
-              <span class="log-ts">[{{ log.timestamp }}]</span>
-              <span :class="['log-level', log.type]">[{{ log.level }}]</span>
-              <span class="log-source">{{ log.source }}</span>
-              <span class="log-content">— {{ log.content }}</span>
-            </div>
-            <div v-if="sensorStreamingLogs.length === 0" class="text-dim italic" style="padding: 10px; text-align: center; color: rgba(0, 255, 102, 0.4);">
-              &gt;&gt; UPLINK ACTIVE: STANDBY FOR TELEMETRY PACKETS...
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3. STACKED CHARTS (100% width) -->
-    <div class="charts-stack" style="margin-bottom: 16px;">
-      <div class="chart-block">
-        <div class="chart-label">ACCELEROMETER XYZ (m/s²)</div>
-        <canvas ref="accelChartRef" class="hud-canvas"></canvas>
-      </div>
-      <div class="chart-block">
-        <div class="chart-label">GYROSCOPE XYZ (rad/s)</div>
-        <canvas ref="gyroChartRef" class="hud-canvas"></canvas>
-      </div>
-      <div class="chart-block">
-        <div class="chart-label">AMBIENT LIGHT (lux) — 100 SAMPLE ROLLING</div>
-        <canvas ref="lightChartRef" class="hud-canvas"></canvas>
-      </div>
-      <div class="chart-block">
-        <div class="chart-label">BAROMETRIC PRESSURE TREND (hPa)</div>
-        <canvas ref="pressureChartRef" class="hud-canvas"></canvas>
-      </div>
-      <div class="chart-block">
-        <div class="chart-label">WRIST MOTION MAGNITUDE (20 READINGS)</div>
-        <canvas ref="wristChartRef" class="hud-canvas"></canvas>
-      </div>
-      <div class="chart-block">
-        <div class="chart-label">PRESSURE DELTA (ΔhPa) — FALL INDICATOR</div>
-        <canvas ref="pressureDeltaChartRef" class="hud-canvas"></canvas>
-      </div>
-      <div class="chart-block">
-        <div class="chart-label">CUMULATIVE STEP COUNT</div>
-        <canvas ref="stepsChartRef" class="hud-canvas"></canvas>
-      </div>
-    </div>
-
-    <!-- 4. GPS LOCATION (100% width) -->
-    <!-- 4. GPS LOCATION (100% width) -->
-    <div class="sv-panel gps-panel full-width" style="margin-bottom: 16px;">
-      <div class="panel-header" style="margin-bottom:8px;">
-        <span class="panel-tag">[ GPS // REAL-TIME FIELD POSITION ]</span>
-        <span class="panel-status" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
-      </div>
-      <div class="gps-layout">
-        <div class="map-placeholder">
-          <!-- Leaflet map container -->
-          <div ref="mapContainer" class="real-map"></div>
-
-          <!-- Functional HUD Overlay -->
-          <div class="map-hud-overlay">
-            <!-- Scan line sweep -->
-            <div class="radar-scanline"></div>
-
-            <!-- TOP-LEFT: Range scale control (hacker tactical zoom) -->
-            <div class="hud-tactical-zoom font-mono">
-              <div class="zoom-title">// RANGE_SCALE</div>
-              <button 
-                v-for="r in tacticalRanges" 
-                :key="r.zoom" 
-                @click="setTacticalRange(r.zoom)" 
-                :class="{ active: currentZoom === r.zoom }" 
-                class="zoom-btn"
-              >
-                [{{ r.label.toUpperCase() }}]
-              </button>
-              <div class="zoom-title" style="margin-top: 6px; border-top: 1px dashed rgba(0, 255, 102, 0.2); padding-top: 4px;">// CAM_TRACK</div>
-              <button @click="recenterMap" :class="{ active: isTracking }" class="zoom-btn">
-                [{{ isTracking ? 'LKD_CENTER' : 'FREE_CAM' }}]
-              </button>
-            </div>
-
-            <!-- TOP-RIGHT: Coordinates & Status HUD -->
-            <div class="coord-readout font-mono">
-              <div class="coord-line">
-                <span class="coord-lbl">LAT</span>
-                <span class="coord-val">{{ safeToFixed(sensorStore.location?.latitude, 6, '0.000000') }}°</span>
-              </div>
-              <div class="coord-line">
-                <span class="coord-lbl">LNG</span>
-                <span class="coord-val">{{ safeToFixed(sensorStore.location?.longitude, 6, '0.000000') }}°</span>
-              </div>
-              <div class="coord-line">
-                <span class="coord-lbl">ALT</span>
-                <span class="coord-val">{{ safeToFixed(sensorStore.location?.altitude, 1, '0.0') }}<span class="coord-unit">m</span></span>
-              </div>
-              <div class="coord-line">
-                <span class="coord-lbl">HDG</span>
-                <span class="coord-val">{{ safeToFixed(sensorStore.imu?.compass_heading, 1, '000.0') }}°</span>
-              </div>
-              <div class="coord-line">
-                <span class="coord-lbl">SCALE</span>
-                <span class="coord-val">1:{{ currentZoom === 19 ? '500' : currentZoom === 18 ? '1200' : currentZoom === 17 ? '2500' : currentZoom === 16 ? '5000' : '25000' }}</span>
-              </div>
-              <div class="coord-line" style="margin-top: 4px; border-top: 1px dashed rgba(0, 255, 102, 0.2); padding-top: 4px;">
-                <span class="coord-lbl">SIG</span>
-                <span class="coord-val" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
-              </div>
-            </div>
-
-            <!-- Central targeting crosshair (always at center of map) -->
-            <div class="map-crosshair">
-              <span class="crosshair-h"></span>
-              <span class="crosshair-v"></span>
-              <span class="crosshair-dot"></span>
-            </div>
-
-            <!-- BOTTOM-LEFT: Telemetry console stream -->
-            <div class="hud-terminal-overlay font-mono">
-              <div class="term-header">// TELEMETRY_STREAM</div>
-              <div v-for="(log, idx) in telemetryLogs" :key="idx" class="term-line">
-                <span class="log-ts">[{{ log.timestamp }}]</span>
-                <span :class="['log-level', log.type]">[{{ log.level }}]</span>
-                <span class="log-source">{{ log.source }}</span>
-                <span class="log-content">— {{ log.content }}</span>
-              </div>
-            </div>
-
-            <!-- BOTTOM-RIGHT: Target tracking & system parameters -->
-            <div class="hud-sys-parameters font-mono">
-              <div class="sys-title">// UPLINK_TELEMETRY</div>
-              <div class="sys-row">
-                <span class="sys-lbl">SYS_STATE</span>
-                <span class="sys-val" :class="sysStateClass">{{ sysState }}</span>
-              </div>
-              <div class="sys-row">
-                <span class="sys-lbl">DEV_ID</span>
-                <span :class="['sys-val', sensorStore.isLive ? 'text-cyan' : 'text-dim']">{{ sensorStore.isLive ? 'HK07_MOBILE' : 'OFFLINE' }}</span>
-              </div>
-              <div class="sys-row">
-                <span class="sys-lbl">BATTERY</span>
-                <span class="sys-val">
-                  {{ isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment?.battery_level, 1) + '%' : 'OFFLINE' }}
-                  <span v-if="isActive(sensorStore.envStatus)" style="font-size: 8px; opacity: 0.7;">
-                    ({{ safeToFixed(sensorStore.environment?.battery_temp, 1) }}°C)
+              <div class="stat-card" :class="sensorStore.environment.barometric_pressure === null ? 'card-danger' : ''">
+                <span class="stat-name">BAROMETER</span>
+                <div class="stat-val-row">
+                  <span class="stat-icon">⟁</span>
+                  <span class="stat-val" :class="sensorStore.environment.barometric_pressure === null ? 'text-danger' : ''">
+                    {{ sensorStore.environment.barometric_pressure === null ? 'NO HW' : (isActive(sensorStore.envStatus) ? safeToFixed(sensorStore.environment.barometric_pressure, 1, 'OFFLINE') : 'OFFLINE') }}
                   </span>
+                  <span class="stat-unit" v-if="isActive(sensorStore.envStatus) && sensorStore.environment.barometric_pressure !== null">hPa</span>
+                </div>
+              </div>
+              <div class="stat-card" :class="pressureDeltaClass">
+                <span class="stat-name">PRESSURE DELTA</span>
+                <div class="stat-val-row">
+                  <span class="stat-icon">△</span>
+                  <span class="stat-val">
+                    {{ sensorStore.environment.pressure_delta_hpa === null ? 'NO HW' : (isActive(sensorStore.envStatus) ? (sensorStore.environment.pressure_delta_hpa >= 0 ? '+' : '') + safeToFixed(sensorStore.environment.pressure_delta_hpa, 2, 'OFFLINE') : 'OFFLINE') }}
+                  </span>
+                  <span class="stat-unit" v-if="isActive(sensorStore.envStatus) && sensorStore.environment.pressure_delta_hpa !== null">ΔhPa</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Activity Panel -->
+          <div class="sv-panel activity-panel">
+            <div class="panel-header">
+              <span class="panel-tag">[ ACTIVITY // MOTION ]</span>
+              <span class="panel-status" :class="sensorStore.actStatus.toLowerCase()">{{ sensorStore.actStatus }}</span>
+            </div>
+            <div class="odometer-wrap">
+              <div class="odometer-label">PEDOMETER</div>
+              <div class="odometer-display">
+                <span v-for="(d, i) in stepDigits" :key="i" class="step-digit">{{ d }}</span>
+              </div>
+              <span class="odometer-unit">STEPS</span>
+            </div>
+            <div class="activity-type-wrap" style="margin-top: 6px;">
+              <span class="activity-icon">{{ activityIcon }}</span>
+              <div class="activity-label-group">
+                <span class="activity-type-label">STATE</span>
+                <span class="activity-type-value" :class="`act-${sensorStore.activity.activity_type.toLowerCase()}`">
+                  {{ isActive(sensorStore.actStatus) ? sensorStore.activity.activity_type.toUpperCase() : 'OFFLINE' }}
                 </span>
               </div>
-              <div class="sys-row">
-                <span class="sys-lbl">HR_RATE</span>
-                <span :class="['sys-val', vitalsStore.isSimulated ? 'text-orange' : (isActive(heartStatus) ? 'text-danger' : 'text-dim')]">
-                  {{ isActive(heartStatus) ? vitalsStore.current.heartRate + ' BPM' : 'OFFLINE' }}
-                  <span v-if="vitalsStore.isSimulated && vitalsStore.current.heartRate" class="text-[8px]">(SIM)</span>
+            </div>
+          </div>
+
+          <!-- Hearing Panel -->
+          <div class="sv-panel hearing-panel">
+            <div class="panel-header">
+              <span class="panel-tag">[ HEARING // AUDIO ]</span>
+              <span class="panel-status" :class="sensorStore.hearingStatus.toLowerCase()">{{ sensorStore.hearingStatus }}</span>
+            </div>
+            <div class="hearing-body font-mono text-[9px]" style="padding: 6px; display: flex; flex-direction: column; gap: 4px; border: 1px solid rgba(0, 255, 102, 0.15); background: rgba(0, 0, 0, 0.4);">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed rgba(0,255,102,0.2); padding-bottom: 3px;">
+                <span class="text-dim">MIC INTENSITY:</span>
+                <span :class="['font-bold', sensorStore.hearing.intensity > -25 ? 'text-warn' : 'text-live']">
+                  {{ isActive(sensorStore.hearingStatus) ? safeToFixed(sensorStore.hearing.intensity, 1, 'OFFLINE') + ' dBFS' : 'OFFLINE' }}
                 </span>
               </div>
-              <div class="sys-row">
-                <span class="sys-lbl">ACTIVITY</span>
-                <span class="sys-val text-blue">
-                  {{ isActive(sensorStore.actStatus) ? (sensorStore.activity?.activity_type || 'still').toUpperCase() : 'OFFLINE' }}
-                </span>
+              <div style="color: #00FF66; letter-spacing: 1px; font-size: 10px; text-align: center;">
+                {{ getMicBar(sensorStore.hearing.intensity) }}
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 2px;">
+                <div style="border: 1px solid rgba(0,255,102,0.1); padding: 3px; background: rgba(0,0,0,0.6);">
+                  <span class="text-dim" style="font-size: 7px; display: block;">PITCH</span>
+                  <span class="text-live font-bold" style="font-size: 9px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.frequency.toUpperCase() : 'OFFLINE' }}</span>
+                </div>
+                <div style="border: 1px solid rgba(0,255,102,0.1); padding: 3px; background: rgba(0,0,0,0.6);">
+                  <span class="text-dim" style="font-size: 7px; display: block;">VOLUME</span>
+                  <span class="text-live font-bold" style="font-size: 9px;">{{ isActive(sensorStore.hearingStatus) ? sensorStore.hearing.intensity_label.toUpperCase() : 'OFFLINE' }}</span>
+                </div>
+              </div>
+              <div style="border-top: 1px dashed rgba(0,255,102,0.2); padding-top: 4px; margin-top: 2px;">
+                <span class="text-dim" style="font-size: 7px; display: block;">SPEECH TRANSCRIPT:</span>
+                <div style="background: rgba(0,229,255,0.05); border: 1px solid rgba(0,229,255,0.25); color: #00E5FF; padding: 4px; font-family: 'Roboto Mono', monospace; font-size: 9px; min-height: 20px;">
+                  {{ isActive(sensorStore.hearingStatus) ? (sensorStore.hearing.transcript || '>> STANDBY...') : 'OFFLINE' }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── COLUMN 2: RIGHT PANEL (70%, vertically scrollable) ─── -->
+        <div class="hud-column col-right">
+          <!-- IMU 9-DOF Widget -->
+          <div class="sv-panel imu-panel">
+            <div class="panel-header">
+              <span class="panel-tag">[ IMU // 9-DOF ]</span>
+              <span class="panel-status" :class="sensorStore.imuStatus.toLowerCase()">{{ sensorStore.imuStatus }}</span>
+            </div>
+            <div class="orientation-wrap">
+              <div class="cube-scene">
+                <div class="cube" :style="cubeStyle">
+                  <div class="face front">FRONT</div>
+                  <div class="face back">BACK</div>
+                  <div class="face left">LEFT</div>
+                  <div class="face right">RIGHT</div>
+                  <div class="face top">TOP</div>
+                  <div class="face bottom">BOT</div>
+                </div>
+              </div>
+              <div class="euler-readout">
+                <div class="euler-row">
+                  <span class="euler-label">ROLL</span>
+                  <span class="euler-val" :class="absVal(sensorStore.eulerAngles.roll) > 45 ? 'text-warn' : ''">
+                    {{ sensorStore.eulerAngles.roll }}°
+                  </span>
+                </div>
+                <div class="euler-row">
+                  <span class="euler-label">PITCH</span>
+                  <span class="euler-val" :class="absVal(sensorStore.eulerAngles.pitch) > 45 ? 'text-warn' : ''">
+                    {{ sensorStore.eulerAngles.pitch }}°
+                  </span>
+                </div>
+                <div class="euler-row">
+                  <span class="euler-label">YAW</span>
+                  <span class="euler-val">{{ sensorStore.eulerAngles.yaw }}°</span>
+                </div>
+              </div>
+              <!-- Compass mini gauge -->
+              <div class="compass-wrap">
+                <svg class="compass-svg" viewBox="0 0 120 120">
+                  <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF6622" stroke-width="1"/>
+                  <circle cx="60" cy="60" r="55" fill="none" stroke="#00FF66" stroke-width="1" stroke-dasharray="4 4"/>
+                  <text x="60" y="14" text-anchor="middle" fill="#00FF66" font-size="9" font-family="Rajdhani">N</text>
+                  <g :transform="`rotate(${isActive(sensorStore.imuStatus) && sensorStore.imu.compass_heading !== null ? sensorStore.imu.compass_heading : 0}, 60, 60)`">
+                    <polygon points="60,12 57,60 63,60" fill="#FF3333"/>
+                    <polygon points="60,108 57,60 63,60" fill="#00FF66"/>
+                  </g>
+                  <circle cx="60" cy="60" r="4" fill="#00FF66"/>
+                  <text x="60" y="74" text-anchor="middle" fill="#00FF66" font-size="10" font-family="Rajdhani,monospace">
+                    {{ sensorStore.imu.compass_heading === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.compass_heading, 1) + '°' : 'OFFLINE') }}
+                  </text>
+                </svg>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 6px;">
+              <div class="quat-panel">
+                <span class="panel-micro-label">QUATERNION</span>
+                <div class="quat-grid">
+                  <div class="quat-item"><span>W</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.w, 3, 'N/A') : 'N/A' }}</b></div>
+                  <div class="quat-item"><span>X</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.x, 3, 'N/A') : 'N/A' }}</b></div>
+                  <div class="quat-item"><span>Y</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.y, 3, 'N/A') : 'N/A' }}</b></div>
+                  <div class="quat-item"><span>Z</span><b>{{ isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu?.orientation?.z, 3, 'N/A') : 'N/A' }}</b></div>
+                </div>
+              </div>
+              <div class="mag-panel">
+                <span class="panel-micro-label">MAGNETOMETER</span>
+                <div class="mag-grid">
+                  <div class="mag-item"><span>MX</span><b :class="sensorStore.imu.magnetometer.x === null ? 'text-danger' : ''">{{ sensorStore.imu.magnetometer.x === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.x, 1) : 'OFFLINE') }}</b></div>
+                  <div class="mag-item"><span>MY</span><b :class="sensorStore.imu.magnetometer.y === null ? 'text-danger' : ''">{{ sensorStore.imu.magnetometer.y === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.y, 1) : 'OFFLINE') }}</b></div>
+                  <div class="mag-item"><span>MZ</span><b :class="sensorStore.imu.magnetometer.z === null ? 'text-danger' : ''">{{ sensorStore.imu.magnetometer.z === null ? 'NO HW' : (isActive(sensorStore.imuStatus) ? safeToFixed(sensorStore.imu.magnetometer.z, 1) : 'OFFLINE') }}</b></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dynamic Chart Console (all charts stacked, no tabs) -->
+          <div class="sv-panel charts-console-panel">
+            <div class="panel-header">
+              <span class="panel-tag">[ GRAPH TRENDS CONSOLE ]</span>
+            </div>
+
+            <div class="charts-console-content">
+              <div class="chart-block-mini">
+                <div class="chart-label">WRIST MAGNITUDE</div>
+                <canvas ref="wristChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+              <div class="chart-block-mini">
+                <div class="chart-label">ACCELEROMETER XYZ (m/s²)</div>
+                <canvas ref="accelChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+              <div class="chart-block-mini">
+                <div class="chart-label">GYROSCOPE XYZ (rad/s)</div>
+                <canvas ref="gyroChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+              <div class="chart-block-mini">
+                <div class="chart-label">LIGHT SENSOR (lux)</div>
+                <canvas ref="lightChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+              <div class="chart-block-mini">
+                <div class="chart-label">PRESSURE DELTA (ΔhPa)</div>
+                <canvas ref="pressureDeltaChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+              <div class="chart-block-mini">
+                <div class="chart-label">STEP COUNT</div>
+                <canvas ref="stepsChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+              <div class="chart-block-mini">
+                <div class="chart-label">BAROMETRIC PRESSURE (hPa)</div>
+                <canvas ref="pressureChartRef" class="hud-canvas-mini"></canvas>
+              </div>
+            </div>
+          </div>
+        </div> <!-- closes col-right -->
+      </div> <!-- closes hud-row-upper -->
+
+      <!-- Tactical GIS Map Card (100% width) -->
+      <div class="sv-panel gps-panel flex-grow-map" style="margin-top: 8px; flex-shrink: 0; min-height: 350px;">
+        <div class="panel-header">
+          <span class="panel-tag">[ GPS // FIELD ROAD MAP ]</span>
+          <span class="panel-status" :class="sensorStore.locStatus.toLowerCase()">{{ sensorStore.locStatus }}</span>
+        </div>
+        <div class="gps-layout">
+          <div class="map-placeholder">
+            <div ref="mapContainer" class="real-map"></div>
+
+            <!-- HUD overlays on Map -->
+            <div class="map-hud-overlay">
+              <div class="radar-scanline"></div>
+              <div class="hud-tactical-zoom font-mono">
+                <div class="zoom-title">// RANGE</div>
+                <button v-for="r in tacticalRanges" :key="r.zoom" @click="setTacticalRange(r.zoom)" :class="{ active: currentZoom === r.zoom }" class="zoom-btn">
+                  [{{ r.label.toUpperCase() }}]
+                </button>
+                <div class="zoom-title" style="margin-top: 4px; border-top: 1px dashed rgba(0, 255, 102, 0.2); padding-top: 2px;">// CAM</div>
+                <button @click="recenterMap" :class="{ active: isTracking }" class="zoom-btn">
+                  [{{ isTracking ? 'LKD' : 'FREE' }}]
+                </button>
+              </div>
+
+              <div class="coord-readout font-mono">
+                <div class="coord-line"><span class="coord-lbl">LAT</span><span class="coord-val">{{ safeToFixed(sensorStore.location?.latitude, 6, '0.000000') }}°</span></div>
+                <div class="coord-line"><span class="coord-lbl">LNG</span><span class="coord-val">{{ safeToFixed(sensorStore.location?.longitude, 6, '0.000000') }}°</span></div>
+                <div class="coord-line"><span class="coord-lbl">HDG</span><span class="coord-val">{{ safeToFixed(sensorStore.imu?.compass_heading, 1, '000.0') }}°</span></div>
+              </div>
+
+              <div class="hud-terminal-overlay font-mono">
+                <div v-for="(log, idx) in telemetryLogs" :key="idx" class="term-line">
+                  <span class="log-ts">[{{ log.timestamp }}]</span>
+                  <span :class="['log-level', log.type]">[{{ log.level }}]</span>
+                  <span class="log-content">— {{ log.content }}</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ═══ STATISTICS TABLE ═══ -->
-    <div class="stats-table-wrap">
-      <div class="panel-header">
-        <span class="panel-tag">[ SENSOR STATISTICS TABLE // ALL 13 CHANNELS ]</span>
-        <button class="export-btn" @click="exportCSV">⬇ EXPORT CSV</button>
+      <!-- 13 Channels Stats Table (100% width) -->
+      <div class="stats-table-wrap compact-table-wrap" style="margin-top: 8px; flex-shrink: 0; max-height: 300px;">
+        <div class="panel-header">
+          <span class="panel-tag">[ ALL 13 TELEMETRY CHANNELS ]</span>
+          <button class="export-btn-mini" @click="exportCSV">CSV</button>
+        </div>
+        <div class="table-scroll-container">
+          <table class="stats-table compact">
+            <thead>
+              <tr>
+                <th>SENSOR</th>
+                <th>VALUE</th>
+                <th>UNIT</th>
+                <th>MIN</th>
+                <th>MAX</th>
+                <th>STAT</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in statsTableRows" :key="row.sensor" :class="`row-${row.statusClass}`">
+                <td class="cell-sensor">{{ row.sensor }}</td>
+                <td class="cell-val" :class="row.current === 'NO HW' ? 'text-danger' : ''">{{ row.current }}</td>
+                <td class="cell-unit">{{ row.unit }}</td>
+                <td class="cell-min">{{ row.min }}</td>
+                <td class="cell-max">{{ row.max }}</td>
+                <td class="cell-status">
+                  <span class="status-pill-mini" :class="`pill-${row.statusClass}`">{{ row.status }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-      <table class="stats-table">
-        <thead>
-          <tr>
-            <th>SENSOR</th>
-            <th>CURRENT VALUE</th>
-            <th>UNIT</th>
-            <th>MIN (session)</th>
-            <th>MAX (session)</th>
-            <th>STATUS</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in statsTableRows" :key="row.sensor" :class="`row-${row.statusClass}`">
-            <td class="cell-sensor">{{ row.sensor }}</td>
-            <td class="cell-val">{{ row.current }}</td>
-            <td class="cell-unit">{{ row.unit }}</td>
-            <td class="cell-min">{{ row.min }}</td>
-            <td class="cell-max">{{ row.max }}</td>
-            <td class="cell-status">
-              <span class="status-pill" :class="`pill-${row.statusClass}`">{{ row.status }}</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    </div> <!-- closes hud-grid-container -->
+
+    <!-- ═══ RIGHT-DOCKED SIDEBAR TERMINAL LOG ═══ -->
+    <div class="sensor-streaming-log-sidebar" :class="{ active: showLogsSidebar }">
+      <div class="panel-header" style="margin-bottom: 8px;">
+        <span class="panel-tag">[ SENSOR_LOG // LIVE_STREAM ]</span>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="btn-copy-tactical" @click="copyAllLogs">COPY</button>
+          <button class="btn-clear-tactical" @click="clearLogs">CLR</button>
+          <button class="btn-clear-tactical" @click="showLogsSidebar = false" style="border-color: #555; color: #888;">X</button>
+        </div>
+      </div>
+      <div class="console-logs-window" ref="sensorLogsContainerRef">
+        <div v-for="(log, idx) in sensorStreamingLogs" :key="idx" class="term-line">
+          <span class="log-ts">[{{ log.timestamp }}]</span>
+          <span :class="['log-source', log.type]">{{ log.source.split('.').pop() }}</span>
+          <span class="log-content">— {{ log.content }}</span>
+        </div>
+        <div v-if="sensorStreamingLogs.length === 0" class="text-dim italic" style="padding: 10px; text-align: center; color: rgba(0, 255, 102, 0.4);">
+          &gt;&gt; UPLINK ACTIVE: STANDBY FOR TELEMETRY PACKETS...
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -533,6 +434,8 @@ const latency = ref(0)
 const deviceLabel = ref('VIVO-HK07-MOBILE')
 let _lastPktCount = 0
 let _pktInterval: number | null = null
+
+const showLogsSidebar = ref(false)
 
 function updateClock() {
   currentTime.value = new Date().toLocaleTimeString('en-GB', { hour12: false })
@@ -873,8 +776,6 @@ function updateCharts() {
     stepsChart.update('none')
   }
 
-
-
   // Update rotating tactical scan sweep sector on Leaflet map
   if (mapInstance && (window as any).L) {
     const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
@@ -914,7 +815,7 @@ const statsTableRows = computed(() => {
       unit: imu?.magnetometer?.x === null ? '' : 'µT',
       key: 'mx',
       val: imu?.magnetometer?.x ?? undefined,
-      statusClass: imu?.magnetometer?.x === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      statusClass: imu?.magnetometer?.x === null ? 'danger' : getStatusClass(sensorStore.imuStatus),
       status: imu?.magnetometer?.x === null ? 'NO HW' : sensorStore.imuStatus
     },
     {
@@ -923,7 +824,7 @@ const statsTableRows = computed(() => {
       unit: imu?.magnetometer?.y === null ? '' : 'µT',
       key: 'my',
       val: imu?.magnetometer?.y ?? undefined,
-      statusClass: imu?.magnetometer?.y === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      statusClass: imu?.magnetometer?.y === null ? 'danger' : getStatusClass(sensorStore.imuStatus),
       status: imu?.magnetometer?.y === null ? 'NO HW' : sensorStore.imuStatus
     },
     {
@@ -932,7 +833,7 @@ const statsTableRows = computed(() => {
       unit: imu?.magnetometer?.z === null ? '' : 'µT',
       key: 'mz',
       val: imu?.magnetometer?.z ?? undefined,
-      statusClass: imu?.magnetometer?.z === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      statusClass: imu?.magnetometer?.z === null ? 'danger' : getStatusClass(sensorStore.imuStatus),
       status: imu?.magnetometer?.z === null ? 'NO HW' : sensorStore.imuStatus
     },
     {
@@ -941,7 +842,7 @@ const statsTableRows = computed(() => {
       unit: imu?.compass_heading === null ? '' : '°',
       key: 'comp',
       val: imu?.compass_heading ?? undefined,
-      statusClass: imu?.compass_heading === null ? 'warn' : getStatusClass(sensorStore.imuStatus),
+      statusClass: imu?.compass_heading === null ? 'danger' : getStatusClass(sensorStore.imuStatus),
       status: imu?.compass_heading === null ? 'NO HW' : sensorStore.imuStatus
     },
     { sensor: 'LIGHT',       current: isActive(sensorStore.envStatus) ? safeToFixed(env?.ambient_light, 0) : 'OFFLINE',         unit: 'lux',  key: 'lux',     val: env?.ambient_light,         statusClass: getStatusClass(sensorStore.envStatus), status: sensorStore.envStatus },
@@ -954,7 +855,7 @@ const statsTableRows = computed(() => {
       unit: env?.barometric_pressure === null ? '' : 'hPa',
       key: 'baro',
       val: env?.barometric_pressure ?? undefined,
-      statusClass: env?.barometric_pressure === null ? 'warn' : (isActive(sensorStore.envStatus) ? 'warn' : 'danger'),
+      statusClass: env?.barometric_pressure === null ? 'danger' : (isActive(sensorStore.envStatus) ? 'warn' : 'danger'),
       status: env?.barometric_pressure === null ? 'NO HW' : (isActive(sensorStore.envStatus) ? 'SIMULATED' : 'OFFLINE'),
     },
     {
@@ -965,7 +866,7 @@ const statsTableRows = computed(() => {
       unit: env?.pressure_delta_hpa === null ? '' : 'ΔhPa',
       key: 'pdelta',
       val: env?.pressure_delta_hpa ?? undefined,
-      statusClass: env?.pressure_delta_hpa === null ? 'warn' : (isActive(sensorStore.envStatus) ? 'warn' : 'danger'),
+      statusClass: env?.pressure_delta_hpa === null ? 'danger' : (isActive(sensorStore.envStatus) ? 'warn' : 'danger'),
       status: env?.pressure_delta_hpa === null ? 'NO HW' : (isActive(sensorStore.envStatus) ? 'SIMULATED' : 'OFFLINE'),
     },
     { sensor: 'LATITUDE', current: isActive(sensorStore.locStatus) ? safeToFixed(loc?.latitude, 6) : 'OFFLINE', unit: '°', key: 'lat', val: loc?.latitude, statusClass: getStatusClass(sensorStore.locStatus), status: sensorStore.locStatus },
@@ -1061,7 +962,7 @@ function addTelemetryLog(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', source: str
     source,
     content
   }
-  
+
   telemetryLogs.value.push(entry)
   if (telemetryLogs.value.length > 5) {
     telemetryLogs.value.shift()
@@ -1152,7 +1053,7 @@ let lastActLogTime = 0
      }
    }
  )
- 
+
  let lastHearingLogTime = 0
  watch(
    () => sensorStore.lastHearingMs,
@@ -1470,6 +1371,21 @@ onUnmounted(() => {
   align-items: flex-end;
   gap: 6px;
 }
+.sv-header-actions-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+/* All 3 header controls (log toggle, IP config, live badge) share the
+   same width and sit in a single aligned row */
+.header-action-item {
+  width: 190px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .sv-live-badge {
   font-family: 'Rajdhani', sans-serif;
   font-size: 11px;
@@ -1479,7 +1395,9 @@ onUnmounted(() => {
   border: 1px solid;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  box-sizing: border-box;
 }
 .badge-live { border-color: #00FF66; color: #00FF66; background: #00FF6611; }
 .badge-offline { border-color: #FF333388; color: #FF3333; background: #FF333311; }
@@ -1526,60 +1444,104 @@ onUnmounted(() => {
 .badge-name { color: inherit; }
 .badge-state { font-size: 8px; opacity: 0.7; }
 
-/* ─── Main Layout (Environment top, split sidebar 30/70, charts 100%) ─── */
-.sv-panel.full-width {
+/* Header Log Toggle Button */
+.hud-btn-toggle-log {
+  background: transparent;
+  border: 1px solid rgba(0, 255, 102, 0.4);
+  color: #00FF66;
+  font-size: 9px;
+  padding: 3px 8px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: all 0.2s ease;
   width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+}
+.hud-btn-toggle-log:hover, .hud-btn-toggle-log.active {
+  background: rgba(0, 255, 102, 0.15);
+  box-shadow: 0 0 6px rgba(0, 255, 102, 0.4);
 }
 
-.sv-split-layout {
-  display: flex;
-  gap: 16px;
-  width: 100%;
-}
-
-.sv-left-col {
-  width: 40%;
+/* Sensor Streaming Log Sidebar */
+.sensor-streaming-log-sidebar {
+  position: fixed;
+  top: 48px;
+  right: 0;
+  width: 760px;
+  height: calc(100vh - 48px);
+  z-index: 9999;
+  background: rgba(5, 5, 5, 0.96);
+  border-left: 1px solid rgba(0, 255, 102, 0.3);
+  box-shadow: -5px 0 25px rgba(0, 0, 0, 0.8);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.1, 0.9, 0.2, 1);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  padding: 10px;
+  box-sizing: border-box;
 }
-
-.sv-right-col {
-  width: 60%;
-  position: relative;
+.sensor-streaming-log-sidebar.active {
+  transform: translateX(0);
 }
-
-/* Sensor Streaming Log Panel */
-.sensor-streaming-log-panel {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.sensor-streaming-log-panel .console-logs-window {
+.sensor-streaming-log-sidebar .console-logs-window {
   flex: 1;
-  background: rgba(3, 3, 3, 0.96);
+  background: rgba(0, 0, 0, 0.98);
   border: 1px solid rgba(0, 255, 102, 0.15);
-  padding: 12px;
+  padding: 8px;
   overflow-y: auto;
-  font-size: 10px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: 'Roboto Mono', monospace;
   user-select: text !important;
   -webkit-user-select: text !important;
-  max-height: 800px;
 }
-.sensor-streaming-log-panel .console-logs-window::-webkit-scrollbar {
-  width: 4px;
+.sensor-streaming-log-sidebar .console-logs-window::-webkit-scrollbar {
+  width: 3px;
 }
-.sensor-streaming-log-panel .console-logs-window::-webkit-scrollbar-track {
-  background: rgba(0,0,0,0.2);
+.sensor-streaming-log-sidebar .console-logs-window::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.9);
 }
-.sensor-streaming-log-panel .console-logs-window::-webkit-scrollbar-thumb {
+.sensor-streaming-log-sidebar .console-logs-window::-webkit-scrollbar-thumb {
   background: rgba(0, 255, 102, 0.3);
   border-radius: 2px;
+}
+
+/* Tactical Copy / Clear Buttons styling */
+.btn-copy-tactical {
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid #00FF66;
+  color: #00FF66;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 8px;
+  font-weight: bold;
+  padding: 2px 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease;
+}
+.btn-copy-tactical:hover {
+  background: #00FF66;
+  color: #000000;
+  box-shadow: 0 0 6px #00FF66bb;
+}
+
+.btn-clear-tactical {
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid #FF3333;
+  color: #FF3333;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 8px;
+  font-weight: bold;
+  padding: 2px 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease;
+}
+.btn-clear-tactical:hover {
+  background: #FF3333;
+  color: #000000;
+  box-shadow: 0 0 6px #FF3333bb;
 }
 
 .sv-panel {
@@ -1590,17 +1552,6 @@ onUnmounted(() => {
   border: 1px solid #00FF6622;
   padding: 12px;
   backdrop-filter: blur(4px);
-}
-
-.charts-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-}
-
-.charts-stack .chart-block {
-  width: 100%;
 }
 
 /* ─── Battery Panel ───────────────────────────────────────────────────────── */
@@ -1637,32 +1588,6 @@ onUnmounted(() => {
   gap: 12px;
   width: 100%;
 }
-.gps-readout-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  width: 100%;
-}
-.gps-item-horizontal {
-  background: rgba(0, 255, 102, 0.02);
-  border: 1px solid rgba(0, 255, 102, 0.15);
-  padding: 10px 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.gps-label {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: #00FF6688;
-  font-family: 'Roboto Mono', monospace;
-}
-.gps-val {
-  font-size: 14px;
-  font-weight: 700;
-  color: #00FF66;
-  font-family: 'Roboto Mono', monospace;
-}
 .gps-panel .map-placeholder {
   width: 100%;
   height: 500px;
@@ -1680,15 +1605,6 @@ onUnmounted(() => {
   left: 0;
   z-index: 1;
   background: #080D10;
-}
-.blueprint-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 2;
-  pointer-events: none;
 }
 .real-map :deep(.leaflet-tile) {
   display: block;
@@ -1724,295 +1640,9 @@ onUnmounted(() => {
   100% { top: 100%; }
 }
 
-/* TOP-LEFT: Zoom Range Selector */
-.hud-tactical-zoom {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  background: rgba(10, 10, 10, 0.88);
-  border: 1px solid rgba(0, 255, 102, 0.25);
-  border-left: 3px solid #00FF66;
-  padding: 8px 12px;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  pointer-events: auto; /* enable clicks! */
-  width: 130px;
-}
-.zoom-title {
-  font-size: 9px;
-  color: #00FF66;
-  opacity: 0.7;
-  letter-spacing: 1px;
-}
-.zoom-btn {
-  background: transparent;
-  border: none;
-  color: rgba(0, 255, 102, 0.5);
-  font-family: 'Roboto Mono', monospace;
-  font-size: 10.5px;
-  text-align: left;
-  padding: 2px 0;
-  cursor: pointer;
-  width: 100%;
-  transition: all 0.2s ease;
-}
-.zoom-btn:hover {
-  color: #00FF66;
-  padding-left: 2px;
-}
-.zoom-btn.active {
-  color: #00FF66;
-  font-weight: 700;
-  text-shadow: 0 0 4px rgba(0, 255, 102, 0.6);
-}
-
-/* TOP-RIGHT: Coordinates & Status HUD */
-.coord-readout {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 20;
-  background: rgba(10, 10, 10, 0.88);
-  border: 1px solid rgba(0, 255, 102, 0.25);
-  border-left: 3px solid #00FF66;
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 170px;
-}
-.coord-line {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10.5px;
-}
-.coord-lbl {
-  color: #00FF66;
-  opacity: 0.6;
-}
-.coord-val {
-  color: #00FF66;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-.coord-unit {
-  font-size: 9.5px;
-  opacity: 0.8;
-  margin-left: 1px;
-}
-
-/* BOTTOM-LEFT: Telemetry console stream */
-.hud-terminal-overlay {
-  position: absolute;
-  bottom: 10px;
-  left: 10px;
-  width: 380px;
-  background: rgba(5, 5, 5, 0.92);
-  border: 1px solid rgba(0, 255, 102, 0.25);
-  border-left: 3px solid #00FF66;
-  padding: 8px 12px;
-  z-index: 15;
-  font-size: 9.5px;
-  line-height: 1.4;
-}
-.term-header {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: #00FF66;
-  margin-bottom: 4px;
-  border-bottom: 1px dashed rgba(0, 255, 102, 0.2);
-  padding-bottom: 2px;
-}
-.term-line {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.term-line .log-ts {
-  color: rgba(255, 255, 255, 0.4);
-}
-.term-line .log-level {
-  font-weight: bold;
-}
-.term-line .log-level.info {
-  color: #00FF66;
-}
-.term-line .log-level.warn {
-  color: #FFB000;
-}
-.term-line .log-level.error {
-  color: #FF3333;
-}
-.term-line .log-level.debug {
-  color: #00E5FF;
-}
-.term-line .log-source {
-  color: #ffffff;
-  font-weight: 600;
-}
-.term-line .log-content {
-  color: #00FF66;
-  opacity: 0.95;
-}
-
-/* BOTTOM-RIGHT: Target tracking & system parameters */
-.hud-sys-parameters {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  width: 200px;
-  background: rgba(10, 10, 10, 0.88);
-  border: 1px solid rgba(0, 255, 102, 0.25);
-  border-left: 3px solid #00FF66;
-  padding: 8px 12px;
-  z-index: 15;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.sys-title {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: #00FF66;
-  margin-bottom: 4px;
-  border-bottom: 1px dashed rgba(0, 255, 102, 0.2);
-  padding-bottom: 2px;
-}
-.sys-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10.5px;
-}
-.sys-lbl {
-  color: #00FF66;
-  opacity: 0.6;
-}
-.sys-val {
-  color: #00FF66;
-  font-weight: 700;
-}
 .text-live { color: #00FF66 !important; }
 .text-danger { color: #FF3333 !important; }
 .text-blue { color: #0088FF !important; }
-
-/* Central targeting crosshair */
-.map-crosshair {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 32px;
-  height: 32px;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.crosshair-h {
-  position: absolute;
-  width: 100%;
-  height: 1px;
-  background: rgba(0, 255, 102, 0.4);
-}
-.crosshair-v {
-  position: absolute;
-  height: 100%;
-  width: 1px;
-  background: rgba(0, 255, 102, 0.4);
-}
-.crosshair-dot {
-  width: 6px;
-  height: 6px;
-  border: 1px solid #00FF66;
-  border-radius: 50%;
-  background: transparent;
-  box-shadow: 0 0 4px #00FF66;
-}
-
-/* Tactical target markers (NAV_0307 & ARM_0308) */
-.hud-tactical-marker {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  z-index: 14;
-  pointer-events: none;
-}
-.marker-box {
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid #00FF66;
-  background: rgba(0, 255, 102, 0.15);
-  transform: rotate(45deg);
-  box-shadow: 0 0 4px #00FF66;
-  position: relative;
-}
-.marker-box::after {
-  content: '';
-  position: absolute;
-  inset: 1.5px;
-  background: #00FF66;
-}
-.marker-box.alt-color {
-  border-color: #FF3333;
-  background: rgba(255, 51, 51, 0.15);
-  box-shadow: 0 0 4px #FF3333;
-}
-.marker-box.alt-color::after {
-  background: #FF3333;
-}
-.marker-label {
-  font-family: 'Roboto Mono', monospace;
-  font-size: 7px;
-  color: #00FF66;
-  text-shadow: 0 0 2px #000;
-  background: rgba(0, 0, 0, 0.65);
-  padding: 1px 3px;
-  border-radius: 1px;
-}
-.marker-box.alt-color + .marker-label {
-  color: #FF3333;
-}
-
-/* Side coordinate rails ticks */
-.hud-side-rail {
-  position: absolute;
-  top: 40px;
-  bottom: 40px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  font-size: 6.5px;
-  font-family: 'Roboto Mono', monospace;
-  color: rgba(0, 255, 102, 0.4);
-  z-index: 12;
-  letter-spacing: 0.5px;
-  line-height: 1;
-}
-.rail-left { left: 4px; align-items: flex-start; }
-.rail-right { right: 4px; align-items: flex-end; }
-
-/* Top horizontal scale rail ticks */
-.hud-top-rail {
-  position: absolute;
-  top: 4px;
-  left: 90px;
-  right: 90px;
-  display: flex;
-  justify-content: space-between;
-  font-size: 6.5px;
-  font-family: 'Roboto Mono', monospace;
-  color: rgba(0, 255, 102, 0.4);
-  z-index: 12;
-  letter-spacing: 0.5px;
-}
 
 /* Pulsing Sonar Ping Pin Marker styling */
 .gps-sonar-ping {
@@ -2050,23 +1680,105 @@ onUnmounted(() => {
   }
 }
 
-/* ─── Panel headers ──────────────────────────────────────────────────────────*/
+/* ─── Zero Scroll Layout Grid ─────────────────────────────────────────── */
+.sensor-view {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 8px;
+  overflow: hidden;
+  box-sizing: border-box;
+  background-color: #000000;
+}
+.sv-header {
+  flex-shrink: 0;
+  margin-bottom: 6px;
+}
+.sensor-strip {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.hud-grid-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-grow: 1;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+/* ── UPPER ROW: 30% (left, scrollable) / 70% (right, scrollable) ── */
+/* Both columns are stretched to the same height (row height = tallest
+   column's content), so their bottom edges are always aligned. */
+.hud-row-upper {
+  display: grid;
+  grid-template-columns: 30% 70%;
+  gap: 10px;
+  flex-shrink: 0;
+  align-items: stretch;
+}
+.hud-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+.hud-column.col-left {
+  overflow-y: auto;
+}
+.hud-column.col-right {
+  overflow-y: auto;
+}
+
+/* Scrollbar customizations */
+.hud-column::-webkit-scrollbar,
+.table-scroll-container::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+.hud-column::-webkit-scrollbar-track,
+.table-scroll-container::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.9);
+}
+.hud-column::-webkit-scrollbar-thumb,
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: #00FF6644;
+  border-radius: 2px;
+}
+.hud-column::-webkit-scrollbar-thumb:hover,
+.table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #00FF66aa;
+}
+
+/* Panel structures */
+.sv-panel {
+  border: 1px solid rgba(0, 255, 102, 0.22);
+  background: rgba(10, 10, 10, 0.8);
+  padding: 8px;
+  box-sizing: border-box;
+  backdrop-filter: blur(12px);
+}
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(0, 255, 102, 0.1);
+  padding-bottom: 3px;
 }
 .panel-tag {
-  font-size: 9px;
-  letter-spacing: 2px;
+  font-size: 8px;
+  letter-spacing: 1.5px;
   color: #00FF66;
   font-family: 'Roboto Mono', monospace;
-  text-transform: uppercase;
 }
 .panel-status {
-  font-size: 9px;
-  letter-spacing: 2px;
+  font-size: 8px;
   font-weight: 700;
   font-family: 'Roboto Mono', monospace;
 }
@@ -2075,303 +1787,398 @@ onUnmounted(() => {
 .panel-status.stale { color: #FFB000; }
 .panel-status.offline { color: #FF3333; }
 .panel-micro-label {
-  font-size: 8px;
-  letter-spacing: 2px;
+  font-size: 7px;
   color: #00FF6666;
   font-family: 'Roboto Mono', monospace;
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
+
+/* Environment Metrics List style */
+.stat-vertical-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stat-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 6px;
+  border: 1px solid rgba(0, 255, 102, 0.1);
+  background: rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+}
+.stat-card.card-ok { border-color: rgba(0, 255, 102, 0.2); }
+.stat-card.card-warn { border-color: rgba(255, 176, 0, 0.3); }
+.stat-card.card-danger { border-color: rgba(255, 51, 51, 0.4); }
+.stat-val-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-icon { font-size: 11px; color: #00FF66; }
+.stat-val {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: #00FF66;
+}
+.stat-card.card-warn .stat-val { color: #FFB000; }
+.stat-card.card-danger .stat-val { color: #FF3333; }
+.stat-unit { font-size: 7px; color: #00FF6655; }
+.stat-name { font-size: 8px; color: #00FF6688; font-family: 'Roboto Mono', monospace; }
 
 /* ─── Orientation Cube ──────────────────────────────────────────────────────*/
 .orientation-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
-  justify-content: center;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 4px;
 }
 .cube-scene {
-  width: 90px; height: 90px;
-  perspective: 300px;
+  width: 70px; height: 70px;
+  perspective: 250px;
   flex-shrink: 0;
 }
 .cube {
-  width: 60px; height: 60px;
+  width: 46px; height: 46px;
   position: relative;
   transform-style: preserve-3d;
-  margin: 15px auto;
+  margin: 12px auto;
 }
 .face {
   position: absolute;
-  width: 60px; height: 60px;
-  border: 1px solid #00FF6655;
+  width: 46px; height: 46px;
+  border: 1px solid #00FF6644;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: 7px;
   font-family: 'Roboto Mono', monospace;
   color: #00FF6688;
   background: rgba(0, 255, 102, 0.04);
-  backdrop-filter: blur(2px);
 }
-.face.front  { transform: translateZ(30px); border-color: #00FF66; color: #00FF66; }
-.face.back   { transform: rotateY(180deg) translateZ(30px); }
-.face.left   { transform: rotateY(-90deg) translateZ(30px); }
-.face.right  { transform: rotateY(90deg) translateZ(30px); }
-.face.top    { transform: rotateX(90deg) translateZ(30px); }
-.face.bottom { transform: rotateX(-90deg) translateZ(30px); }
+.face.front  { transform: translateZ(23px); border-color: #00FF66; color: #00FF66; }
+.face.back   { transform: rotateY(180deg) translateZ(23px); }
+.face.left   { transform: rotateY(-90deg) translateZ(23px); }
+.face.right  { transform: rotateY(90deg) translateZ(23px); }
+.face.top    { transform: rotateX(90deg) translateZ(23px); }
+.face.bottom { transform: rotateX(-90deg) translateZ(23px); }
 
-.euler-readout { display: flex; flex-direction: column; gap: 4px; }
+.euler-readout { display: flex; flex-direction: column; gap: 2px; }
 .euler-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
-.euler-label { font-size: 9px; color: #00FF6688; font-family: 'Roboto Mono', monospace; min-width: 36px; }
+.euler-label { font-size: 8px; color: #00FF6688; font-family: 'Roboto Mono', monospace; }
 .euler-val {
   font-family: 'Orbitron', monospace;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   color: #00FF66;
-  min-width: 70px;
+  min-width: 50px;
   text-align: right;
 }
 .euler-val.text-warn { color: #FFB000; }
 
 /* ─── Compass ────────────────────────────────────────────────────────────── */
-.compass-wrap { display: flex; justify-content: center; }
-.compass-svg { width: 110px; height: 110px; }
+.compass-wrap { display: flex; justify-content: center; flex-shrink: 0; }
+.compass-svg { width: 75px; height: 75px; }
 
-/* ─── Quaternion ─────────────────────────────────────────────────────────── */
-.quat-panel { background: #00000088; border: 1px solid #00FF6611; padding: 8px; }
-.quat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+/* ─── Quaternion & Mag Panels ─────────────────────────────────────────────── */
+.quat-panel, .mag-panel { background: #00000088; border: 1px solid #00FF6611; padding: 4px; }
+.quat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 .quat-item {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 10px;
-}
-.quat-item span { color: #00FF6688; font-family: 'Roboto Mono', monospace; font-size: 9px; }
-.quat-item b { color: #00FF66; font-family: 'Roboto Mono', monospace; font-size: 10px; font-weight: 400; }
-
-/* ─── Charts ─────────────────────────────────────────────────────────────── */
-.chart-block { }
-.chart-label {
   font-size: 8px;
-  letter-spacing: 1.5px;
-  color: #00FF6666;
-  font-family: 'Roboto Mono', monospace;
-  margin-bottom: 4px;
-  text-transform: uppercase;
 }
-.hud-canvas { height: 90px !important; width: 100% !important; }
+.quat-item span { color: #00FF6666; font-family: 'Roboto Mono', monospace; font-size: 8px; }
+.quat-item b { color: #00FF66; font-family: 'Roboto Mono', monospace; font-size: 8px; font-weight: 400; }
 
-/* ─── Stat Cards ──────────────────────────────────────────────────────────── */
-.stat-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
-.stat-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 8px 6px;
-  border: 1px solid #00FF6622;
-  background: #00000066;
-  gap: 2px;
-  text-align: center;
-}
-.stat-card.card-ok { border-color: #00FF6622; }
-.stat-card.card-warn { border-color: #FFB00066; }
-.stat-card.card-danger { border-color: #FF333366; }
-.stat-icon { font-size: 16px; color: #00FF66; }
-.stat-val {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  color: #00FF66;
-  line-height: 1;
-}
-.stat-card.card-warn .stat-val { color: #FFB000; }
-.stat-card.card-danger .stat-val { color: #FF3333; }
-.stat-unit { font-size: 8px; color: #00FF6655; letter-spacing: 1px; }
-.stat-name { font-size: 8px; color: #00FF6688; letter-spacing: 1px; }
-
-/* ─── Magnetometer ──────────────────────────────────────────────────────── */
-.mag-panel { background: #00000088; border: 1px solid #00FF6611; padding: 8px; }
-.mag-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+.mag-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2px; }
 .mag-item { display: flex; flex-direction: column; align-items: center; }
-.mag-item span { font-size: 8px; color: #00FF6666; font-family: 'Roboto Mono', monospace; }
-.mag-item b { font-size: 11px; color: #00FF66; font-family: 'Roboto Mono', monospace; font-weight: 400; }
+.mag-item span { font-size: 7px; color: #00FF6666; font-family: 'Roboto Mono', monospace; }
+.mag-item b { font-size: 8px; color: #00FF66; font-family: 'Roboto Mono', monospace; font-weight: 400; }
 
-/* ─── Pedometer Odometer ─────────────────────────────────────────────────── */
+/* ─── Odometer Activity ──────────────────────────────────────────────────── */
 .odometer-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px;
+  padding: 6px;
   border: 1px solid #00FF6622;
-  background: #001100;
-  gap: 4px;
+  background: #000b00;
+  gap: 2px;
 }
-.odometer-label { font-size: 9px; color: #00FF6688; letter-spacing: 3px; font-family: 'Roboto Mono', monospace; }
-.odometer-display { display: flex; gap: 3px; }
+.odometer-label { font-size: 8px; color: #00FF6688; letter-spacing: 2px; font-family: 'Roboto Mono', monospace; }
+.odometer-display { display: flex; gap: 2px; }
 .step-digit {
-  width: 26px; height: 38px;
-  background: #001a00;
+  width: 18px; height: 26px;
+  background: #001200;
   border: 1px solid #00FF6633;
   display: flex; align-items: center; justify-content: center;
   font-family: 'Orbitron', sans-serif;
-  font-size: 22px;
+  font-size: 15px;
   font-weight: 700;
   color: #00FF66;
-  text-shadow: 0 0 10px #00FF66;
-  transition: all 0.15s ease;
+  text-shadow: 0 0 4px #00FF66;
 }
-.odometer-unit { font-size: 9px; color: #00FF6666; letter-spacing: 3px; }
+.odometer-unit { font-size: 8px; color: #00FF6666; letter-spacing: 2px; }
 
-/* ─── Activity Type ──────────────────────────────────────────────────────── */
 .activity-type-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px;
+  gap: 8px;
+  padding: 4px 6px;
   border: 1px solid #00FF6622;
   background: #0A0A0A;
 }
-.activity-icon { font-size: 28px; }
+.activity-icon { font-size: 18px; }
 .activity-label-group { display: flex; flex-direction: column; }
-.activity-type-label { font-size: 8px; color: #00FF6666; letter-spacing: 2px; font-family: 'Roboto Mono', monospace; }
+.activity-type-label { font-size: 7px; color: #00FF6666; font-family: 'Roboto Mono', monospace; }
 .activity-type-value {
   font-family: 'Orbitron', sans-serif;
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 2px;
   color: #00FF66;
 }
 .act-walking, .act-walk { color: #00FF66; }
 .act-running, .act-run { color: #FFB000; }
 .act-still, .act-stationary { color: #00FF6688; }
 
-/* ─── GPS Panel ──────────────────────────────────────────────────────────── */
-.gps-panel {
-  border: 1px solid rgba(0, 255, 102, 0.25);
-  background: #0A0A0A;
-  backdrop-filter: blur(12px);
-  padding: 12px;
-
-  /* Stark OS Variables scoped locally ONLY to the map widget (Mục 2 & Mục 4 Theme Configuration) */
-  --hud-bg: #080D10;                      /* Canvas Background */
-  --hud-grid: rgba(1, 34, 17, 0.4);       /* Grids / Terrain */
-  --hud-active: #00FF66;                  /* Active Phosphor Green */
-  --hud-threat: #FF3333;                  /* Crimson Threat Lock */
-  --hud-secondary: #FFFFFF;               /* Secondary Node White */
-  --hud-panel-bg: rgba(8, 13, 16, 0.85);
-  --hud-border: rgba(0, 255, 102, 0.25);
+/* ─── Map Flexible Frame ─────────────────────────────────────────────────── */
+.flex-grow-map {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 6px;
+  min-height: 220px;
+}
+.gps-layout {
+  flex-grow: 1;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.map-placeholder {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+}
+.real-map {
+  width: 100%;
+  height: 100%;
+  background: #080D10;
+  border: 1px solid rgba(0, 255, 102, 0.2);
 }
 
+/* Custom overlay metrics on Map */
+.map-hud-overlay {
+  pointer-events: none;
+}
+.map-hud-overlay button {
+  pointer-events: auto;
+}
+.hud-tactical-zoom {
+  position: absolute;
+  top: 6px; left: 6px;
+  z-index: 1000;
+  background: rgba(8, 13, 16, 0.85);
+  border: 1px solid rgba(0,255,102,0.3);
+  padding: 4px;
+  font-size: 7px;
+}
+.zoom-title {
+  color: #00FF6688;
+  margin-bottom: 2px;
+}
+.zoom-btn {
+  background: transparent;
+  border: none;
+  color: #00FF66aa;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 7px;
+  padding: 1px 3px;
+  cursor: pointer;
+  display: block;
+  text-align: left;
+  width: 100%;
+}
+.zoom-btn.active, .zoom-btn:hover {
+  color: #00FF66;
+  font-weight: bold;
+}
+.coord-readout {
+  position: absolute;
+  top: 6px; right: 6px;
+  z-index: 1000;
+  background: rgba(8, 13, 16, 0.85);
+  border: 1px solid rgba(0,255,102,0.3);
+  padding: 4px;
+  font-size: 8px;
+}
+.coord-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.coord-lbl { color: #00FF6688; }
+.coord-val { color: #00FF66; font-weight: bold; }
 
-.gps-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 6px;
-  margin-bottom: 8px;
+.hud-terminal-overlay {
+  position: absolute;
+  bottom: 6px; left: 6px; right: 6px;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(0, 255, 102, 0.15);
+  padding: 4px;
+  font-size: 8px;
+  max-height: 50px;
+  overflow: hidden;
 }
-.gps-item { display: flex; flex-direction: column; gap: 2px; }
-.gps-label { font-size: 8px; color: rgba(0, 255, 102, 0.6); letter-spacing: 1px; font-family: 'Roboto Mono', monospace; }
-.gps-val { font-family: 'Roboto Mono', monospace; font-size: 10px; color: #00FF66; }
+.term-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.term-line .log-ts {
+  color: rgba(255, 255, 255, 0.4);
+}
+.term-line .log-level {
+  font-weight: bold;
+}
+.term-line .log-level.info {
+  color: #00FF66;
+}
+.term-line .log-level.warn {
+  color: #FFB000;
+}
+.term-line .log-level.error {
+  color: #FF3333;
+}
+.term-line .log-level.debug {
+  color: #00E5FF;
+}
+.term-line .log-source {
+  color: #ffffff;
+  font-weight: 600;
+}
+.term-line .log-content {
+  color: #00FF66;
+  opacity: 0.95;
+}
 
-/* Color overrides for GPS panel status indicators to match green/black primary theme */
-.gps-panel .simulated {
-  color: #00FF66 !important;
-}
-.gps-panel .stale {
-  color: #FF3333 !important;
-}
-.gps-panel .warn {
-  color: #00FF66 !important;
-  border-color: #00FF66 !important;
-}
-.gps-panel .badge-simulated {
-  border-color: #00FF66 !important;
-  color: #00FF66 !important;
-  background: rgba(0, 255, 102, 0.08) !important;
-}
-
-/* ─── Stats Table ────────────────────────────────────────────────────────── */
-.stats-table-wrap {
+/* ─── Compact Table (100% width, bottom) ─────────────────────────────────── */
+.compact-table-wrap {
   border: 1px solid #00FF6622;
   background: #050505;
-  padding: 12px;
+  padding: 6px;
+  max-height: 190px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
 }
-.export-btn {
+.table-scroll-container {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+.export-btn-mini {
   background: transparent;
-  border: 1px solid #00FF6655;
+  border: 1px solid #00FF6644;
   color: #00FF66;
   font-family: 'Rajdhani', sans-serif;
-  font-size: 9px;
-  letter-spacing: 2px;
-  padding: 3px 10px;
+  font-size: 8px;
+  padding: 0 4px;
   cursor: pointer;
-  text-transform: uppercase;
-  transition: all 0.2s;
 }
-.export-btn:hover { background: #00FF6622; box-shadow: 0 0 8px #00FF6644; }
-.stats-table {
+.export-btn-mini:hover { background: #00FF6622; }
+
+.stats-table.compact {
   width: 100%;
   border-collapse: collapse;
   font-family: 'Roboto Mono', monospace;
-  font-size: 10px;
+  font-size: 8.5px;
 }
-.stats-table th {
+.stats-table.compact th {
   color: #00FF66;
-  font-size: 8px;
-  letter-spacing: 2px;
-  padding: 6px 8px;
+  font-size: 7px;
+  padding: 3px;
+  border-bottom: 1px solid rgba(0,255,102,0.2);
+  background: #000;
   text-align: left;
-  border-bottom: 1px solid #00FF6633;
-  background: #00000088;
 }
-.stats-table td {
-  padding: 5px 8px;
-  border-bottom: 1px solid #00FF660A;
-  color: #00FF66AA;
+.stats-table.compact td {
+  padding: 2px 3px;
+  border-bottom: 1px solid rgba(0,255,102,0.05);
+  color: #00FF66aa;
 }
-.stats-table tr:hover td { background: #00FF6608; }
-.cell-sensor { color: #00FF66; font-size: 9px; letter-spacing: 1px; }
-.cell-val { color: #00FF66; font-weight: bold; }
-.cell-unit { color: #00FF6655; font-size: 8px; }
-.cell-min { color: #00FF6666; }
-.cell-max { color: #FFB00088; }
-.status-pill {
+.status-pill-mini {
   display: inline-block;
-  padding: 1px 6px;
-  font-size: 8px;
-  letter-spacing: 1px;
+  padding: 0 4px;
+  font-size: 7px;
   border: 1px solid;
 }
 .pill-ok, .pill-live { border-color: #00FF66; color: #00FF66; }
 .pill-stale { border-color: #FFB000; color: #FFB000; }
 .pill-simulated, .pill-warn { border-color: #FFB000; color: #FFB000; background: rgba(255, 176, 0, 0.08); }
-.pill-offline { border-color: #FF3333; color: #FF3333; }
-.pill-danger { border-color: #FF3333; color: #FF3333; }
+.pill-danger, .pill-offline { border-color: #FF3333; color: #FF3333; background: rgba(255, 51, 51, 0.08); }
 
-.row-warn { color: #FFB000 !important; }
-.row-warn .cell-sensor, .row-warn .cell-val, .row-warn .cell-unit, .row-warn .cell-min { color: #FFB000 !important; }
-
-/* ─── Responsive ─────────────────────────────────────────────────────────── */
-@media (max-width: 1200px) {
-  .sv-split-layout {
-    flex-direction: column;
-  }
-  .sv-left-col, .sv-right-col {
-    width: 100%;
-  }
+/* ─── Charts Console (stacked, no tabs) ──────────────────────────────────── */
+.charts-console-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 6px;
 }
-@media (max-width: 768px) {
-  .stat-row { grid-template-columns: 1fr 1fr; }
-  .gps-readout-row {
+.charts-console-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.chart-block-mini {
+  border: 1px solid rgba(0, 255, 102, 0.1);
+  padding: 3px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.chart-label {
+  font-size: 7px;
+  color: rgba(0, 255, 102, 0.5);
+  font-family: 'Roboto Mono', monospace;
+  margin-bottom: 2px;
+}
+.hud-canvas-mini {
+  height: 70px !important;
+  width: 100% !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .hud-row-upper {
     grid-template-columns: 1fr;
+    height: auto;
+  }
+  .hud-column {
+    height: auto;
+    overflow: visible;
+  }
+  .sensor-view {
+    height: auto;
+    overflow: visible;
   }
 }
 
-/* ─── Blinking 1Hz dot for tactical node markers ───────────────────────── */
+/* Blinking 1Hz dot */
 :global(.blinking-dot) {
   animation: blink-1hz 1s infinite steps(1);
 }
@@ -2380,7 +2187,7 @@ onUnmounted(() => {
   50% { opacity: 0; }
 }
 
-/* ─── Audio Hearing Equalizer Wave OSC ─────────────────────────────────── */
+/* Audio wave oscillator */
 .bar-osc {
   width: 3px;
   height: 100%;

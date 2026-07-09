@@ -335,7 +335,9 @@
         </div>
         <div class="ft-cell">
           <span class="dim">SLA_LATENCY:</span>
-          <span class="text-em">1.2ms</span>
+          <span :class="vitalsStore.apiLatency !== null ? 'text-em' : 'text-orange'">
+            {{ vitalsStore.apiLatency !== null ? vitalsStore.apiLatency + 'ms' : 'TIMEOUT' }}
+          </span>
         </div>
         <!-- Device IP config modal trigger -->
         <div class="ft-cell">

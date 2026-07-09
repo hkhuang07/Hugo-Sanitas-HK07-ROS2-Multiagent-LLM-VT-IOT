@@ -188,14 +188,33 @@ public class MqttInboundProcessor {
 
     private void handleCareDecision(String payload) {
         log.info("[CARE_DECISION] Received decision: {}", payload);
-        // Forward care decision directly to /topic/agent-events for visual dashboard
-        wsTemplate.convertAndSend("/topic/agent-events", payload);
 
         try {
             JsonNode node = objectMapper.readTree(payload);
             String priority = node.has("priority") ? node.get("priority").asText("NORMAL") : "NORMAL";
             String actionType = node.has("actionType") ? node.get("actionType").asText("COMPANION_CHAT") : "COMPANION_CHAT";
             String conversationHint = node.has("conversationHint") ? node.get("conversationHint").asText() : "";
+
+            // Filter out periodic standard COMPANION_CHAT status updates to avoid UI spam
+            if ("COMPANION_CHAT".equalsIgnoreCase(actionType) && 
+                (conversationHint == null || conversationHint.trim().isEmpty() || 
+                 conversationHint.contains("Standard companion mode"))) {
+                return;
+            }
+
+            // Construct standard agent event payload for frontend
+            java.util.Map<String, Object> wrapper = new java.util.HashMap<>();
+            wrapper.put("id", "care_" + java.util.UUID.randomUUID().toString());
+            wrapper.put("agentType", "CARE");
+            wrapper.put("inputContext", "Mqtt Inbound Care Stream");
+            wrapper.put("outputDecision", actionType + ": " + conversationHint);
+            wrapper.put("llmProvider", "THRESHOLD");
+            wrapper.put("latencyMs", 0);
+            wrapper.put("triggeredAt", java.time.LocalDateTime.now().toString());
+
+            String jsonPayload = objectMapper.writeValueAsString(wrapper);
+            wsTemplate.convertAndSend("/topic/agent-events", jsonPayload);
+            wsTemplate.convertAndSend("/topic/agent-logs", jsonPayload);
 
             if ("CRITICAL".equalsIgnoreCase(priority)) {
                 log.warn("[CRITICAL_EMERGENCY_BROADCAST] Action: {} | Hint: {}", actionType, conversationHint);
@@ -218,23 +237,54 @@ public class MqttInboundProcessor {
         String agentName = topic.split("/")[2].toUpperCase();
         log.info("[AGENT_OUTPUT] Agent: {} | Decision: {}", agentName,
                 payload.length() > 100 ? payload.substring(0, 100) + "..." : payload);
-        // Broadcast agent decision to dashboard
-        wsTemplate.convertAndSend("/topic/agent-events", payload);
 
-        // Audit for AI_EMERGENCY_WAKEUP
-        if (payload.contains("AI_EMERGENCY_WAKEUP")) {
-            log.warn("[EMERGENCY_WAKEUP] AI_EMERGENCY_WAKEUP triggered. Instantly setting bypass aggregation.");
+        try {
+            boolean isValidJson = false;
+            JsonNode node = null;
             try {
-                JsonNode node = objectMapper.readTree(payload);
-                if (node.has("userId")) {
+                node = objectMapper.readTree(payload);
+                isValidJson = node.isObject();
+            } catch (Exception e) {
+                // Not a valid JSON object
+            }
+
+            java.util.Map<String, Object> wrapper = new java.util.HashMap<>();
+            if (isValidJson && node != null) {
+                wrapper.put("id", node.has("id") ? node.get("id").asText() : "mqtt_" + java.util.UUID.randomUUID().toString());
+                wrapper.put("agentType", node.has("agentType") ? node.get("agentType").asText().toUpperCase() : agentName);
+                wrapper.put("inputContext", node.has("inputContext") ? node.get("inputContext").asText() : "MQTT Ingest");
+                wrapper.put("outputDecision", node.has("outputDecision") ? node.get("outputDecision").asText() : (node.has("decision") ? node.get("decision").asText() : payload));
+                wrapper.put("llmProvider", node.has("llmProvider") ? node.get("llmProvider").asText() : "UNKNOWN");
+                wrapper.put("latencyMs", node.has("latencyMs") ? node.get("latencyMs").asInt() : 0);
+                wrapper.put("triggeredAt", node.has("triggeredAt") ? node.get("triggeredAt").asText() : java.time.LocalDateTime.now().toString());
+            } else {
+                wrapper.put("id", "mqtt_" + java.util.UUID.randomUUID().toString());
+                wrapper.put("agentType", agentName);
+                wrapper.put("inputContext", "MQTT Ingest");
+                wrapper.put("outputDecision", payload);
+                wrapper.put("llmProvider", "UNKNOWN");
+                wrapper.put("latencyMs", 0);
+                wrapper.put("triggeredAt", java.time.LocalDateTime.now().toString());
+            }
+
+            String jsonPayload = objectMapper.writeValueAsString(wrapper);
+            wsTemplate.convertAndSend("/topic/agent-events", jsonPayload);
+            wsTemplate.convertAndSend("/topic/agent-logs", jsonPayload);
+
+            // Audit for AI_EMERGENCY_WAKEUP
+            if (payload.contains("AI_EMERGENCY_WAKEUP")) {
+                log.warn("[EMERGENCY_WAKEUP] AI_EMERGENCY_WAKEUP triggered. Instantly setting bypass aggregation.");
+                if (node != null && node.has("userId")) {
                     java.util.UUID userUuid = java.util.UUID.fromString(node.get("userId").asText());
                     healthService.setBypassAggregation(userUuid, true);
                 } else {
                     healthService.setBypassAggregationForAll(true);
                 }
-            } catch (Exception e) {
-                healthService.setBypassAggregationForAll(true);
             }
+        } catch (Exception e) {
+            log.error("[AGENT_OUTPUT_ERROR] Failed to wrap and send agent output: {}", e.getMessage());
+            // Fallback
+            wsTemplate.convertAndSend("/topic/agent-events", payload);
         }
     }
 

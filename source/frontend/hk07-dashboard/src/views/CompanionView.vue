@@ -49,12 +49,12 @@
         <div class="panel-header">
           <div class="header-title">
             <span class="pulse-dot text-cyan mr-2">●</span>
-            <span>AGENT_COMPANION_UPLINK // ID: {{ agentsStore.agentId || 'HUGO-AGENT-007' }}</span>
+            <span>AGENT_COMPANION_UPLINK // ID: HUGO-AGENT-007</span>
           </div>
           <div class="connection-status">
             <span class="status-label">UPLINK_STATE:</span>
-            <span :class="['status-value', agentsStore.isConnected ? 'text-green' : 'text-danger']">
-              {{ agentsStore.isConnected ? 'SECURE_ESTABLISHED' : 'DISCONNECTED' }}
+            <span :class="['status-value', vitalsStore.isConnected ? 'text-green' : 'text-danger']">
+              {{ vitalsStore.isConnected ? 'SECURE_ESTABLISHED' : 'DISCONNECTED' }}
             </span>
           </div>
         </div>
@@ -118,11 +118,10 @@
           <input v-model="userInput" 
                  class="tactical-input font-mono w-full" 
                  placeholder="ENTER TACTICAL COMMAND OR INQUIRY TO AGENT HUGO..."
-                 @keydown.enter="sendChat" 
-                 :disabled="chatLoading" />
+                 @keydown.enter="sendChat" />
           <button class="cmd-btn send-btn" 
                   @click="sendChat" 
-                  :disabled="!userInput.trim() || chatLoading">
+                  :disabled="!userInput.trim()">
             SEND
           </button>
         </div>
@@ -156,20 +155,20 @@
           <div class="spec-grid font-mono text-[10px]">
             <div class="spec-row">
               <span class="label">MODEL_CORE:</span>
-              <span class="val" :class="agentsStore.isConnected ? 'text-cyan' : 'text-dim'">
-                {{ agentsStore.isConnected ? (llmStats?.model || 'LOADING...') : 'OFFLINE' }}
+              <span class="val" :class="vitalsStore.isConnected ? 'text-cyan' : 'text-dim'">
+                {{ vitalsStore.isConnected ? (llmStats?.model || 'LOADING...') : 'OFFLINE' }}
               </span>
             </div>
             <div class="spec-row">
               <span class="label">PROVIDER:</span>
-              <span class="val" :class="agentsStore.isConnected ? 'text-cyan' : 'text-dim'">
-                {{ agentsStore.isConnected ? (llmStats?.provider || 'LOADING...') : 'OFFLINE' }}
+              <span class="val" :class="vitalsStore.isConnected ? 'text-cyan' : 'text-dim'">
+                {{ vitalsStore.isConnected ? (llmStats?.provider || 'LOADING...') : 'OFFLINE' }}
               </span>
             </div>
             <div class="spec-row">
               <span class="label">INFERENCE:</span>
-              <span class="val" :class="agentsStore.isConnected ? 'text-green' : 'text-dim'">
-                {{ agentsStore.isConnected ? `ONLINE (${llmStats?.temperature || 0.45})` : 'OFFLINE' }}
+              <span class="val" :class="vitalsStore.isConnected ? 'text-green' : 'text-dim'">
+                {{ vitalsStore.isConnected ? `ONLINE (${llmStats?.temperature || 0.45})` : 'OFFLINE' }}
               </span>
             </div>
           </div>
@@ -189,13 +188,13 @@
             <div class="spec-row">
               <span class="label">CAMERA rPPG HR:</span>
               <span :class="['val font-bold', kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? rppgHrClass : 'text-cyan') : 'text-dim']">
-                {{ kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? kinematicsStore.rppgHeartRate.toFixed(1) + ' BPM' : 'ANALYZING...') : 'OFFLINE' }}
+                {{ kinematicsStore.isLive ? (kinematicsStore.rppgHeartRate ? Number(kinematicsStore.rppgHeartRate).toFixed(1) + ' BPM' : 'ANALYZING...') : 'OFFLINE' }}
               </span>
             </div>
             <div class="spec-row border-t border-dashed border-[#0052ff]/30 pt-1 mt-1">
               <span class="label">OXYGEN SAT (WRIST):</span>
               <span :class="['val font-bold', vitalsStore.isSimulated ? 'text-orange' : (vitalsStore.current.spo2 ? spo2Class : 'text-dim')]">
-                {{ vitalsStore.current.spo2 ? vitalsStore.current.spo2.toFixed(1) + ' %' : 'OFFLINE' }}
+                {{ vitalsStore.current.spo2 ? Number(vitalsStore.current.spo2).toFixed(1) + ' %' : 'OFFLINE' }}
                 <span v-if="vitalsStore.isSimulated && vitalsStore.current.spo2" class="text-[8px]">(SIM)</span>
               </span>
             </div>
@@ -208,7 +207,7 @@
             <div class="spec-row border-t border-dashed border-[#0052ff]/30 pt-1 mt-1">
               <span class="label">THERMAL VISION:</span>
               <span :class="['val font-bold', kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? thermalTempClass : 'text-cyan') : 'text-dim']">
-                {{ kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? kinematicsStore.thermalTemperature.toFixed(2) + ' °C' : 'MEASURING...') : 'OFFLINE' }}
+                {{ kinematicsStore.isLive ? (kinematicsStore.thermalTemperature ? Number(kinematicsStore.thermalTemperature).toFixed(2) + ' °C' : 'MEASURING...') : 'OFFLINE' }}
               </span>
             </div>
             <div class="spec-row border-t border-dashed border-[#0052ff]/30 pt-1 mt-1">
@@ -315,9 +314,9 @@ const isSpeaking = ref(false)
 const llmStats = ref<any>(null)
 
 async function fetchLlmStats() {
-  if (!agentsStore.isConnected) return
+  if (!vitalsStore.isConnected) return
   try {
-    const res = await api.get('/api/v1/health/llm-stats')
+    const res = await api.get('/health/llm-stats')
     llmStats.value = res.data
   } catch (err) {
     console.warn('[LLM_STATS] Failed to fetch LLM stats', err)
@@ -514,7 +513,11 @@ async function sendChat() {
       content: reply,
       timestamp: getCurrentTimeString()
     })
-    speakResponse(reply)
+    await nextTick()
+    scrollChatToBottom()
+    setTimeout(() => {
+      speakResponse(reply)
+    }, 150)
   } catch (err) {
     console.error("Agent Uplink Connection Failure Details:", err)
     const errText = '[ERR_CONNECTION_TIMEOUT] Không thể thiết lập kênh giao tiếp với Agent Engine. Vui lòng kiểm tra cổng dịch vụ backend.'
@@ -523,7 +526,11 @@ async function sendChat() {
       content: errText,
       timestamp: getCurrentTimeString()
     })
-    speakResponse(errText)
+    await nextTick()
+    scrollChatToBottom()
+    setTimeout(() => {
+      speakResponse(errText)
+    }, 150)
   } finally {
     chatLoading.value = false
     await nextTick()
@@ -798,9 +805,13 @@ watch(
           content: reply,
           timestamp: getCurrentTimeString()
         })
+        await nextTick()
+        scrollChatToBottom()
         
         // 5. Output voice speech response
-        speakResponse(reply)
+        setTimeout(() => {
+          speakResponse(reply)
+        }, 150)
       } catch (err) {
         console.error("Empathetic agent voice interaction failed:", err)
         const errText = '[HEARING_RESP_ERR] Có lỗi xảy ra khi robot phản hồi âm thanh.'
@@ -809,7 +820,11 @@ watch(
           content: errText,
           timestamp: getCurrentTimeString()
         })
-        speakResponse(errText)
+        await nextTick()
+        scrollChatToBottom()
+        setTimeout(() => {
+          speakResponse(errText)
+        }, 150)
       } finally {
         chatLoading.value = false
         await nextTick()
@@ -817,6 +832,16 @@ watch(
       }
     }
   }
+)
+
+// Auto scroll chat to bottom when chatLog is updated from anywhere (e.g. GlobalVoiceWidget)
+watch(
+  chatLog,
+  async () => {
+    await nextTick()
+    scrollChatToBottom()
+  },
+  { deep: true }
 )
 
 onMounted(() => {
@@ -982,11 +1007,11 @@ onUnmounted(() => {
 .msg-body {
   background: rgba(0, 229, 255, 0.03);
   border: 1px solid rgba(0, 229, 255, 0.15);
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 4px;
   font-family: var(--font-data);
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.8;
   color: var(--color-text-primary);
   white-space: pre-wrap;
   word-break: break-word;

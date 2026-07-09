@@ -78,17 +78,18 @@
         <div class="status-grid mono text-[9px]">
           <div class="status-row">
             <span class="label">NODE:</span>
-            <span class="val text-cyan">HK07_STATION</span>
+            <span class="val text-cyan">{{ nodeName }}</span>
           </div>
           <div class="status-row">
             <span class="label">OPERATOR:</span>
             <span class="val text-cyan" style="font-size:8px; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-              {{ authStore.user?.email || 'owner@hk07.local' }}
+              {{ authStore.user?.email || 'UNAUTHENTICATED' }}
             </span>
           </div>
           <div class="status-row">
             <span class="label">LATENCY:</span>
-            <span class="val text-green">1.2ms (SLA)</span>
+            <span class="val text-green" v-if="vitalsStore.apiLatency !== null">{{ vitalsStore.apiLatency }}ms</span>
+            <span class="val text-red" v-else>TIMEOUT</span>
           </div>
           <div class="status-row">
             <span class="label">UPLINK:</span>
@@ -111,11 +112,17 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useVitalsStore } from '../stores/vitals'
 
 const authStore = useAuthStore()
 const vitalsStore = useVitalsStore()
+
+const nodeName = computed(() => {
+  const host = window.location.hostname
+  return host === 'localhost' || host === '127.0.0.1' ? 'LOCAL_STATION' : host.toUpperCase()
+})
 </script>
 
 <style scoped>

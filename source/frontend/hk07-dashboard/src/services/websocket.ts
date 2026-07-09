@@ -123,16 +123,47 @@ export function initWebSocket(onReady?: () => void): void {
 
       // ── Subscribe: Agent event log
       _client!.subscribe('/topic/agent-events', (msg: IMessage) => {
-        const ev = JSON.parse(msg.body)
-        if (ev.eventType === 'AI_EMERGENCY_WAKEUP' || ev.id === 'AI_EMERGENCY_WAKEUP') {
+        let ev: any
+        try {
+          ev = JSON.parse(msg.body)
+        } catch (e) {
+          ev = {
+            id: 'mqtt_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
+            agentType: 'ROUTER',
+            inputContext: 'MQTT Ingest',
+            outputDecision: msg.body,
+            llmProvider: 'UNKNOWN',
+            latencyMs: 0,
+            triggeredAt: new Date().toISOString()
+          }
+        }
+
+        if (ev && (ev.eventType === 'AI_EMERGENCY_WAKEUP' || ev.id === 'AI_EMERGENCY_WAKEUP')) {
           document.dispatchEvent(new CustomEvent('hk07:ai-emergency-wakeup', { detail: ev }))
+        } else if (ev) {
+          // If it is a normal agent log broadcast, add it to agentsStore
+          if (ev.outputDecision || ev.decision || ev.response) {
+            agentsStore.addEvent({
+              id: ev.id || 'mqtt_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
+              agentType: (ev.agentType || ev.agent || 'ROUTER').toUpperCase() as any,
+              inputContext: ev.inputContext || ev.context || '',
+              outputDecision: ev.outputDecision || ev.decision || ev.response || '',
+              llmProvider: ev.llmProvider || ev.provider || 'UNKNOWN',
+              latencyMs: Number(ev.latencyMs || ev.latency || 0),
+              triggeredAt: ev.triggeredAt || ev.timestamp || new Date().toISOString()
+            })
+          }
         }
       })
 
       // ── Subscribe: Agent system logs
       _client!.subscribe('/topic/agent-logs', (msg: IMessage) => {
-        const ev = JSON.parse(msg.body)
-        agentsStore.addEvent(ev)
+        try {
+          const ev = JSON.parse(msg.body)
+          agentsStore.addEvent(ev)
+        } catch (e) {
+          console.warn('[WS] Failed to parse agent log:', e)
+        }
       })
 
 

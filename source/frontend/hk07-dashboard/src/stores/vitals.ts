@@ -139,6 +139,28 @@ export const useVitalsStore = defineStore('vitals', () => {
   )
 
   const isConnected = ref(false)
+  const apiLatency = ref<number | null>(null)
+
+  async function measureLatency() {
+    const start = performance.now()
+    try {
+      await api.get('/agents/vitals/latest', { timeout: 2000 })
+      const end = performance.now()
+      apiLatency.value = Math.round(end - start)
+    } catch (err: any) {
+      if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('network') || !err.response) {
+        apiLatency.value = null
+      } else {
+        const end = performance.now()
+        apiLatency.value = Math.round(end - start)
+      }
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    measureLatency()
+    setInterval(measureLatency, 5000)
+  }
 
   // Actions
   function updateVitals(data: VitalSign) {
@@ -270,6 +292,7 @@ export const useVitalsStore = defineStore('vitals', () => {
     bufferWriteIdx,
     RING_BUFFER_SIZE,
     isConnected,
-    isSimulated
+    isSimulated,
+    apiLatency
   }
 })

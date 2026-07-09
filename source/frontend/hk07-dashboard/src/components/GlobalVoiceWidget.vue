@@ -22,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useSpeech } from '../composables/useSpeech'
 import api from '../services/api'
 import { useAgentsStore } from '../stores/agents'
@@ -32,6 +32,7 @@ const agentsStore = useAgentsStore()
 
 let recognition: any = null
 const processing = ref(false)
+const isUserEnabled = ref(true) // Mic is open by default: clicks to disable
 
 function initSpeechRecognition() {
   const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -50,8 +51,8 @@ function initSpeechRecognition() {
   }
 
   recognition.onend = () => {
-    if (isRecording.value) {
-      // Auto restart if it was meant to be continuous
+    if (isRecording.value && isUserEnabled.value) {
+      // Auto restart if it was meant to be continuous and user did not disable it
       try {
         recognition.start()
       } catch (e) {
@@ -80,6 +81,13 @@ function initSpeechRecognition() {
       isRecording.value = false
       recognition.stop()
       
+      // PUSH USER TRANSCRIPT TO CHAT LOG INSTANTLY
+      agentsStore.chatLog.push({
+        role: 'user',
+        content: finalTranscript,
+        timestamp: new Date().toTimeString().split(' ')[0]
+      })
+      
       await handleVoiceInput(finalTranscript)
     }
   }
@@ -98,40 +106,71 @@ async function handleVoiceInput(text: string) {
     const resp = await api.post('/agents/empathetic/interact', { message: text }, { timeout: 30000 })
     const reply = resp.data.data?.response || 'Không nhận được câu trả lời hợp lệ.'
     
-    // Add to chat history in store so Companion page also sees it
-    agentsStore.chatLog.push({
-      role: 'user',
-      content: text,
-      timestamp: new Date().toTimeString().split(' ')[0]
-    })
+    // Add Hugo's reply to chat history first so it renders on screen!
     agentsStore.chatLog.push({
       role: 'hugo',
       content: reply,
       timestamp: new Date().toTimeString().split(' ')[0]
     })
     
-    speakResponse(reply)
+    // Now output speech response
+    setTimeout(() => {
+      speakResponse(reply)
+    }, 150)
   } catch (err) {
     console.error("GlobalVoice Agent Uplink Error:", err)
-    speakResponse("Lỗi kết nối. Vui lòng kiểm tra đường truyền.")
+    const errText = "Lỗi kết nối. Vui lòng kiểm tra đường truyền."
+    agentsStore.chatLog.push({
+      role: 'hugo',
+      content: errText,
+      timestamp: new Date().toTimeString().split(' ')[0]
+    })
+    setTimeout(() => {
+      speakResponse(errText)
+    }, 150)
   } finally {
     processing.value = false
-    // Resume listening automatically after speaking if it was active
+    // Fallback: if not speaking, resume listening immediately
     setTimeout(() => {
-      if (!isRecording.value && recognition) {
+      if (isUserEnabled.value && !isSpeaking.value && !isRecording.value && !processing.value) {
         isRecording.value = true
-        try { recognition.start() } catch (e) {}
+        try {
+          if (recognition) recognition.start()
+        } catch (e) {
+          console.warn('Fallback restart speech recognition error:', e)
+        }
       }
     }, 1000)
   }
 }
 
+// Watch isSpeaking: stop mic when Hugo starts speaking, restart mic when speaking stops
+watch(isSpeaking, (newSpeaking) => {
+  if (newSpeaking) {
+    if (isRecording.value && recognition) {
+      isRecording.value = false
+      try {
+        recognition.stop()
+      } catch (e) {}
+    }
+  } else if (isUserEnabled.value && !isRecording.value && !processing.value) {
+    isRecording.value = true
+    try {
+      if (recognition) recognition.start()
+    } catch (e) {
+      console.warn('Failed to restart speech recognition after speaking:', e)
+    }
+  }
+})
+
 function toggleRecording() {
   if (isRecording.value) {
+    isUserEnabled.value = false
     isRecording.value = false
     if (recognition) recognition.stop()
     stopSpeaking()
   } else {
+    isUserEnabled.value = true
     stopSpeaking()
     if (!recognition) initSpeechRecognition()
     if (recognition) {
@@ -147,6 +186,14 @@ function toggleRecording() {
 
 onMounted(() => {
   initSpeechRecognition()
+  if (recognition && isUserEnabled.value) {
+    isRecording.value = true
+    try {
+      recognition.start()
+    } catch (e) {
+      console.warn('Auto-start speech recognition failed:', e)
+    }
+  }
 })
 
 onUnmounted(() => {

@@ -106,8 +106,13 @@ onMounted(() => {
 const agentPanels = [
   {
     type: 'SAFETY' as AgentType, tier: 0, tierClass: 'tier-0',
-    description: 'IPWebcam/IMU deterministic. No LLM. < 5ms response. Highest Subsumption priority.',
+    description: 'IPWebcam/IMU deterministic. No LLM. < 5ms response. Highest Subsumption override priority.',
     llm: 'THRESHOLD'
+  },
+  {
+    type: 'ROUTER' as AgentType, tier: 0, tierClass: 'tier-0',
+    description: 'Mixture of Agents coordinator. Directs multi-agent queries and fallback protocols.',
+    llm: 'MIXTURE'
   },
   {
     type: 'MEDICAL' as AgentType, tier: 1, tierClass: 'tier-1',
@@ -115,9 +120,24 @@ const agentPanels = [
     llm: 'GROQ-70B'
   },
   {
-    type: 'EMPATHETIC' as AgentType, tier: 2, tierClass: 'tier-2',
-    description: 'Emotional conversation. Groq Llama 8B. Volatile context (RAM-only).',
+    type: 'PERCEPTION' as AgentType, tier: 1, tierClass: 'tier-1',
+    description: 'Human detection, environment threat scanning, and facial distress analysis.',
     llm: 'GROQ-8B'
+  },
+  {
+    type: 'EMPATHETIC' as AgentType, tier: 2, tierClass: 'tier-2',
+    description: 'Emotional companion chat, voice tone analysis, and mental wellbeing conversation.',
+    llm: 'GROQ-8B'
+  },
+  {
+    type: 'CARE' as AgentType, tier: 2, tierClass: 'tier-2',
+    description: 'Physical healthcare: hugging, warming up, medical spray calibration, and physical comfort.',
+    llm: 'GROQ-8B'
+  },
+  {
+    type: 'ACTION' as AgentType, tier: 2, tierClass: 'tier-2',
+    description: 'Physical actuator command loop: text-to-speech speaker, motors, and medicine sprayers.',
+    llm: 'THRESHOLD'
   },
 ]
 
@@ -132,7 +152,13 @@ function statusClass(type: AgentType) {
 
 function agentColorClass(type: string) {
   const map: Record<string, string> = {
-    SAFETY: 'text-green', MEDICAL: 'text-cyan', EMPATHETIC: 'text-cyan'
+    SAFETY: 'text-green',
+    ROUTER: 'text-green',
+    MEDICAL: 'text-cyan',
+    PERCEPTION: 'text-cyan',
+    EMPATHETIC: 'text-blue',
+    CARE: 'text-blue',
+    ACTION: 'text-blue'
   }
   return map[type] || 'text-dim'
 }
@@ -198,8 +224,8 @@ function truncate(s: string, max: number) {
     minmax(0, 1fr);
   gap: 6px;
   font-size: 10px;
-  line-height: 1.6;
-  padding: 2px 4px;
+  line-height: 1.9;
+  padding: 5px 8px;
   border-left: 2px solid transparent;
   transition: border-color 100ms;
   align-items: start;

@@ -18,7 +18,7 @@ Tiered Fallback (Zero-wait on 429):
   [MEDICAL_ENGINE]  Tier-1: openai/gpt-4o
                     Tier-2: openrouter/anthropic/claude-3-haiku
                     Tier-3: mistral/mistral-medium
-  [EMPATHY_ENGINE]  Tier-1: cohere/command-r-plus
+  [EMPATHY_ENGINE]  Tier-1: cohere/command-r-plus-08-2024
                     Tier-2: openai/gpt-4o-mini
                     Tier-3: local rule-based
 
@@ -382,11 +382,31 @@ class RouterAgentV2:
                 system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
                 temperature=0.1,
                 max_tokens=512,
-                timeout=15
+                timeout=30
             )
             if result:
                 self.last_provider_used = provider
                 result["provider"] = provider
+                try:
+                    from services.agent_log_client import log_agent_decision
+                    tools_called = []
+                    for t in result.get("tool_calls", []):
+                        if isinstance(t, dict):
+                            fn = t.get("function")
+                            if isinstance(fn, dict):
+                                name = fn.get("name")
+                                if name:
+                                    tools_called.append(name)
+                    decision_text = f"Orchestrated tool routing: {', '.join(tools_called) if tools_called else 'None'} | Mode: {provider}"
+                    asyncio.create_task(log_agent_decision(
+                        agent_type="ROUTER",
+                        input_context=user_message,
+                        output_decision=decision_text,
+                        llm_provider=provider,
+                        latency_ms=0
+                    ))
+                except Exception as log_err:
+                    log.warning("[ROUTER_V2] Failed to queue agent log: %s", log_err)
                 return result
         except Exception as e:
             log.warning("[ROUTER_V2] LLM client tool call failed (%s). Activating local rules fallback.", e)
@@ -396,6 +416,19 @@ class RouterAgentV2:
         result["provider"] = "LOCAL_RULES"
         self.last_provider_used = "LOCAL_RULES"
         log.info("[ROUTER_V2] Routed via Local Rule-Based fallback: %d tools", len(result["tool_calls"]))
+        try:
+            from services.agent_log_client import log_agent_decision
+            tools_called = [t.get("name") for t in result.get("tool_calls", []) if isinstance(t, dict) and t.get("name")]
+            decision_text = f"Orchestrated tool routing: {', '.join(tools_called) if tools_called else 'None'} | Mode: LOCAL_RULES"
+            asyncio.create_task(log_agent_decision(
+                agent_type="ROUTER",
+                input_context=user_message,
+                output_decision=decision_text,
+                llm_provider="LOCAL_RULES",
+                latency_ms=0
+            ))
+        except Exception as log_err:
+            log.warning("[ROUTER_V2] Failed to queue agent log: %s", log_err)
         return result
 
     async def get_medical_response(self, prompt: str) -> Optional[str]:

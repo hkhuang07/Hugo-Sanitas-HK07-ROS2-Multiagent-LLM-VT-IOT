@@ -372,7 +372,7 @@ def _get_execution_chain(is_vision: bool = False) -> List[Dict[str, Any]]:
             },
             {
                 "provider": "cohere",
-                "model": "cohere/command-r-plus",
+                "model": "cohere/command-r-plus-08-2024",
                 "api_key": cohere_key,
                 "label": "COHERE_TIER_4_BG",
                 "enabled": bool(cohere_key),
@@ -1493,7 +1493,7 @@ class LLMClient:
         # 2. Secure timeout alignment
         timeout_val = float(timeout_limit)
         if "mistral" in provider or "mistral" in model_name:
-            timeout_val = min(4.5, timeout_val)
+            timeout_val = min(6.5, timeout_val)
             kwargs["request_timeout"] = timeout_val
 
         task = asyncio.create_task(
@@ -1627,7 +1627,7 @@ class LLMClient:
                 break
 
             # Retry loop for TIER 1 & 2 cloud providers up to 2 times (total 3 attempts)
-            is_cloud_provider = tier["provider"] in ("groq", "openai", "gemini")
+            is_cloud_provider = tier["provider"] in ("groq", "openai", "gemini", "mistral", "cohere", "openrouter")
             max_attempts = 3 if is_cloud_provider else 1
 
             for attempt in range(max_attempts):
@@ -1757,7 +1757,7 @@ class LLMClient:
                 break
 
             # Retry loop for TIER 1 & 2 cloud providers up to 2 times (total 3 attempts)
-            is_cloud_provider = tier["provider"] in ("groq", "openai", "gemini")
+            is_cloud_provider = tier["provider"] in ("groq", "openai", "gemini", "mistral", "cohere", "openrouter")
             max_attempts = 3 if is_cloud_provider else 1
 
             for attempt in range(max_attempts):

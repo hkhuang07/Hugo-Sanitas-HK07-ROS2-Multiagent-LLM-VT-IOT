@@ -94,7 +94,7 @@ class AgentLogClient:
         Queue a decision log entry. Non-blocking — returns immediately.
         Buffer is flushed in background every FLUSH_INTERVAL_S seconds or when BATCH_SIZE is reached.
         """
-        # Standardize agent type to strictly match Spring Boot enum: MEDICAL, SAFETY, EMPATHETIC
+        # Standardize agent type to match Spring Boot enum
         agent_type_upper = agent_type.upper() if agent_type else ""
         if "MEDICAL" in agent_type_upper:
             sanitized_type = "MEDICAL"
@@ -102,6 +102,14 @@ class AgentLogClient:
             sanitized_type = "SAFETY"
         elif "EMPATHETIC" in agent_type_upper or "EMPATHY" in agent_type_upper:
             sanitized_type = "EMPATHETIC"
+        elif "CARE" in agent_type_upper:
+            sanitized_type = "CARE"
+        elif "PERCEPTION" in agent_type_upper:
+            sanitized_type = "PERCEPTION"
+        elif "ACTION" in agent_type_upper:
+            sanitized_type = "ACTION"
+        elif "ROUTER" in agent_type_upper or "ORCHESTRATOR" in agent_type_upper:
+            sanitized_type = "ROUTER"
         else:
             sanitized_type = "EMPATHETIC"  # Default fallback
 
@@ -139,7 +147,9 @@ class AgentLogClient:
                 await self._authenticate()
 
         if not self._token:
-            log.debug("[AGENT_LOG_CLIENT] No auth token available — %d logs dropped", len(batch))
+            log.debug("[AGENT_LOG_CLIENT] No auth token available — falling back to MQTT for %d logs", len(batch))
+            for entry in batch:
+                self._fallback_publish_mqtt_sync(entry)
             return
 
         # Use asyncio.gather to prevent blocking the async loop sequentially
@@ -163,14 +173,66 @@ class AgentLogClient:
                     headers=headers
                 )
                 if resp.status_code not in (200, 202):
-                    log.warning("[AGENT_LOG_CLIENT] POST failed: %s", resp.text[:100])
-            except (httpx.TimeoutException, httpx.ConnectError):
-                log.warning("[AGENT_LOG_CLIENT] Backend unreachable — log dropped")
+                    log.warning("[AGENT_LOG_CLIENT] POST failed: %s. Falling back to MQTT.", resp.text[:100])
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self._fallback_publish_mqtt_sync, entry)
+            except Exception as exc:
+                log.warning("[AGENT_LOG_CLIENT] Backend HTTP unreachable (%s) — falling back to MQTT", exc)
+                try:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self._fallback_publish_mqtt_sync, entry)
+                except RuntimeError:
+                    # If loop is not running, execute synchronously
+                    self._fallback_publish_mqtt_sync(entry)
 
         tasks = [_post_log(entry) for entry in batch]
         await asyncio.gather(*tasks, return_exceptions=True)
 
         log.debug("[AGENT_LOG_CLIENT] Flushed %d logs concurrently", len(batch))
+
+    def _fallback_publish_mqtt_sync(self, entry: AgentLogEntry):
+        try:
+            import paho.mqtt.publish as publish
+            import json
+            import uuid
+            from datetime import datetime
+
+            broker_host = os.getenv("MQTT_BROKER_HOST") or "127.0.0.1"
+            broker_port = int(os.getenv("MQTT_BROKER_PORT") or 1883)
+            mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
+            mqtt_pass = os.getenv("MQTT_PASSWORD", "hk07_mqtt_dev_pwd")
+
+            client_id = f"agent-log-fallback-{uuid.uuid4().hex[:8]}"
+            
+            # Prepare standardized JSON payload matching handleAgentOutput expectations
+            payload = {
+                "id": f"mqtt_fallback_{uuid.uuid4()}",
+                "agentType": entry.agent_type.upper(),
+                "inputContext": entry.input_context,
+                "outputDecision": entry.output_decision,
+                "llmProvider": entry.llm_provider,
+                "latencyMs": entry.latency_ms,
+                "triggeredAt": datetime.now().isoformat()
+            }
+            
+            topic = f"hk07/agents/{entry.agent_type.lower()}/decision"
+            
+            auth_dict = None
+            if mqtt_user:
+                auth_dict = {'username': mqtt_user, 'password': mqtt_pass}
+                
+            publish.single(
+                topic,
+                payload=json.dumps(payload),
+                hostname=broker_host,
+                port=broker_port,
+                auth=auth_dict,
+                client_id=client_id,
+                qos=1
+            )
+            log.info("[AGENT_LOG_CLIENT] Successfully published log fallback to MQTT topic: %s", topic)
+        except Exception as e:
+            log.error("[AGENT_LOG_CLIENT] MQTT fallback publish failed: %s", e)
 
     async def _authenticate(self):
         """Get JWT token from environment variable or Spring Boot auth endpoint"""

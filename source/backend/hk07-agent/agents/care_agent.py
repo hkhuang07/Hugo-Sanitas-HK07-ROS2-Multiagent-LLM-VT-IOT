@@ -313,7 +313,7 @@ class CareAgent:
         except Exception as e:
             log.error("[CARE_AGENT] Failed to write ClinicalEntry: %s", e)
 
-        await log_agent_decision("MEDICAL", user_message, res_str, "OLLAMA_CARE", latency)
+        await log_agent_decision("CARE", user_message, res_str, "OLLAMA_CARE", latency)
 
     def _get_safe_text_fallback(self, user_message: str) -> str:
         return json.dumps({

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import api from '../services/api'
 
-export type AgentType = 'EMPATHETIC' | 'MEDICAL' | 'SAFETY'
+export type AgentType = 'SAFETY' | 'MEDICAL' | 'EMPATHETIC' | 'CARE' | 'PERCEPTION' | 'ACTION' | 'ROUTER'
 
 export interface AgentEvent {
   id: string
@@ -29,9 +29,13 @@ export const useAgentsStore = defineStore('agents', () => {
   const events = ref<AgentEvent[]>(savedEvents ? JSON.parse(savedEvents) : [])
 
   const stats = ref<Record<AgentType, number>>({
-    EMPATHETIC: 0,
-    MEDICAL: 0,
     SAFETY: 0,
+    MEDICAL: 0,
+    EMPATHETIC: 0,
+    CARE: 0,
+    PERCEPTION: 0,
+    ACTION: 0,
+    ROUTER: 0,
   })
 
   const savedChat = localStorage.getItem('hk07_agent_chat_log')
@@ -47,9 +51,13 @@ export const useAgentsStore = defineStore('agents', () => {
   const sessionId = ref<string>(savedSessionId || '')
 
   const agentStatus = ref<Record<AgentType, 'ACTIVE' | 'IDLE' | 'INHIBITED'>>({
-    EMPATHETIC: 'IDLE',
-    MEDICAL: 'IDLE',
     SAFETY: 'ACTIVE',
+    MEDICAL: 'IDLE',
+    EMPATHETIC: 'IDLE',
+    CARE: 'IDLE',
+    PERCEPTION: 'IDLE',
+    ACTION: 'IDLE',
+    ROUTER: 'ACTIVE',
   })
   const subsumptionActive = ref(false)
   const currentPriorityAgent = ref<AgentType>('SAFETY')
@@ -62,6 +70,9 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   function addEvent(ev: AgentEvent) {
+    if (events.value.some(e => e.id === ev.id)) {
+      return
+    }
     events.value.unshift(ev)
     // Hard cap — drop oldest to prevent unbounded memory growth
     if (events.value.length > MAX_EVENTS) {
@@ -82,15 +93,32 @@ export const useAgentsStore = defineStore('agents', () => {
       })
       if (resp.data && resp.data.success && resp.data.data) {
         const list = resp.data.data.content || []
-        events.value = list.map((item: any) => ({
+        const fetchedEvents = list.map((item: any) => ({
           id: item.id,
-          agentType: item.agentType,
+          agentType: item.agentType as AgentType,
           inputContext: item.inputContext || '',
           outputDecision: item.outputDecision,
           llmProvider: item.llmProvider || 'UNKNOWN',
           latencyMs: item.latencyMs,
           triggeredAt: item.triggeredAt
         }))
+
+        // Merge fetched events with existing local storage events, avoiding duplicates by id
+        const merged = [...fetchedEvents]
+        const existingIds = new Set(merged.map(e => e.id))
+        for (const e of events.value) {
+          if (!existingIds.has(e.id)) {
+            merged.push(e)
+            existingIds.add(e.id)
+          }
+        }
+        // Sort by triggeredAt descending
+        merged.sort((a, b) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime())
+        // Cap ring buffer size
+        if (merged.length > MAX_EVENTS) {
+          merged.length = MAX_EVENTS
+        }
+        events.value = merged
       }
     } catch (err) {
       console.error('Failed to fetch agent logs:', err)
@@ -103,9 +131,13 @@ export const useAgentsStore = defineStore('agents', () => {
       if (resp.data && resp.data.success && resp.data.data) {
         const counts = resp.data.data
         stats.value = {
-          EMPATHETIC: Number(counts.EMPATHETIC || 0),
+          SAFETY: Number(counts.SAFETY || 0),
           MEDICAL: Number(counts.MEDICAL || 0),
-          SAFETY: Number(counts.SAFETY || 0)
+          EMPATHETIC: Number(counts.EMPATHETIC || 0),
+          CARE: Number(counts.CARE || 0),
+          PERCEPTION: Number(counts.PERCEPTION || 0),
+          ACTION: Number(counts.ACTION || 0),
+          ROUTER: Number(counts.ROUTER || 0)
         }
       }
     } catch (err) {

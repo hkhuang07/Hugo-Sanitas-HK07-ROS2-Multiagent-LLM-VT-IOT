@@ -628,6 +628,20 @@ Rules:
         # Build guaranteed non-empty clinical string for Spring Boot contract
         scan._clinical_string = self._to_clinical_assessment_string(scan)
 
+        # Log scan decision to Spring Boot
+        try:
+            from services.agent_log_client import log_agent_decision
+            decision_text = f"Biometric Scan Complete. Risk: {scan.overall_risk} | Posture: {scan.posture_risk} | Facial Distress: {scan.facial_distress:.2f} | Notes: {scan.notes}"
+            asyncio.create_task(log_agent_decision(
+                agent_type="PERCEPTION",
+                input_context=f"Camera Frame + Sensor Metadata (HR: {scan.heart_rate}, SpO2: {scan.spo2})",
+                output_decision=decision_text,
+                llm_provider=scan.status,
+                latency_ms=int(scan.scan_duration_ms)
+            ))
+        except Exception as log_err:
+            log.warning("[PERCEPTION] Failed to queue agent log: %s", log_err)
+
         self._latest_scan = scan
         log.info(
             "[PERCEPTION] Scan complete in %.0fms — risk=%s confidence=%.2f provider=%s",
