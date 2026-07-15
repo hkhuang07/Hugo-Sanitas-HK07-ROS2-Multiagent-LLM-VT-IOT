@@ -226,21 +226,39 @@ function goToDigitalTwin() {
   router.push('/digital-twin')
 }
 
-// ── Robot location telemetry state (with browser geolocation fallback) ────
-const robotLat = ref(10.3955) // default Long Xuyen
-const robotLng = ref(105.4213)
+// ── Robot location telemetry state ────
+const DEFAULT_LAT = 10.3864   
+const DEFAULT_LNG = 105.4352
+const robotLat = ref(DEFAULT_LAT)
+const robotLng = ref(DEFAULT_LNG)
 const robotAlt = ref(0)
-const locSource = ref('DEFAULT')
+
+const locSource = computed(() => {
+  const status = sensorStore.locStatus
+  if (status === 'LIVE' || status === 'STALE') {
+    return 'ONLINE'
+  }
+  return 'OFFLINE'
+})
 
 // Sync location telemetry from the sensor telemetry store
 watch(
-  () => [sensorStore.location.latitude, sensorStore.location.longitude, sensorStore.location.altitude],
-  ([lat, lng, alt]) => {
-    if (lat !== 0 && lng !== 0) {
-      robotLat.value = lat
-      robotLng.value = lng
-      robotAlt.value = alt || 0
-      locSource.value = 'TELEMETRY'
+  () => [
+    sensorStore.location.latitude,
+    sensorStore.location.longitude,
+    sensorStore.location.altitude,
+    sensorStore.locStatus
+  ],
+  ([lat, lng, alt, status]) => {
+    const isOnline = status === 'LIVE' || status === 'STALE'
+    if (isOnline && lat !== 0 && lng !== 0) {
+      robotLat.value = lat as number
+      robotLng.value = lng as number
+      robotAlt.value = (alt as number) || 0
+    } else {
+      robotLat.value = DEFAULT_LAT
+      robotLng.value = DEFAULT_LNG
+      robotAlt.value = 0
     }
   },
   { immediate: true }

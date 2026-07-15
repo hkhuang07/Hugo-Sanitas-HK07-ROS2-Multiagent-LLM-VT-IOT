@@ -682,8 +682,14 @@ class AgentOrchestratorV2:
         if not outputs:
             return None
 
-        # Filter out error outputs
+        # Separate valid outputs and error outputs
         valid = {k: v for k, v in outputs.items() if v and not str(v).startswith("[ERROR]")}
+        errors = {k: str(v).replace("[ERROR] ", "") for k, v in outputs.items() if v and str(v).startswith("[ERROR]")}
+
+        if not valid and errors:
+            err_details = "; ".join(errors.values())
+            return f"Xin lỗi sếp, tôi gặp sự cố kỹ thuật khi thực hiện lệnh. Lý do: {err_details}. Vui lòng thử lại sau."
+
         if not valid:
             return None
 

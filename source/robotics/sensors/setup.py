@@ -30,6 +30,7 @@ setup(
             'balance_controller = simulation.balance_controller:main',
             'navigation_agent = simulation.navigation_agent:main',
             'hk07_runtime_orchestrator = simulation.hk07_runtime_orchestrator:main',
+            'hardware_bridge_node = hardware_bridge.hardware_bridge_node:main',
         ],
     },
 )

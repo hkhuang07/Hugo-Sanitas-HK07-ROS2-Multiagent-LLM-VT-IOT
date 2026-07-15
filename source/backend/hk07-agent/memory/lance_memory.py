@@ -502,8 +502,11 @@ class LanceMemory:
 
     async def ingest_chat_cycle(self, user_prompt: str, agent_response: str, user_id: str = "default_user"):
         """Ingest a single user prompt & agent response into agent_chat_memory table"""
-        if not self._initialized or not hasattr(self, "_chat_table") or self._chat_table is None:
-            log.warning("[LANCE_MEMORY] Skipped ingest_chat_cycle — table not initialized")
+        if not self._initialized:
+            await self.initialize()
+            
+        if not self._initialized or getattr(self, "_chat_table", None) is None:
+            log.warning("[LANCE_MEMORY] Skipped ingest_chat_cycle — table not initialized even after retry.")
             return
         try:
             record = {

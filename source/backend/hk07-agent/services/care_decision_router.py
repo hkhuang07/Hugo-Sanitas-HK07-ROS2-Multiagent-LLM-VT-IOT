@@ -279,7 +279,9 @@ class CareDecisionRouter:
         "SPRAY_MEDICINE":    180.0,
         "WARM_ADVICE":       180.0,
         "TREATMENT_PROMPT":  300.0,
-        "INACTIVITY_NUDGE":  1800.0,
+        "INACTIVITY_NUDGE":  3600.0,  # Increased from 30min to 1 hour for first nudge
+        "INACTIVITY_NUDGE_2": 7200.0,  # 2 hours for second nudge
+        "INACTIVITY_NUDGE_3": 14400.0,  # 4 hours for subsequent nudges
         "SLEEP_MONITORING":  300.0,
         "TASK_ASSISTANCE":   600.0,
         "COMPANION_CHAT":    60.0,
@@ -292,6 +294,7 @@ class CareDecisionRouter:
         self._last_action_ts: Dict[str, float] = {}
         self._last_global_ts: float = 0.0
         self._last_action: Optional[CareAction] = None
+        self._inactivity_nudge_count: int = 0  # Track consecutive inactivity nudges
 
     def decide(
         self,
@@ -324,21 +327,29 @@ class CareDecisionRouter:
         if vitals_override:
             return self._maybe_publish(vitals_override)
 
-        # ── Inactivity nudge ───────────────────────────────────────────────────
-        if inactivity_seconds > 7200 and not self._on_cooldown("INACTIVITY_NUDGE"):
+        # ── Inactivity nudge with progressive cooldown and intelligent messaging ─────
+        if inactivity_seconds > 7200:
             hours = inactivity_seconds / 3600
-            action = CareAction(
-                action_type="INACTIVITY_NUDGE",
-                priority="NORMAL",
-                confidence=0.80,
-                conversation_hint=f"Owner has been inactive for {hours:.1f}h. Suggest gentle movement or stretch.",
-                emotional_tone="GENTLE",
-                robot_gesture="NONE",
-                trigger_activity=activity,
-                trigger_expression=expression,
-                user_id=user_id,
-            )
-            return self._maybe_publish(action)
+            
+            # Progressive cooldown: first nudge at 2h, then every 1-4 hours based on count
+            nudge_key = self._get_inactivity_nudge_key()
+            if not self._on_cooldown(nudge_key):
+                # Select appropriate message based on inactivity duration and time of day
+                message = self._get_intelligent_inactivity_message(hours, is_night)
+                
+                action = CareAction(
+                    action_type="INACTIVITY_NUDGE",
+                    priority="NORMAL",
+                    confidence=0.80,
+                    conversation_hint=message,
+                    emotional_tone="GENTLE",
+                    robot_gesture="NONE",
+                    trigger_activity=activity,
+                    trigger_expression=expression,
+                    user_id=user_id,
+                )
+                self._inactivity_nudge_count += 1
+                return self._maybe_publish(action)
 
         # ── Drinking reminder after long work sessions ────────────────────────
         if inactivity_seconds > 3600 and activity in ("typing", "writing", "sitting_still") \
@@ -558,11 +569,62 @@ class CareDecisionRouter:
 
         return action
 
+    def _get_inactivity_nudge_key(self) -> str:
+        """Get the appropriate cooldown key based on nudge count."""
+        if self._inactivity_nudge_count == 0:
+            return "INACTIVITY_NUDGE"
+        elif self._inactivity_nudge_count == 1:
+            return "INACTIVITY_NUDGE_2"
+        else:
+            return "INACTIVITY_NUDGE_3"
+    
+    def _get_intelligent_inactivity_message(self, hours: float, is_night: bool) -> str:
+        """Generate context-aware inactivity message."""
+        import random
+        
+        # Time-based messages
+        current_hour = time.localtime().tm_hour
+        
+        if is_night and current_hour >= 22:
+            # Night time - gentler approach
+            messages = [
+                f"Đã muộn rồi ({current_hour}h). Sếp có muốn nghỉ ngơi không?",
+                f"Sếp đã ngồi yên {hours:.1f} giờ rồi. Đã đến giờ nghỉ ngơi chưa?",
+            ]
+        elif current_hour >= 6 and current_hour < 12:
+            # Morning - energetic
+            messages = [
+                f"Buổi sáng tốt lành! Sếp đã ngồi {hours:.1f} giờ rồi. Hãy đứng dậy vận động một chút nhé!",
+                f"Sáng rồi đấy! Sếp có muốn đi dạo ngắn hoặc giãn cơ không?",
+            ]
+        elif current_hour >= 12 and current_hour < 18:
+            # Afternoon
+            messages = [
+                f"Sếp đã ngồi yên {hours:.1f} giờ rồi. Hãy đứng dậy đi lại hoặc uống nước nhé!",
+                f"Chiều rồi, sếp có muốn nghỉ một chút không? Đứng dậy vận động sẽ tốt cho sức khỏe đấy.",
+            ]
+        else:
+            # Evening
+            messages = [
+                f"Sếp đã ngồi {hours:.1f} giờ rồi. Hãy giãn cơ một chút đi Sếp — tốt cho cột sống lắm đấy!",
+                f"Bạn đã ngồi yên khá lâu rồi ({hours:.1f} giờ). Hãy đứng dậy vận động một chút để tốt cho sức khỏe nhé!",
+            ]
+        
+        # Add variety based on nudge count
+        if self._inactivity_nudge_count >= 2:
+            messages = [
+                f"Sếp đã ngồi rất lâu rồi ({hours:.1f} giờ). Hugo thực sự lo lắng về sức khỏe của sếp. Hãy vận động một chút nhé!",
+                f"Đã {hours:.1f} giờ rồi sếp ơi. Hugo đề xuất làm vài bài tập giãn cơ ngắn nhé?",
+            ]
+        
+        return random.choice(messages)
+    
     def get_status(self) -> Dict[str, Any]:
         return {
             "last_action": self._last_action.action_type if self._last_action else None,
             "last_global_ts": self._last_global_ts,
             "cooldowns": {k: round(time.time() - v, 1) for k, v in self._last_action_ts.items()},
+            "inactivity_nudge_count": self._inactivity_nudge_count,
         }
 
 

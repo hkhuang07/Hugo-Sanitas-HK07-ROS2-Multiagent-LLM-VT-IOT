@@ -38,10 +38,8 @@ The interface is built using a **Cyber-Cinematic HUD** design language (True Bla
 
 #### A. MediaPipe Face Tracking & Forehead ROI Extraction
 ![Forehead ROI](./asset/hk07-vision01.jpg)
-* **Description:** Real-time facial landmarker tracking utilizing MediaPipe. Crops the forehead region dynamically to extract average green channel micro-fluctuations for Blood Volume Pulse (BVP) analysis.
-
-#### B. Real-time Green-Channel FFT rPPG Heart Rate
 ![FFT Heart Rate](./asset/hk07-vision02.jpg)
+* **Description:** Real-time facial landmarker tracking utilizing MediaPipe. Crops the forehead region dynamically to extract average green channel micro-fluctuations for Blood Volume Pulse (BVP) analysis.
 * **Description:** Estimates heart rate remotely (rPPG) via a Fast Fourier Transform (FFT) on forehead green channel intensity history, presenting real-time physiological vitals with zero local simulation.
 
 #### C. Resilient AI Fallback Client Console

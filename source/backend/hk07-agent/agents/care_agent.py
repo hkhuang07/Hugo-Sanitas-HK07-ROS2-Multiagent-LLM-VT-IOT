@@ -95,7 +95,7 @@ class CareAgent:
             "options": {"temperature": 0.1, "num_predict": 10}
         }
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with httpx.AsyncClient(timeout=45.0) as client:
                 resp = await client.post(f"{url}/api/generate", json=payload)
                 if resp.status_code == 200:
                     res_text = resp.json().get("response", "").strip()
@@ -213,18 +213,36 @@ class CareAgent:
             imu_mag_y = get_val(imu_data, "mag_y", 0.0)
             imu_mag_z = get_val(imu_data, "mag_z", 0.0)
             imu_compass = get_val(imu_data, "compass_heading", 0.0)
-            
-            gps_lat = get_val(loc_latest, "latitude", 0.0)
-            gps_lon = get_val(loc_latest, "longitude", 0.0)
-            gps_alt = get_val(loc_latest, "altitude", 0.0)
-            
-            env_light = get_val(env_latest, "ambient_light") or get_val(current_vitals, "ambient_light")
-            env_baro = get_val(env_latest, "barometric_pressure") or get_val(current_vitals, "barometric_pressure")
+            imu_ax, imu_ay, imu_az = 0.0, 0.0, 0.0
+            imu_g_mag = 0.0
+            imu_gx, imu_gy, imu_gz = 0.0, 0.0, 0.0
+            imu_qw, imu_qx, imu_qy, imu_qz = 1.0, 0.0, 0.0, 0.0
+            imu_mag_x, imu_mag_y, imu_mag_z = 0.0, 0.0, 0.0
+            imu_compass = 0.0
+            if imu_data:
+                imu_ax, imu_ay, imu_az = float(imu_data.get("accel_x", 0.0)), float(imu_data.get("accel_y", 0.0)), float(imu_data.get("accel_z", 0.0))
+                imu_g_mag = (imu_ax**2 + imu_ay**2 + imu_az**2)**0.5 / 9.80665
+                imu_gx, imu_gy, imu_gz = float(imu_data.get("gyro_x", 0.0)), float(imu_data.get("gyro_y", 0.0)), float(imu_data.get("gyro_z", 0.0))
+                imu_qw, imu_qx, imu_qy, imu_qz = float(imu_data.get("qw", 1.0)), float(imu_data.get("qx", 0.0)), float(imu_data.get("qy", 0.0)), float(imu_data.get("qz", 0.0))
+                imu_mag_x, imu_mag_y, imu_mag_z = float(imu_data.get("mag_x", 0.0)), float(imu_data.get("mag_y", 0.0)), float(imu_data.get("mag_z", 0.0))
+                imu_compass = float(imu_data.get("compass_heading", 0.0))
+
+            gps_lat, gps_lon, gps_alt = 0.0, 0.0, 0.0
+            if is_loc_online:
+                gps_data = await bb.read_value("sensor:location:data") or {}
+                gps_lat = float(gps_data.get("latitude", 0.0))
+                gps_lon = float(gps_data.get("longitude", 0.0))
+                gps_alt = float(gps_data.get("altitude", 0.0))
+
+            env_baro, env_light = 0.0, 0.0
+            if env_latest:
+                env_baro = float(env_latest.get("barometric_pressure", 1013.25))
+                env_light = float(env_latest.get("ambient_light", 0.0))
             
             steps_val = get_val(current_vitals, "pedometer_steps", 0) or get_val(current_vitals, "stepCount", 0)
             act_type = get_val(current_vitals, "activity_type", "unknown") or get_val(current_vitals, "activity", "unknown")
-            bat_level = get_val(current_vitals, "battery_level", 100.0) or get_val(current_vitals, "battery", 100.0)
-            bat_temp = get_val(current_vitals, "battery_temp", 32.0) or get_val(current_vitals, "batteryTemp", 32.0)
+            bat_level = get_val(current_vitals, "battery_level", None) or get_val(current_vitals, "battery", None)
+            bat_temp = get_val(current_vitals, "battery_temp", None) or get_val(current_vitals, "batteryTemp", None)
             
             accel_str = f"x={imu_ax:.2f}, y={imu_ay:.2f}, z={imu_az:.2f} m/s²" if is_imu_online else "OFFLINE"
             grav_str = f"magnitude={imu_g_mag:.3f}g" if is_imu_online else "OFFLINE"
@@ -233,14 +251,16 @@ class CareAgent:
             mag_str = f"x={imu_mag_x:.1f}, y={imu_mag_y:.1f}, z={imu_mag_z:.1f}" if is_imu_online else "OFFLINE"
             compass_str = f"{imu_compass:.1f}°" if is_imu_online else "OFFLINE"
             gps_str = f"lat={gps_lat:.6f}, lon={gps_lon:.6f}, alt={gps_alt:.1f}m" if is_loc_online else "OFFLINE"
-            baro_str = f"{env_baro:.2f} hPa" if (is_env_online and env_baro) else "OFFLINE"
-            light_str = f"{env_light:.1f} lux" if (is_env_online and env_light) else "OFFLINE"
+            baro_str = f"{env_baro:.2f} hPa" if is_env_online else "OFFLINE"
+            light_str = f"{env_light:.1f} lux" if is_env_online else "OFFLINE"
             steps_str = f"{steps_val} steps" if is_vitals_online else "OFFLINE"
             activity_str = f"{act_type}" if is_vitals_online else "OFFLINE"
+            bat_lvl_str = f"{bat_level:.1f}%" if bat_level is not None else "OFFLINE"
+            bat_temp_str = f"{bat_temp:.1f}°C" if bat_temp is not None else "OFFLINE"
 
             sensor_ctx_str = (
                 "=========================================\n"
-                "TRẠNG THÁI CẢM BIẾN THỜI GIAN THỰC (BẮT BUỘC KHÔNG DÙNG GIẢ LẬP):\n"
+                "TRẠNG THÁI CẢM BIẾN THỜI GIAN THỰC:\n"
                 f"- Accelerometer: {accel_str}\n"
                 f"- Gravity: {grav_str}\n"
                 f"- Gyroscope: {gyro_str}\n"
@@ -252,11 +272,11 @@ class CareAgent:
                 f"- Ambient Light: {light_str}\n"
                 f"- Pedometer Steps: {steps_str}\n"
                 f"- Activity: {activity_str}\n"
-                f"- Mobile Device Battery Level: {bat_level:.1f}%\n"
-                f"- Mobile Device Battery Temperature: {bat_temp:.1f}°C\n"
+                f"- Mobile Device Battery Level: {bat_lvl_str}\n"
+                f"- Mobile Device Battery Temperature: {bat_temp_str}\n"
                 "=========================================\n"
                 "HƯỚNG DẪN CHẨN ĐOÁN:\n"
-                "Phân tích các cảm biến này để chẩn đoán hoạt động & tâm trạng (Ví dụ: bước chân cao = đang đi bộ, la bàn thay đổi liên tục = đang xoay người, nhiệt độ máy cao = cảnh báo nóng máy, ánh sáng thấp = tối phòng). Đưa lời khuyên đồng hành ấm áp.\n"
+                "Phân tích các cảm biến này để chẩn đoán hoạt động & tâm trạng. Đưa lời khuyên đồng hành ấm áp.\n"
             )
         except Exception as e:
             log.warning("Failed to generate rich sensor context for CareAgent: %s", e)
@@ -264,15 +284,15 @@ class CareAgent:
         log.info("[CARE_AGENT] Querying local qwen2.5 LLM for companion advice")
         system_prompt = (
             "Bạn là Hugo/HK-07 (Hugo Sanitas HK07), người bạn đồng hành chăm sóc sức khỏe tinh thần và thể chất.\n"
-            "Nhiệm vụ: Trả lời, thấu cảm, đưa ra đề xuất chăm sóc đơn giản (ôm an ủi, uống nước ấm, nghỉ ngơi, giữ ấm, trò chuyện), quyết định các hành động như ôm, làm ấm, phun thuốc, sơ cứu, chăm sóc owner theo chuẩn robot Hugo.\n"
-            "Bạn không phải robot cứu hộ y tế hay bác sĩ chuyên khoa. Hãy khuyên owner nghỉ ngơi và liên hệ người thân hỗ trợ nếu mệt mỏi.\n"
-            "Hãy phản hồi bằng tiếng Việt vì người dùng giao tiếp bằng tiếng Việt hoặc các ngôn ngữ khác tùy vào ngôn ngữ họ cung cấp, đồng thời duy trì giọng điệu ấm áp và điềm tĩnh của Hugo.\n"
+            "Nhiệm vụ: Trả lời, thấu cảm, đưa ra đề xuất chăm sóc đơn giản theo quy trình Baymax chủ động.\n"
+            f"{state_instruction}\n"
+            "Hãy phản hồi bằng tiếng Việt duy trì giọng điệu ấm áp và điềm tĩnh.\n"
             f"{sensor_ctx_str}\n"
             "BẮT BUỘC TRẢ VỀ KẾT QUẢ DƯỚI ĐỊNH DẠNG JSON NGHIÊM NGẶT (Không chứa thêm bất kỳ đoạn text hội thoại nào bên ngoài JSON).\n"
             "Cấu trúc JSON như sau:\n"
             "{\n"
             '  "diagnosis": "Tóm tắt trạng thái của sếp ngắn gọn thấu cảm bằng tiếng Việt",\n'
-            '  "action_plan": "Lời khuyên trò chuyện, đề xuất chăm sóc đơn giản ấm áp",\n'
+            '  "action_plan": "Lời khuyên trò chuyện, đề xuất chăm sóc đơn giản ấm áp dựa theo Trạng thái hiện tại",\n'
             '  "alert_level": "NORMAL" | "WARNING",\n'
             '  "source_note": "Hugo Care Engine"\n'
             "}\n"

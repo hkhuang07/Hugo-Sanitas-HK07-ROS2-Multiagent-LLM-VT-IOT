@@ -154,6 +154,10 @@ class AgentLogClient:
 
         # Use asyncio.gather to prevent blocking the async loop sequentially
         async def _post_log(entry):
+            # Always publish to MQTT so frontend AgentsView receives the real-time event stream
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._fallback_publish_mqtt_sync, entry)
+            
             try:
                 headers = {}
                 if self._token:
@@ -173,17 +177,9 @@ class AgentLogClient:
                     headers=headers
                 )
                 if resp.status_code not in (200, 202):
-                    log.warning("[AGENT_LOG_CLIENT] POST failed: %s. Falling back to MQTT.", resp.text[:100])
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._fallback_publish_mqtt_sync, entry)
+                    log.warning("[AGENT_LOG_CLIENT] POST failed: %s.", resp.text[:100])
             except Exception as exc:
-                log.warning("[AGENT_LOG_CLIENT] Backend HTTP unreachable (%s) — falling back to MQTT", exc)
-                try:
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._fallback_publish_mqtt_sync, entry)
-                except RuntimeError:
-                    # If loop is not running, execute synchronously
-                    self._fallback_publish_mqtt_sync(entry)
+                log.warning("[AGENT_LOG_CLIENT] Backend HTTP unreachable (%s)", exc)
 
         tasks = [_post_log(entry) for entry in batch]
         await asyncio.gather(*tasks, return_exceptions=True)

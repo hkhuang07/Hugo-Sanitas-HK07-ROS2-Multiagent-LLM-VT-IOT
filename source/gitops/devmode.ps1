@@ -43,10 +43,10 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "
 Write-Host ">>> [5/5] Starting WSL ROS2 Sensors Orchestrator..." -ForegroundColor Cyan
 Start-Process wsl.exe -ArgumentList "--cd", "`"$RoboticsPath`"", "bash", "-c", "`"echo -e '\e[38;2;240;248;255m' && rm -rf log/ && source /opt/ros/humble/setup.bash && colcon build --packages-select sensors --symlink-install && source install/setup.bash && ros2 run sensors hk07_runtime_orchestrator; exec bash`""
 
-# ── FastAPI Agent (Command Prompt Windows) ──
-Write-Host ">>> [6/5] Starting FastAPI Agent Engine..." -ForegroundColor White
-Start-Process cmd -ArgumentList "/k", "
-    cd /d $ProjectRoot\source\backend\hk07-agent && python main.py
+# ── FastAPI Agent (WSL via PowerShell) ──
+Write-Host ">>> [6/5] Starting FastAPI Agent Engine (WSL)..." -ForegroundColor White
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "
+    wsl --cd `"$ProjectRoot\source\backend\hk07-agent`" bash -c 'python3 main.py; exec bash'
 "
 
 # ── STEP 4: RUN FRONTEND IN CURRENT TERMINAL ──────────────────────────────────

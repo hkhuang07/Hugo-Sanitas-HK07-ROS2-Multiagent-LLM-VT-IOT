@@ -210,47 +210,67 @@ function truncate(s: string, max: number) {
 .event-stream-panel { display: flex; flex-direction: column; padding: 12px; overflow: hidden; }
 .stream-header {
   display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
-  font-family: var(--font-hud); font-size: 9px; letter-spacing: 0.2em;
-  color: var(--color-accent-green); text-transform: uppercase;
+  font-family: 'Orbitron', 'Share Tech Mono', sans-serif; font-size: 10px; letter-spacing: 0.2em;
+  color: #00FFCC; text-transform: uppercase;
+  border-bottom: 1px solid rgba(0, 229, 255, 0.3);
+  padding-bottom: 8px;
+  text-shadow: 0 0 6px rgba(0, 229, 255, 0.4);
 }
 
-.event-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.event-list { flex: 1; overflow-x: auto; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .event-row {
   display: grid;
   grid-template-columns:
-    minmax(58px, 65px)
-    minmax(90px, 120px)
-    minmax(70px, 110px)
-    minmax(0, 1fr);
-  gap: 6px;
-  font-size: 10px;
-  line-height: 1.9;
-  padding: 5px 8px;
+    minmax(80px, 100px)
+    minmax(130px, 160px)
+    minmax(120px, 150px)
+    minmax(300px, 1fr);
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.8;
+  padding: 6px 10px;
   border-left: 2px solid transparent;
-  transition: border-color 100ms;
+  border-bottom: 1px solid rgba(0, 229, 255, 0.15);
+  transition: all 150ms;
   align-items: start;
+  background: rgba(0, 6, 36, 0.3);
+  min-width: 800px;
 }
-.event-row:hover { border-left-color: var(--color-accent-green); background: rgba(0,255,102,0.03); }
-.ev-critical { border-left-color: var(--color-accent-red) !important; background: rgba(255,51,51,0.05); }
+.event-row:hover { border-left-color: #00FFCC; background: rgba(0, 229, 255, 0.08); border-bottom-color: rgba(0, 229, 255, 0.3); }
+.ev-critical { border-left-color: #FF3333 !important; background: rgba(255, 51, 51, 0.1); border-bottom-color: rgba(255, 51, 51, 0.3); }
 .ev-decision {
-  color: var(--color-text-primary);
+  color: #F0F8FF;
   word-break: break-word;
   white-space: normal;
   overflow-wrap: anywhere;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  letter-spacing: 0.02em;
 }
 .ev-time, .ev-agent, .ev-provider {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+.ev-agent {
+  color: #00E5FF;
+  text-shadow: 0 0 4px rgba(0, 229, 255, 0.5);
+}
+
+.ev-provider {
+  color: rgba(0, 229, 255, 0.6);
 }
 
 .empty-stream { padding: 20px; text-align: center; font-size: 11px; animation: blink-cursor 1s step-end infinite; }
 @keyframes blink-cursor { 50%{opacity:0} }
 
 .thought-ticker {
-  border-top: 1px solid var(--color-border-dim); padding: 6px 4px; font-size: 10px;
+  border-top: 1px solid rgba(0, 229, 255, 0.2); padding: 8px 6px; font-size: 11px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0;
+  background: rgba(0, 6, 36, 0.5);
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
 }
-.ticker-text { animation: slide-in 0.3s ease; }
+.ticker-text { animation: slide-in 0.3s ease; color: #00FF66; text-shadow: 0 0 4px rgba(0, 255, 102, 0.5); }
 @keyframes slide-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
 </style>

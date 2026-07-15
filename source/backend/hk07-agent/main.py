@@ -201,6 +201,9 @@ orchestrator_v2 = AgentOrchestratorV2(memory=memory, arbitrator=arbitrator) if U
 # Perception Agent (Tier 0.5) — on-demand scan, no background loop
 perception_agent = PerceptionAgent(arbitrator=arbitrator)
 
+from agents.hardware_command_agent import HardwareCommandAgent
+hardware_command_agent = HardwareCommandAgent(arbitrator=arbitrator)
+
 # ─── Safety State Machine ──────────────────────────────────────────────────────────────────────────
 # ARCH-3 FIX: Replace naive "grace period" timer with a proper State Machine.
 # A countdown timer creates a blind safety window. A State Machine maintains

@@ -30,6 +30,83 @@ import { useAgentsStore } from '../stores/agents'
 const { isSpeaking, isRecording, detectLanguage, speakResponse, stopSpeaking } = useSpeech()
 const agentsStore = useAgentsStore()
 
+// Track last processed agent event for voice
+let lastProcessedEventId = ''
+let lastInactivityNudgeTime = 0
+const INACTIVITY_NUDGE_COOLDOWN = 30 * 60 * 1000 // 30 minutes cooldown
+
+// Watch for agent events and speak them globally
+watch(
+  () => agentsStore.events,
+  async (newEvents) => {
+    if (newEvents.length === 0) return
+    
+    // Get the newest event
+    const newestEvent = newEvents[0]
+    if (!newestEvent || newestEvent.id === lastProcessedEventId) return
+    
+    lastProcessedEventId = newestEvent.id
+    
+    // Filter for events that should be spoken globally
+    // Focus on CARE and EMPATHETIC events with user-facing messages
+    const shouldSpeak = 
+      (newestEvent.agentType === 'CARE' || newestEvent.agentType === 'EMPATHETIC') &&
+      newestEvent.outputDecision &&
+      newestEvent.outputDecision.trim() !== '' &&
+      !newestEvent.outputDecision.includes('COMPANION_CHAT') &&
+      !newestEvent.outputDecision.includes('INACTIVITY_NUDGE')
+    
+    // Special handling for inactivity nudges with cooldown
+    const isInactivityNudge = newestEvent.outputDecision?.includes('INACTIVITY_NUDGE') || 
+                             newestEvent.inputContext?.includes('INACTIVITY_NUDGE')
+    
+    if (isInactivityNudge) {
+      const now = Date.now()
+      if (now - lastInactivityNudgeTime < INACTIVITY_NUDGE_COOLDOWN) {
+        console.log('[GlobalVoiceWidget] Inactivity nudge skipped due to cooldown')
+        return
+      }
+      lastInactivityNudgeTime = now
+    }
+    
+    if (shouldSpeak || isInactivityNudge) {
+      // Extract the user-facing message from the event
+      let message = newestEvent.outputDecision
+      
+      // For inactivity nudges, get the actual care message
+      if (isInactivityNudge) {
+        // Look for the actual care message in recent events
+        const careEvent = newEvents.find(e => 
+          e.agentType === 'CARE' && 
+          e.triggeredAt === newestEvent.triggeredAt &&
+          e.outputDecision && !e.outputDecision.includes('INACTIVITY_NUDGE')
+        )
+        if (careEvent) {
+          message = careEvent.outputDecision
+        } else {
+          // Fallback to the empathetic message
+          const empatheticEvent = newEvents.find(e => 
+            e.agentType === 'EMPATHETIC' && 
+            e.triggeredAt === newestEvent.triggeredAt &&
+            e.outputDecision && !e.outputDecision.includes('INACTIVITY_NUDGE')
+          )
+          if (empatheticEvent) {
+            message = empatheticEvent.outputDecision
+          }
+        }
+      }
+      
+      if (message && message.trim() !== '') {
+        // Speak the message with a slight delay
+        setTimeout(() => {
+          speakResponse(message)
+        }, 300)
+      }
+    }
+  },
+  { deep: true }
+)
+
 let recognition: any = null
 const processing = ref(false)
 const isUserEnabled = ref(true) // Mic is open by default: clicks to disable

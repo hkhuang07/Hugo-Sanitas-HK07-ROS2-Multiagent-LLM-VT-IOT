@@ -1,0 +1,20 @@
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "hk07_main_controller.cpp"
+        "can_interface.cpp"
+        "sntp_manager.cpp"
+        "ota_manager.cpp"
+    INCLUDE_DIRS "."
+    REQUIRES
+        driver
+        esp_wifi
+        esp_netif
+        mqtt
+        esp_http_server
+        esp_https_ota
+        nvs_flash
+        esp_sntp
+        freertos
+        log
+)

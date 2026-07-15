@@ -834,6 +834,94 @@ watch(
   }
 )
 
+// Watch for agent events and display them in companion chat with voice
+let lastProcessedEventId = ''
+let lastInactivityNudgeTime = 0
+const INACTIVITY_NUDGE_COOLDOWN = 30 * 60 * 1000 // 30 minutes cooldown
+
+watch(
+  () => agentsStore.events,
+  async (newEvents) => {
+    if (newEvents.length === 0) return
+    
+    // Get the newest event
+    const newestEvent = newEvents[0]
+    if (!newestEvent || newestEvent.id === lastProcessedEventId) return
+    
+    lastProcessedEventId = newestEvent.id
+    
+    // Filter for events that should be displayed to user
+    // Focus on CARE and EMPATHETIC events with user-facing messages
+    const shouldDisplay = 
+      (newestEvent.agentType === 'CARE' || newestEvent.agentType === 'EMPATHETIC') &&
+      newestEvent.outputDecision &&
+      newestEvent.outputDecision.trim() !== '' &&
+      !newestEvent.outputDecision.includes('COMPANION_CHAT') &&
+      !newestEvent.outputDecision.includes('INACTIVITY_NUDGE')
+    
+    // Special handling for inactivity nudges with cooldown
+    const isInactivityNudge = newestEvent.outputDecision?.includes('INACTIVITY_NUDGE') || 
+                             newestEvent.inputContext?.includes('INACTIVITY_NUDGE')
+    
+    if (isInactivityNudge) {
+      const now = Date.now()
+      if (now - lastInactivityNudgeTime < INACTIVITY_NUDGE_COOLDOWN) {
+        console.log('[CompanionView] Inactivity nudge skipped due to cooldown')
+        return
+      }
+      lastInactivityNudgeTime = now
+    }
+    
+    if (shouldDisplay || isInactivityNudge) {
+      // Extract the user-facing message from the event
+      let message = newestEvent.outputDecision
+      
+      // For inactivity nudges, get the actual care message
+      if (isInactivityNudge) {
+        // Look for the actual care message in recent events
+        const careEvent = newEvents.find(e => 
+          e.agentType === 'CARE' && 
+          e.triggeredAt === newestEvent.triggeredAt &&
+          e.outputDecision && !e.outputDecision.includes('INACTIVITY_NUDGE')
+        )
+        if (careEvent) {
+          message = careEvent.outputDecision
+        } else {
+          // Fallback to the empathetic message
+          const empatheticEvent = newEvents.find(e => 
+            e.agentType === 'EMPATHETIC' && 
+            e.triggeredAt === newestEvent.triggeredAt &&
+            e.outputDecision && !e.outputDecision.includes('INACTIVITY_NUDGE')
+          )
+          if (empatheticEvent) {
+            message = empatheticEvent.outputDecision
+          }
+        }
+      }
+      
+      if (message && message.trim() !== '') {
+        // Add to chat log
+        agentsStore.chatLog.push({
+          role: 'hugo',
+          content: message,
+          timestamp: getCurrentTimeString()
+        })
+        
+        await nextTick()
+        scrollChatToBottom()
+        
+        // Speak the message if not muted
+        if (!isMuted.value) {
+          setTimeout(() => {
+            speakResponse(message)
+          }, 200)
+        }
+      }
+    }
+  },
+  { deep: true }
+)
+
 // Auto scroll chat to bottom when chatLog is updated from anywhere (e.g. GlobalVoiceWidget)
 watch(
   chatLog,

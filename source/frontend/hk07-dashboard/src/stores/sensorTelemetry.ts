@@ -39,8 +39,8 @@ export interface EnvironmentSnapshot {
   barometric_pressure: number | null
   // null = cannot compute delta when barometer absent
   pressure_delta_hpa: number | null
-  battery_level: number
-  battery_temp: number
+  battery_level: number | null
+  battery_temp: number | null
   timestamp_ms: number
 }
 
@@ -89,8 +89,8 @@ const DEFAULT_ENV: EnvironmentSnapshot = {
   ambient_light: 0,
   barometric_pressure: null,  // null = no barometer hardware
   pressure_delta_hpa: null,   // null = no barometer hardware
-  battery_level: 100.0,
-  battery_temp: 32.0,
+  battery_level: null as number | null,
+  battery_temp: null as number | null,
   timestamp_ms: 0,
 }
 
@@ -331,11 +331,11 @@ export const useSensorTelemetryStore = defineStore('sensorTelemetry', () => {
     // Keep last known battery level and temp to prevent flip-flopping to defaults
     const batLvl = (data.battery_level !== undefined && data.battery_level !== null)
       ? data.battery_level
-      : (environment.value.battery_level ?? 100.0)
+      : environment.value.battery_level
     
     const batTemp = (data.battery_temp !== undefined && data.battery_temp !== null)
       ? data.battery_temp
-      : (environment.value.battery_temp ?? 32.0)
+      : environment.value.battery_temp
 
     environment.value = {
       ambient_light: data.ambient_light ?? 0,
