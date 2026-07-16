@@ -130,6 +130,7 @@ source/robotics/log/
 .aider*
 .command.md
 .claude/
+.devin/
 .copilot/
 .history/
 *.tmp
