@@ -65,7 +65,7 @@ class SafetyAgent:
             broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
             broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
             if hasattr(mqtt, "CallbackAPIVersion"):
-                self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
+                self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
             else:
                 self._mqtt = mqtt.Client(client_id="safety-agent-inhibit", protocol=mqtt.MQTTv311)
             mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")

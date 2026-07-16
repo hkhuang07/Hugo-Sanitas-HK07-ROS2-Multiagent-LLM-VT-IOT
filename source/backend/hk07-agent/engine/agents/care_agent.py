@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List
 
 from services.blackboard_service import get_blackboard, ClinicalEntry
 from services.agent_log_client import log_agent_decision
-from services.llm_client import LocalOfflineFallback
+from services.llm_client import LocalOfflineFallback, is_ollama_vision_cb_open, _probe_ollama_hosts_sequential
 
 log = logging.getLogger("hk07.care_agent")
 
@@ -51,13 +51,7 @@ class CareAgent:
         self.arbitrator = arbitrator
         self._status = "ACTIVE"
         self._volatile_context = {}
-        self.latest_vitals = {
-            "heartRate": 72,
-            "spo2": 98.0,
-            "bodyTemperature": 36.6,
-            "systolic": 120,
-            "diastolic": 80
-        }
+        self.latest_vitals = None  # STRICT: no fake defaults — None until real data arrives
         import collections
         self._buffer = collections.deque(maxlen=50)
         self._last_state = "NORMAL"
@@ -83,26 +77,58 @@ class CareAgent:
     async def _call_ollama_vision_vqa(self, image_bytes: bytes, question: str) -> str:
         """Call local Moondream model via Ollama vision endpoint for VQA"""
         import base64
+        
+        # 1. Circuit Breaker Check: if Ollama Vision CB is open, abort immediately to prevent 45s lag
+        if is_ollama_vision_cb_open():
+            log.warning("[CARE_AGENT_VISION] ⚡ Ollama Vision Circuit Breaker is OPEN. Bypassing Moondream VQA to avoid loop lag.")
+            return "no"
+
+        # 2. Downscale image to 336x336 to fit moondream's native input and save memory/CPU overhead
+        try:
+            import cv2
+            import numpy as np
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is not None:
+                h, w = img.shape[:2]
+                max_dim = 336
+                if max(h, w) > max_dim:
+                    scale = max_dim / max(h, w)
+                    img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+                _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                image_bytes = buf.tobytes()
+        except Exception as e:
+            log.debug("[CARE_AGENT_VISION] Image resize skipped (non-fatal): %s", e)
+
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         model_name = os.getenv("OLLAMA_VISION_MODEL", "moondream")
-        url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+        # 3. Dynamic Sequential Probe for active Ollama host
+        winning_url = await _probe_ollama_hosts_sequential()
+        if not winning_url:
+            log.warning("[CARE_AGENT_VISION] No active Ollama host found for VQA VLM.")
+            return "no"
         
         payload = {
             "model": model_name,
             "prompt": f"Based on the image, answer this question: {question}. Answer with only 'yes' or 'no' if possible.",
             "images": [b64],
             "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 10}
+            "options": {
+                "temperature": 0.1, 
+                "num_predict": 10,
+                "num_ctx": 1024
+            }
         }
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                resp = await client.post(f"{url}/api/generate", json=payload)
+                resp = await client.post(f"{winning_url}/api/generate", json=payload)
                 if resp.status_code == 200:
                     res_text = resp.json().get("response", "").strip()
-                    log.info("[CARE_AGENT_VISION] Ollama vision response: %s", res_text)
+                    log.info("[CARE_AGENT_VISION] Ollama vision response from %s: %s", winning_url, res_text)
                     return res_text
         except Exception as e:
-            log.error("[CARE_AGENT_VISION_ERROR] Ollama VQA call failed: %s", e)
+            log.error("[CARE_AGENT_VISION_ERROR] Ollama VQA call failed on %s: %s", winning_url, e)
         return "no"
 
     async def process_text_interaction(
@@ -121,6 +147,12 @@ class CareAgent:
         # Update latest vitals local cache
         if current_vitals:
             self.latest_vitals.update(current_vitals)
+
+        state_instruction = ""
+        if mode == "MEDICAL_ADVICE":
+            state_instruction = "Lưu ý: Sếp đang hỏi về triệu chứng lâm sàng. Hãy đóng vai trò y tế/sơ cứu ban đầu."
+        elif mode == "EMERGENCY":
+            state_instruction = "Lưu ý: Sếp đang trong tình trạng khẩn cấp. Hãy đưa ra lời khuyên an toàn dứt khoát."
 
         # 1. Fetch ambient temperature from blackboard
         ambient_temp = None
@@ -346,30 +378,38 @@ class CareAgent:
 
     # ─── Legacy Backward Compatibility Methods for MedicalAgent Tests ───
     def _aggregate_vitals(self) -> dict:
+        """Aggregate real vitals from buffer. Returns None if no real data available."""
         if not self._buffer:
-            return {"heartRate": 72.0, "spo2": 98.0, "bodyTemperature": 36.6, "systolic": 120.0, "diastolic": 80.0}
-        
-        sum_hr = sum(v.get("heartRate", 72) for v in self._buffer)
-        sum_spo2 = sum(v.get("spo2", 98.0) for v in self._buffer)
-        sum_temp = sum(v.get("bodyTemperature", 36.6) for v in self._buffer)
-        sum_sys = sum(v.get("systolic", 120) for v in self._buffer)
-        sum_dias = sum(v.get("diastolic", 80) for v in self._buffer)
-        count = len(self._buffer)
-        
-        return {
-            "heartRate": float(sum_hr / count),
-            "spo2": float(sum_spo2 / count),
-            "bodyTemperature": float(sum_temp / count),
-            "systolic": float(sum_sys / count),
-            "diastolic": float(sum_dias / count)
-        }
+            # STRICT: no real data — return None, NEVER return mock defaults
+            return None
+
+        # Only aggregate fields that actually have real values (not None)
+        hr_vals   = [v["heartRate"]       for v in self._buffer if v.get("heartRate") is not None]
+        spo2_vals = [v["spo2"]            for v in self._buffer if v.get("spo2") is not None]
+        temp_vals = [v["bodyTemperature"] for v in self._buffer if v.get("bodyTemperature") is not None]
+        sys_vals  = [v["systolic"]        for v in self._buffer if v.get("systolic") is not None]
+        dias_vals = [v["diastolic"]       for v in self._buffer if v.get("diastolic") is not None]
+
+        result = {}
+        if hr_vals:   result["heartRate"]       = float(sum(hr_vals)   / len(hr_vals))
+        if spo2_vals: result["spo2"]            = float(sum(spo2_vals) / len(spo2_vals))
+        if temp_vals: result["bodyTemperature"] = float(sum(temp_vals) / len(temp_vals))
+        if sys_vals:  result["systolic"]        = float(sum(sys_vals)  / len(sys_vals))
+        if dias_vals: result["diastolic"]       = float(sum(dias_vals) / len(dias_vals))
+
+        return result if result else None
 
     async def _process_latest_buffer(self) -> None:
         if not self._buffer:
             return
-        
+
         latest = self._buffer[-1]
-        hr = float(latest.get("heartRate", 72))
+        hr = latest.get("heartRate")  # STRICT: may be None if sensor offline
+        if hr is None:
+            # No real HR data — cannot make clinical decisions
+            log.debug("[CARE_AGENT] _process_latest_buffer: HR=None (sensor offline), skipping clinical eval.")
+            return
+        hr = float(hr)
         is_fall = latest.get("is_falling", False)
         emergency_btn = latest.get("emergency_button_pressed", False)
         
@@ -414,13 +454,22 @@ class CareAgent:
         self._last_analyzed_hr = float(hr)
 
     async def _call_llm_with_fallback(self, vitals: dict, **kwargs) -> dict:
-        hr = vitals.get("heartRate", 72)
-        spo2 = vitals.get("spo2", 98.0)
-        
+        hr = vitals.get("heartRate")    # STRICT: may be None
+        spo2 = vitals.get("spo2")       # STRICT: may be None
+
+        if hr is None and spo2 is None:
+            # No real sensor data — refuse to make clinical judgment
+            return {
+                "alert_level": "UNKNOWN",
+                "diagnosis": "[SENSOR_OFFLINE] Không có dữ liệu sinh hiệu thực. Wristband chưa kết nối.",
+                "action_plan": "Vui lòng kết nối wristband/sensor trước.",
+                "source_note": "SENSOR_OFFLINE"
+            }
+
         level = "NORMAL"
-        if hr > 120 or hr < 45 or spo2 < 90:
+        if (hr is not None and (hr > 120 or hr < 45)) or (spo2 is not None and spo2 < 90):
             level = "CRITICAL"
-        elif hr > 100 or hr < 55 or spo2 < 95:
+        elif (hr is not None and (hr > 100 or hr < 55)) or (spo2 is not None and spo2 < 95):
             level = "WARNING"
             
         return {

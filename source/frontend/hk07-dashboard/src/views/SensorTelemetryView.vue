@@ -4,11 +4,9 @@
     <div v-if="cfg.isConfigLoading" class="hud-terminal-loader">
       <span class="loader-text font-mono">[ CRITICAL_SYSTEM_UPLINK: FETCHING_ENV_METRICS... ]</span>
     </div>
-
     <!-- ═══ RETICLE CORNERS ═══ -->
     <span class="corner bl">+</span>
     <span class="corner br">+</span>
-
     <!-- ═══ PAGE HEADER ═══ -->
     <header class="sv-header">
       <div class="sv-header-left">
@@ -34,7 +32,6 @@
         <div class="sv-timestamp">{{ currentTime }}</div>
       </div>
     </header>
-
     <!-- ═══ SENSOR STATUS STRIP ═══ -->
     <div class="sensor-strip">
       <div v-for="s in sensorBadges" :key="s.key" class="sensor-badge" :class="`badge-${s.status.toLowerCase()}`">
@@ -43,10 +40,8 @@
         <span class="badge-state">{{ s.status }}</span>
       </div>
     </div>
-
     <!-- ═══ MAIN GRID CONTAINER (Zero Scroll HUD Target) ═══ -->
     <div class="hud-grid-container">
-
       <!-- ─── UPPER ROW (30% / 70%) ─── -->
       <div class="hud-row-upper">
         <!-- ─── COLUMN 1: LEFT PANEL (30%, vertically scrollable) ─── -->
@@ -75,7 +70,6 @@
               </div>
             </div>
           </div>
-
           <!-- Environment Panel -->
           <div class="sv-panel env-stats-panel">
             <div class="panel-header">
@@ -113,7 +107,6 @@
               </div>
             </div>
           </div>
-
           <!-- Activity Panel -->
           <div class="sv-panel activity-panel">
             <div class="panel-header">
@@ -137,7 +130,6 @@
               </div>
             </div>
           </div>
-
           <!-- Hearing Panel -->
           <div class="sv-panel hearing-panel">
             <div class="panel-header">
@@ -154,7 +146,6 @@
               <div style="color: #00FF66; letter-spacing: 1px; font-size: 10px; text-align: center;">
                 {{ getMicBar(sensorStore.hearing.intensity) }}
               </div>
-
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 2px;">
                 <div style="border: 1px solid rgba(0,255,102,0.1); padding: 3px; background: rgba(0,0,0,0.6);">
                   <span class="text-dim" style="font-size: 7px; display: block;">PITCH</span>
@@ -174,7 +165,6 @@
             </div>
           </div>
         </div>
-
         <!-- ─── COLUMN 2: RIGHT PANEL (70%, vertically scrollable) ─── -->
         <div class="hud-column col-right">
           <!-- IMU 9-DOF Widget -->
@@ -229,7 +219,6 @@
                 </svg>
               </div>
             </div>
-
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 6px;">
               <div class="quat-panel">
                 <span class="panel-micro-label">QUATERNION</span>
@@ -250,13 +239,11 @@
               </div>
             </div>
           </div>
-
           <!-- Dynamic Chart Console (all charts stacked, no tabs) -->
           <div class="sv-panel charts-console-panel">
             <div class="panel-header">
               <span class="panel-tag">[ GRAPH TRENDS CONSOLE ]</span>
             </div>
-
             <div class="charts-console-content">
               <div class="chart-block-mini">
                 <div class="chart-label">WRIST MAGNITUDE</div>
@@ -290,7 +277,6 @@
           </div>
         </div> <!-- closes col-right -->
       </div> <!-- closes hud-row-upper -->
-
       <!-- Tactical GIS Map Card (100% width) -->
       <div class="sv-panel gps-panel flex-grow-map" style="margin-top: 8px; flex-shrink: 0; min-height: 350px;">
         <div class="panel-header">
@@ -300,7 +286,6 @@
         <div class="gps-layout">
           <div class="map-placeholder">
             <div ref="mapContainer" class="real-map"></div>
-
             <!-- HUD overlays on Map -->
             <div class="map-hud-overlay">
               <div class="radar-scanline"></div>
@@ -314,13 +299,11 @@
                   [{{ isTracking ? 'LKD' : 'FREE' }}]
                 </button>
               </div>
-
               <div class="coord-readout font-mono">
                 <div class="coord-line"><span class="coord-lbl">LAT</span><span class="coord-val">{{ safeToFixed(sensorStore.location?.latitude, 6, '0.000000') }}°</span></div>
                 <div class="coord-line"><span class="coord-lbl">LNG</span><span class="coord-val">{{ safeToFixed(sensorStore.location?.longitude, 6, '0.000000') }}°</span></div>
                 <div class="coord-line"><span class="coord-lbl">HDG</span><span class="coord-val">{{ safeToFixed(sensorStore.imu?.compass_heading, 1, '000.0') }}°</span></div>
               </div>
-
               <div class="hud-terminal-overlay font-mono">
                 <div v-for="(log, idx) in telemetryLogs" :key="idx" class="term-line">
                   <span class="log-ts">[{{ log.timestamp }}]</span>
@@ -332,7 +315,6 @@
           </div>
         </div>
       </div>
-
       <!-- 13 Channels Stats Table (100% width) -->
       <div class="stats-table-wrap compact-table-wrap" style="margin-top: 8px; flex-shrink: 0; max-height: 300px;">
         <div class="panel-header">
@@ -367,7 +349,6 @@
         </div>
       </div>
     </div> <!-- closes hud-grid-container -->
-
     <!-- ═══ RIGHT-DOCKED SIDEBAR TERMINAL LOG ═══ -->
     <div class="sensor-streaming-log-sidebar" :class="{ active: showLogsSidebar }">
       <div class="panel-header" style="margin-bottom: 8px;">
@@ -398,35 +379,28 @@ import { useSensorTelemetryStore } from '../stores/sensorTelemetry'
 import { useDeviceConfigStore } from '../stores/deviceConfig'
 import { useVitalsStore } from '../stores/vitals'
 import DeviceIpConfigModal from '../components/DeviceIpConfigModal.vue'
-
 Chart.register(...registerables)
-
 const sensorStore = useSensorTelemetryStore()
 const cfg = useDeviceConfigStore()
 const vitalsStore = useVitalsStore()
-
 function isActive(status: string) {
   return status === 'LIVE' || status === 'SIMULATED'
 }
-
 function safeToFixed(val: any, decimals: number, fallback = 'OFFLINE'): string {
   if (val === undefined || val === null || isNaN(Number(val))) {
     return fallback
   }
   return Number(val).toFixed(decimals)
 }
-
 function getStatusClass(status: string, defaultClass = 'ok') {
   if (status === 'LIVE') return defaultClass
   if (status === 'SIMULATED') return 'warn'
   return 'danger'
 }
-
 const streamStatus = computed(() => {
   if (!sensorStore.isLive) return 'OFFLINE'
   return sensorStore.isImuSimulated ? 'SIMULATED' : 'LIVE'
 })
-
 // ── Time / status ─────────────────────────────────────────────────────────────
 const currentTime = ref('')
 const packetRate = ref(0)
@@ -434,34 +408,28 @@ const latency = ref(0)
 const deviceLabel = ref('VIVO-HK07-MOBILE')
 let _lastPktCount = 0
 let _pktInterval: number | null = null
-
 const showLogsSidebar = ref(false)
-
 function updateClock() {
   currentTime.value = new Date().toLocaleTimeString('en-GB', { hour12: false })
 }
-
 // ── Sensor badge strip ────────────────────────────────────────────────────────
 const heartStatus = computed(() => {
   if (vitalsStore.current.heartRate <= 0) return 'OFFLINE'
   // Always SIMULATED since phone has no built-in heart rate sensor
   return 'SIMULATED'
 })
-
 // Barometer hardware availability — null means no sensor on this device
 const baroStatus = computed(() => {
   if (!isActive(sensorStore.envStatus)) return sensorStore.envStatus
   // No barometer hardware on phone and cannot be inferred -> OFFLINE
   return 'OFFLINE'
 })
-
 // Wrist Motion hardware status
 const wristStatus = computed(() => {
   if (!isActive(sensorStore.actStatus)) return sensorStore.actStatus
   // Always SIMULATED since phone has no wristband sensor (derived from accelerometer)
   return 'SIMULATED'
 })
-
 const sysState = computed(() => {
   if (!sensorStore.isLive) return 'OFFLINE'
   if (sensorStore.imuStatus === 'OFFLINE' && sensorStore.locStatus === 'OFFLINE' && sensorStore.envStatus === 'OFFLINE' && sensorStore.actStatus === 'OFFLINE') {
@@ -472,13 +440,11 @@ const sysState = computed(() => {
   }
   return 'NOMINAL'
 })
-
 const sysStateClass = computed(() => {
   if (sysState.value === 'NOMINAL') return 'text-live'
   if (sysState.value === 'STALE') return 'text-warn'
   return 'text-danger'
 })
-
 const sensorBadges = computed(() => [
   { key: 'accel',  name: 'ACCEL',    icon: '↗', status: sensorStore.imuStatus },
   { key: 'gyro',   name: 'GYRO',     icon: '⟲', status: sensorStore.imuStatus },
@@ -496,7 +462,6 @@ const sensorBadges = computed(() => [
   { key: 'hr',     name: 'HEART',    icon: '♥', status: heartStatus.value },
   { key: 'hearing', name: 'HEARING', icon: '👂', status: sensorStore.hearingStatus },
 ])
-
 // ── 3D Cube transform ─────────────────────────────────────────────────────────
 const cubeStyle = computed(() => {
   if (!isActive(sensorStore.imuStatus)) {
@@ -512,23 +477,19 @@ const cubeStyle = computed(() => {
     transition: 'transform 0.1s linear',
   }
 })
-
 function absVal(v: number) { return Math.abs(v) }
-
 function getBatteryBar(level: number | undefined) {
   if (!isActive(sensorStore.envStatus)) return '[░░░░░░░░░░]'
   const lvl = level ?? 100.0
   const blocks = Math.max(0, Math.min(10, Math.round(lvl / 10)))
   return `[${'█'.repeat(blocks)}${'░'.repeat(10 - blocks)}]`
 }
-
 function getMicBar(dbfs: number | undefined) {
   if (!isActive(sensorStore.hearingStatus)) return '[░░░░░░░░░░]'
   const val = dbfs ?? -120.0
   const normalized = Math.max(0, Math.min(10, Math.round((val + 80) / 8)))
   return `[${'█'.repeat(normalized)}${'░'.repeat(10 - normalized)}]`
 }
-
 // ── Light/pressure status classes ─────────────────────────────────────────────
 const lightClass = computed(() => {
   if (!isActive(sensorStore.envStatus)) return 'card-danger'
@@ -537,7 +498,6 @@ const lightClass = computed(() => {
   if (lux > 10000) return 'card-warn'
   return 'card-ok'
 })
-
 const pressureDeltaClass = computed(() => {
   if (!isActive(sensorStore.envStatus)) return 'card-danger'
   // null pressure_delta means no barometer hardware — treat as no-data (warn color)
@@ -548,7 +508,6 @@ const pressureDeltaClass = computed(() => {
   if (d > 2) return 'card-warn'
   return 'card-ok'
 })
-
 // ── Activity ──────────────────────────────────────────────────────────────────
 const activityIcon = computed(() => {
   if (!isActive(sensorStore.actStatus)) return '⚠'
@@ -559,13 +518,11 @@ const activityIcon = computed(() => {
   if (t.includes('cycle') || t.includes('bike')) return '🚴'
   return '⊿'
 })
-
 const stepDigits = computed(() => {
   if (!isActive(sensorStore.actStatus)) return ['O', 'F', 'F', 'L', 'I', 'N', 'E']
   const s = String(sensorStore.activity.pedometer_steps).padStart(6, '0')
   return s.split('')
 })
-
 // ── Chart refs ────────────────────────────────────────────────────────────────
 const accelChartRef  = ref<HTMLCanvasElement>()
 const gyroChartRef   = ref<HTMLCanvasElement>()
@@ -574,7 +531,6 @@ const pressureChartRef = ref<HTMLCanvasElement>()
 const pressureDeltaChartRef = ref<HTMLCanvasElement>()
 const wristChartRef  = ref<HTMLCanvasElement>()
 const stepsChartRef  = ref<HTMLCanvasElement>()
-
 let accelChart: Chart | null = null
 let gyroChart: Chart | null = null
 let lightChart: Chart | null = null
@@ -582,7 +538,6 @@ let pressureChart: Chart | null = null
 let pressureDeltaChart: Chart | null = null
 let wristChart: Chart | null = null
 let stepsChart: Chart | null = null
-
 const HUD_DEFAULTS = {
   responsive: true,
   maintainAspectRatio: false,
@@ -596,7 +551,6 @@ const HUD_DEFAULTS = {
     }
   }
 }
-
 function buildLineDataset(label: string, color: string, data: number[]) {
   return {
     label,
@@ -609,7 +563,6 @@ function buildLineDataset(label: string, color: string, data: number[]) {
     fill: false,
   }
 }
-
 function buildBarDataset(label: string, color: string, data: number[]) {
   return {
     label,
@@ -619,14 +572,11 @@ function buildBarDataset(label: string, color: string, data: number[]) {
     borderWidth: 1,
   }
 }
-
 function makeLabels(count: number) {
   return Array.from({ length: count }, (_, i) => i.toString())
 }
-
 function initCharts() {
   if (!accelChartRef.value || !gyroChartRef.value) return
-
   // Accel chart (Line XYZ)
   accelChart = new Chart(accelChartRef.value, {
     type: 'line',
@@ -640,7 +590,6 @@ function initCharts() {
     },
     options: { ...HUD_DEFAULTS } as any,
   })
-
   // Gyro chart (Line XYZ)
   gyroChart = new Chart(gyroChartRef.value!, {
     type: 'line',
@@ -654,7 +603,6 @@ function initCharts() {
     },
     options: { ...HUD_DEFAULTS } as any,
   })
-
   // Light chart (Line)
   lightChart = new Chart(lightChartRef.value!, {
     type: 'line',
@@ -664,7 +612,6 @@ function initCharts() {
     },
     options: { ...HUD_DEFAULTS, scales: { ...HUD_DEFAULTS.scales, y: { ...HUD_DEFAULTS.scales.y, min: 0 } } } as any,
   })
-
   // Pressure bar chart
   pressureChart = new Chart(pressureChartRef.value!, {
     type: 'bar',
@@ -677,7 +624,6 @@ function initCharts() {
       scales: { ...HUD_DEFAULTS.scales, y: { ...HUD_DEFAULTS.scales.y, min: 950, max: 1060 } }
     } as any,
   })
-
   // Pressure delta line
   pressureDeltaChart = new Chart(pressureDeltaChartRef.value!, {
     type: 'line',
@@ -696,7 +642,6 @@ function initCharts() {
       }
     } as any,
   })
-
   // Wrist motion bar
   wristChart = new Chart(wristChartRef.value!, {
     type: 'bar',
@@ -706,7 +651,6 @@ function initCharts() {
     },
     options: { ...HUD_DEFAULTS, scales: { ...HUD_DEFAULTS.scales, y: { ...HUD_DEFAULTS.scales.y, min: 0 } } } as any,
   })
-
   // Steps line
   stepsChart = new Chart(stepsChartRef.value!, {
     type: 'line',
@@ -717,7 +661,6 @@ function initCharts() {
     options: { ...HUD_DEFAULTS, scales: { ...HUD_DEFAULTS.scales, y: { ...HUD_DEFAULTS.scales.y, min: 0 } } } as any,
   })
 }
-
 function updateCharts() {
   const ax = sensorStore.accelXHistory.map(p => p.value)
   const ay = sensorStore.accelYHistory.map(p => p.value)
@@ -729,7 +672,6 @@ function updateCharts() {
     accelChart.data.datasets[2].data = az
     accelChart.update('none')
   }
-
   const gx = sensorStore.gyroXHistory.map(p => p.value)
   const gy = sensorStore.gyroYHistory.map(p => p.value)
   const gz = sensorStore.gyroZHistory.map(p => p.value)
@@ -740,42 +682,36 @@ function updateCharts() {
     gyroChart.data.datasets[2].data = gz
     gyroChart.update('none')
   }
-
   const lux = sensorStore.lightHistory.map(p => p.value)
   if (lightChart) {
     lightChart.data.labels = makeLabels(lux.length)
     lightChart.data.datasets[0].data = lux
     lightChart.update('none')
   }
-
   const pres = sensorStore.pressureHistory.map(p => p.value)
   if (pressureChart) {
     pressureChart.data.labels = makeLabels(pres.length)
     pressureChart.data.datasets[0].data = pres
     pressureChart.update('none')
   }
-
   const pdelta = sensorStore.pressureDeltaHistory.map(p => p.value)
   if (pressureDeltaChart) {
     pressureDeltaChart.data.labels = makeLabels(pdelta.length)
     pressureDeltaChart.data.datasets[0].data = pdelta
     pressureDeltaChart.update('none')
   }
-
   const wm = sensorStore.wristMagHistory.map(p => p.value)
   if (wristChart) {
     wristChart.data.labels = makeLabels(wm.length)
     wristChart.data.datasets[0].data = wm
     wristChart.update('none')
   }
-
   const steps = sensorStore.stepsHistory.map(p => p.value)
   if (stepsChart) {
     stepsChart.data.labels = makeLabels(steps.length)
     stepsChart.data.datasets[0].data = steps
     stepsChart.update('none')
   }
-
   // Update rotating tactical scan sweep sector on Leaflet map
   if (mapInstance && (window as any).L) {
     const lat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
@@ -783,10 +719,8 @@ function updateCharts() {
     updateTacticalLayers((window as any).L, lat, lng)
   }
 }
-
 // ── Statistics Table ──────────────────────────────────────────────────────────
 const sessionMinMax: Record<string, { min: number; max: number }> = {}
-
 function trackMinMax(key: string, val: number) {
   if (!sessionMinMax[key]) sessionMinMax[key] = { min: val, max: val }
   else {
@@ -795,13 +729,11 @@ function trackMinMax(key: string, val: number) {
   }
   return sessionMinMax[key]
 }
-
 const statsTableRows = computed(() => {
   const imu = sensorStore.imu
   const env = sensorStore.environment
   const loc = sensorStore.location
   const act = sensorStore.activity
-
   const rows = [
     { sensor: 'ACCEL X', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.linear_acceleration?.x, 3) : 'OFFLINE', unit: 'm/s²', key: 'ax', val: imu?.linear_acceleration?.x, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
     { sensor: 'ACCEL Y', current: isActive(sensorStore.imuStatus) ? safeToFixed(imu?.linear_acceleration?.y, 3) : 'OFFLINE', unit: 'm/s²', key: 'ay', val: imu?.linear_acceleration?.y, statusClass: getStatusClass(sensorStore.imuStatus), status: sensorStore.imuStatus },
@@ -888,7 +820,6 @@ const statsTableRows = computed(() => {
     { sensor: 'MIC INTENSITY', current: isActive(sensorStore.hearingStatus) ? safeToFixed(sensorStore.hearing?.intensity, 1) : 'OFFLINE', unit: 'dBFS', key: 'mic_int', val: sensorStore.hearing?.intensity, statusClass: getStatusClass(sensorStore.hearingStatus), status: sensorStore.hearingStatus },
     { sensor: 'HEARING TRANSCRIPT', current: isActive(sensorStore.hearingStatus) ? (sensorStore.hearing?.transcript || 'STANDBY...') : 'OFFLINE', unit: '', key: 'mic_tx', val: 0, statusClass: getStatusClass(sensorStore.hearingStatus), status: sensorStore.hearingStatus },
   ]
-
   return rows.map(r => {
     const mm = (r.key !== 'acttype' && isActive(r.status) && r.val !== undefined && r.val !== null) ? trackMinMax(r.key, r.val) : null
     return {
@@ -898,7 +829,6 @@ const statsTableRows = computed(() => {
     }
   })
 })
-
 // ── CSV Export ────────────────────────────────────────────────────────────────
 function exportCSV() {
   const headers = ['SENSOR', 'CURRENT', 'UNIT', 'MIN', 'MAX', 'STATUS']
@@ -914,13 +844,11 @@ function exportCSV() {
   a.click()
   URL.revokeObjectURL(url)
 }
-
 // ── GPS Leaflet Map Integration ─────────────────────────────────────────────
 const mapContainer = ref<HTMLElement | null>(null)
 let mapInstance: any = null
 let markerInstance: any = null
 let tacticalLayersGroup: any = null
-
 interface TelemetryLogEntry {
   timestamp: string
   level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG'
@@ -928,13 +856,11 @@ interface TelemetryLogEntry {
   source: string
   content: string
 }
-
 function getFormattedTime(): string {
   const d = new Date()
   const pad = (n: number) => n.toString().padStart(2, '0')
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${d.getMilliseconds().toString().padStart(3, '0')}`
 }
-
 const telemetryLogs = ref<TelemetryLogEntry[]>([
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'Connecting SAT_LINK_9... OK' },
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'SEC_UPLINK: LOCK_ACTIVE' },
@@ -942,7 +868,6 @@ const telemetryLogs = ref<TelemetryLogEntry[]>([
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'TELEMETRY_STREAM: RUNNING' },
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'ALL_SYSTEMS_NOMINAL' }
 ])
-
 const sensorStreamingLogs = ref<TelemetryLogEntry[]>([
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'Connecting SAT_LINK_9... OK' },
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'SEC_UPLINK: LOCK_ACTIVE' },
@@ -950,9 +875,7 @@ const sensorStreamingLogs = ref<TelemetryLogEntry[]>([
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'TELEMETRY_STREAM: RUNNING' },
   { timestamp: getFormattedTime(), level: 'INFO', type: 'info', source: 'hk07.main', content: 'ALL_SYSTEMS_NOMINAL' }
 ])
-
 const sensorLogsContainerRef = ref<HTMLDivElement | null>(null)
-
 function addTelemetryLog(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', source: string, content: string) {
   const typeMap = { INFO: 'info', WARN: 'warn', ERROR: 'error', DEBUG: 'debug' } as const
   const entry = {
@@ -962,24 +885,20 @@ function addTelemetryLog(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', source: str
     source,
     content
   }
-
   telemetryLogs.value.push(entry)
   if (telemetryLogs.value.length > 5) {
     telemetryLogs.value.shift()
   }
-
   sensorStreamingLogs.value.push(entry)
   if (sensorStreamingLogs.value.length > 100) {
     sensorStreamingLogs.value.shift()
   }
-
   nextTick(() => {
     if (sensorLogsContainerRef.value) {
       sensorLogsContainerRef.value.scrollTop = sensorLogsContainerRef.value.scrollHeight
     }
   })
 }
-
 function copyAllLogs() {
   const text = sensorStreamingLogs.value.map(log => `[${log.timestamp}] [${log.level}] ${log.source} — ${log.content}`).join('\n')
   navigator.clipboard.writeText(text).then(() => {
@@ -988,11 +907,9 @@ function copyAllLogs() {
     console.error('Failed to copy logs:', err)
   })
 }
-
 function clearLogs() {
   sensorStreamingLogs.value = []
 }
-
 let lastImuLogTime = 0
 watch(
   () => sensorStore.lastImuMs,
@@ -1008,7 +925,6 @@ watch(
     }
   }
 )
-
 let lastLocLogTime = 0
 watch(
   () => sensorStore.lastLocMs,
@@ -1023,7 +939,6 @@ watch(
     }
   }
 )
-
 let lastEnvLogTime = 0
 watch(
   () => sensorStore.lastEnvMs,
@@ -1038,7 +953,6 @@ watch(
     }
   }
 )
-
 let lastActLogTime = 0
  watch(
    () => sensorStore.lastActMs,
@@ -1053,7 +967,6 @@ let lastActLogTime = 0
      }
    }
  )
-
  let lastHearingLogTime = 0
  watch(
    () => sensorStore.lastHearingMs,
@@ -1067,9 +980,7 @@ let lastActLogTime = 0
      }
    }
  )
-
 let _blueprintAnimFrame: number | null = null
-
 const currentZoom = ref(17)
 const isTracking = ref(true)
 const tacticalRanges = [
@@ -1079,7 +990,6 @@ const tacticalRanges = [
   { label: '1km', zoom: 16 },
   { label: '5km', zoom: 14 }
 ]
-
 function setTacticalRange(zoom: number) {
   currentZoom.value = zoom
   if (mapInstance) {
@@ -1088,7 +998,6 @@ function setTacticalRange(zoom: number) {
     mapInstance.setView([lat, lng], zoom)
   }
 }
-
 function recenterMap() {
   isTracking.value = true
   if (mapInstance) {
@@ -1097,7 +1006,6 @@ function recenterMap() {
     mapInstance.setView([lat, lng], mapInstance.getZoom() || currentZoom.value)
   }
 }
-
 function loadLeaflet(): Promise<any> {
   return new Promise((resolve, reject) => {
     if ((window as any).L) {
@@ -1109,7 +1017,6 @@ function loadLeaflet(): Promise<any> {
     link.rel = 'stylesheet'
     link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
     document.head.appendChild(link)
-
     // Load Leaflet JS
     const script = document.createElement('script')
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -1118,7 +1025,6 @@ function loadLeaflet(): Promise<any> {
     document.body.appendChild(script)
   })
 }
-
 function updateTacticalLayers(L: any, lat: number, lng: number) {
   if (!mapInstance) return
   if (!tacticalLayersGroup) {
@@ -1126,11 +1032,9 @@ function updateTacticalLayers(L: any, lat: number, lng: number) {
   } else {
     tacticalLayersGroup.clearLayers()
   }
-
   // Terminal green palette
   const gridColor  = 'rgba(0, 255, 102, 0.22)'   // #00FF66 — geo graticule grid
   const gridWeight = 0.6
-
   // ── GEO GRATICULE GRID ─────────────────────────────────────────────────────
   // Draw lat lines every ~100m and lng lines every ~100m around current position
   // visible radius: ±500m in each axis
@@ -1138,12 +1042,10 @@ function updateTacticalLayers(L: any, lat: number, lng: number) {
   const radiusM  = 500
   const meterToLat = (m: number) => m / 111320
   const meterToLng = (m: number) => m / (111320 * Math.cos((lat * Math.PI) / 180))
-
   const latStep = meterToLat(stepM)
   const lngStep = meterToLng(stepM)
   const latSpan = meterToLat(radiusM)
   const lngSpan = meterToLng(radiusM)
-
   // Latitude lines (horizontal lines)
   const latStart = Math.ceil((lat - latSpan) / latStep) * latStep
   for (let lineLat = latStart; lineLat <= lat + latSpan; lineLat += latStep) {
@@ -1152,7 +1054,6 @@ function updateTacticalLayers(L: any, lat: number, lng: number) {
       { color: gridColor, weight: gridWeight, interactive: false, opacity: 1 }
     ).addTo(tacticalLayersGroup)
   }
-
   // Longitude lines (vertical lines)
   const lngStart = Math.ceil((lng - lngSpan) / lngStep) * lngStep
   for (let lineLng = lngStart; lineLng <= lng + lngSpan; lineLng += lngStep) {
@@ -1161,7 +1062,6 @@ function updateTacticalLayers(L: any, lat: number, lng: number) {
       { color: gridColor, weight: gridWeight, interactive: false, opacity: 1 }
     ).addTo(tacticalLayersGroup)
   }
-
   // ── POSITION MARKER ──
   L.circle([lat, lng], {
     radius: 8,
@@ -1171,12 +1071,10 @@ function updateTacticalLayers(L: any, lat: number, lng: number) {
     interactive: false
   }).addTo(tacticalLayersGroup)
 }
-
 function initMap(L: any) {
   if (!mapContainer.value) return
   const initLat = sensorStore.location.latitude !== 0 ? sensorStore.location.latitude : 10.3955
   const initLng = sensorStore.location.longitude !== 0 ? sensorStore.location.longitude : 105.4213
-
   mapInstance = L.map(mapContainer.value, {
     zoomControl: false,          // disabled default zoom controls (replaced with tactical range scale)
     attributionControl: false,
@@ -1187,17 +1085,14 @@ function initMap(L: any) {
     keyboard: false,
     touchZoom: true
   }).setView([initLat, initLng], currentZoom.value)
-
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(mapInstance)
-
   // Auto-disable tracking mode if the user manually drags the viewport
   mapInstance.on('dragstart', () => {
     isTracking.value = false
   })
-
   // Sonar pulsing position marker
   const pingIcon = L.divIcon({
     className: 'gps-sonar-ping',
@@ -1205,13 +1100,10 @@ function initMap(L: any) {
     iconSize: [24, 24],
     iconAnchor: [12, 12]
   })
-
   markerInstance = L.marker([initLat, initLng], { icon: pingIcon }).addTo(mapInstance)
-
   // Initial graticule grid draw
   updateTacticalLayers(L, initLat, initLng)
 }
-
 watch(
   () => [sensorStore.location.latitude, sensorStore.location.longitude],
   ([lat, lng]) => {
@@ -1227,31 +1119,24 @@ watch(
     }
   }
 )
-
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 let _clockInterval: number | null = null
 let _chartInterval: number | null = null
-
 onMounted(async () => {
   // Try to load dynamic IP configuration from backend first
   await cfg.fetchBackendConfig();
-
   updateClock()
   _clockInterval = window.setInterval(updateClock, 1000)
-
   await nextTick()
   initCharts()
-
   // Update charts at 10 FPS
   _chartInterval = window.setInterval(updateCharts, 100)
-
   // Packet rate counter
   _pktInterval = window.setInterval(() => {
     const current = sensorStore.stepsHistory.length
     packetRate.value = Math.abs(current - _lastPktCount)
     _lastPktCount = current
   }, 1000)
-
   // Initialize Map
   try {
     const L = await loadLeaflet()
@@ -1260,7 +1145,6 @@ onMounted(async () => {
     console.error('Failed to load Leaflet:', e)
   }
 })
-
 onUnmounted(() => {
   if (_clockInterval) clearInterval(_clockInterval)
   if (_chartInterval) clearInterval(_chartInterval)
@@ -1273,18 +1157,15 @@ onUnmounted(() => {
   pressureDeltaChart?.destroy()
   wristChart?.destroy()
   stepsChart?.destroy()
-
   if (mapInstance) {
     mapInstance.remove()
     mapInstance = null
   }
 })
 </script>
-
 <style scoped>
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Orbitron:wght@700;900&family=Roboto+Mono:wght@300;400&display=swap');
-
 .sensor-view {
   position: relative;
   display: flex;
@@ -1303,7 +1184,6 @@ onUnmounted(() => {
     rgba(0,255,102,0.015) 4px
   );
 }
-
 /* ── CINEMATIC HUD TERMINAL LOADER ───────────────────────────────────────── */
 .hud-terminal-loader {
   position: absolute;
@@ -1325,14 +1205,12 @@ onUnmounted(() => {
   0%, 100% { opacity: 0.3; text-shadow: 0 0 2px rgba(0, 255, 102, 0.2); }
   50% { opacity: 1; text-shadow: 0 0 10px rgba(0, 255, 102, 0.8); }
 }
-
 /* Corner reticles */
 .corner { position: absolute; font-size: 20px; color: #00FF6655; font-family: monospace; }
 .corner.tl { top: 4px; left: 4px; }
 .corner.tr { top: 4px; right: 4px; }
 .corner.bl { bottom: 4px; left: 4px; }
 .corner.br { bottom: 4px; right: 4px; }
-
 /* ─── Header ───────────────────────────────────────────────────────────────── */
 .sv-header {
   display: flex;
@@ -1417,7 +1295,6 @@ onUnmounted(() => {
   color: #00FF6666;
   letter-spacing: 2px;
 }
-
 /* ─── Sensor Badge Strip ───────────────────────────────────────────────────── */
 .sensor-strip {
   display: flex;
@@ -1443,7 +1320,6 @@ onUnmounted(() => {
 .badge-icon { font-size: 10px; }
 .badge-name { color: inherit; }
 .badge-state { font-size: 8px; opacity: 0.7; }
-
 /* Header Log Toggle Button */
 .hud-btn-toggle-log {
   background: transparent;
@@ -1462,7 +1338,6 @@ onUnmounted(() => {
   background: rgba(0, 255, 102, 0.15);
   box-shadow: 0 0 6px rgba(0, 255, 102, 0.4);
 }
-
 /* Sensor Streaming Log Sidebar */
 .sensor-streaming-log-sidebar {
   position: fixed;
@@ -1506,7 +1381,6 @@ onUnmounted(() => {
   background: rgba(0, 255, 102, 0.3);
   border-radius: 2px;
 }
-
 /* Tactical Copy / Clear Buttons styling */
 .btn-copy-tactical {
   background: rgba(0, 0, 0, 0.9);
@@ -1525,7 +1399,6 @@ onUnmounted(() => {
   color: #000000;
   box-shadow: 0 0 6px #00FF66bb;
 }
-
 .btn-clear-tactical {
   background: rgba(0, 0, 0, 0.9);
   border: 1px solid #FF3333;
@@ -1543,7 +1416,6 @@ onUnmounted(() => {
   color: #000000;
   box-shadow: 0 0 6px #FF3333bb;
 }
-
 .sv-panel {
   display: flex;
   flex-direction: column;
@@ -1553,7 +1425,6 @@ onUnmounted(() => {
   padding: 12px;
   backdrop-filter: blur(4px);
 }
-
 /* ─── Battery Panel ───────────────────────────────────────────────────────── */
 .battery-stats {
   display: flex;
@@ -1580,7 +1451,6 @@ onUnmounted(() => {
   margin: 4px 0;
   text-shadow: 0 0 4px rgba(0, 255, 102, 0.5);
 }
-
 /* ─── GPS Layout ──────────────────────────────────────────────────────────── */
 .gps-layout {
   display: flex;
@@ -1612,7 +1482,6 @@ onUnmounted(() => {
   opacity: 0.95;
   transition: filter 0.3s, opacity 0.3s;
 }
-
 .map-hud-overlay {
   position: absolute;
   inset: 0;
@@ -1623,7 +1492,6 @@ onUnmounted(() => {
   justify-content: center;
   overflow: hidden;
 }
-
 /* Radar scanline sweep */
 .radar-scanline {
   position: absolute;
@@ -1639,11 +1507,9 @@ onUnmounted(() => {
   0% { top: 0%; }
   100% { top: 100%; }
 }
-
 .text-live { color: #00FF66 !important; }
 .text-danger { color: #FF3333 !important; }
 .text-blue { color: #0088FF !important; }
-
 /* Pulsing Sonar Ping Pin Marker styling */
 .gps-sonar-ping {
   position: relative;
@@ -1679,7 +1545,6 @@ onUnmounted(() => {
     opacity: 0;
   }
 }
-
 /* ─── Zero Scroll Layout Grid ─────────────────────────────────────────── */
 .sensor-view {
   display: flex;
@@ -1709,7 +1574,6 @@ onUnmounted(() => {
   overflow-y: auto;
   box-sizing: border-box;
 }
-
 /* ── UPPER ROW: 30% (left, scrollable) / 70% (right, scrollable) ── */
 /* Both columns are stretched to the same height (row height = tallest
    column's content), so their bottom edges are always aligned. */
@@ -1734,7 +1598,6 @@ onUnmounted(() => {
 .hud-column.col-right {
   overflow-y: auto;
 }
-
 /* Scrollbar customizations */
 .hud-column::-webkit-scrollbar,
 .table-scroll-container::-webkit-scrollbar {
@@ -1754,7 +1617,6 @@ onUnmounted(() => {
 .table-scroll-container::-webkit-scrollbar-thumb:hover {
   background: #00FF66aa;
 }
-
 /* Panel structures */
 .sv-panel {
   border: 1px solid rgba(0, 255, 102, 0.22);
@@ -1793,7 +1655,6 @@ onUnmounted(() => {
   display: block;
   margin-bottom: 2px;
 }
-
 /* Environment Metrics List style */
 .stat-vertical-list {
   display: flex;
@@ -1828,7 +1689,6 @@ onUnmounted(() => {
 .stat-card.card-danger .stat-val { color: #FF3333; }
 .stat-unit { font-size: 7px; color: #00FF6655; }
 .stat-name { font-size: 8px; color: #00FF6688; font-family: 'Roboto Mono', monospace; }
-
 /* ─── Orientation Cube ──────────────────────────────────────────────────────*/
 .orientation-wrap {
   display: flex;
@@ -1866,7 +1726,6 @@ onUnmounted(() => {
 .face.right  { transform: rotateY(90deg) translateZ(23px); }
 .face.top    { transform: rotateX(90deg) translateZ(23px); }
 .face.bottom { transform: rotateX(-90deg) translateZ(23px); }
-
 .euler-readout { display: flex; flex-direction: column; gap: 2px; }
 .euler-row {
   display: flex;
@@ -1884,11 +1743,9 @@ onUnmounted(() => {
   text-align: right;
 }
 .euler-val.text-warn { color: #FFB000; }
-
 /* ─── Compass ────────────────────────────────────────────────────────────── */
 .compass-wrap { display: flex; justify-content: center; flex-shrink: 0; }
 .compass-svg { width: 75px; height: 75px; }
-
 /* ─── Quaternion & Mag Panels ─────────────────────────────────────────────── */
 .quat-panel, .mag-panel { background: #00000088; border: 1px solid #00FF6611; padding: 4px; }
 .quat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
@@ -1898,12 +1755,10 @@ onUnmounted(() => {
 }
 .quat-item span { color: #00FF6666; font-family: 'Roboto Mono', monospace; font-size: 8px; }
 .quat-item b { color: #00FF66; font-family: 'Roboto Mono', monospace; font-size: 8px; font-weight: 400; }
-
 .mag-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2px; }
 .mag-item { display: flex; flex-direction: column; align-items: center; }
 .mag-item span { font-size: 7px; color: #00FF6666; font-family: 'Roboto Mono', monospace; }
 .mag-item b { font-size: 8px; color: #00FF66; font-family: 'Roboto Mono', monospace; font-weight: 400; }
-
 /* ─── Odometer Activity ──────────────────────────────────────────────────── */
 .odometer-wrap {
   display: flex;
@@ -1928,7 +1783,6 @@ onUnmounted(() => {
   text-shadow: 0 0 4px #00FF66;
 }
 .odometer-unit { font-size: 8px; color: #00FF6666; letter-spacing: 2px; }
-
 .activity-type-wrap {
   display: flex;
   align-items: center;
@@ -1949,7 +1803,6 @@ onUnmounted(() => {
 .act-walking, .act-walk { color: #00FF66; }
 .act-running, .act-run { color: #FFB000; }
 .act-still, .act-stationary { color: #00FF6688; }
-
 /* ─── Map Flexible Frame ─────────────────────────────────────────────────── */
 .flex-grow-map {
   flex-grow: 1;
@@ -1977,7 +1830,6 @@ onUnmounted(() => {
   background: #080D10;
   border: 1px solid rgba(0, 255, 102, 0.2);
 }
-
 /* Custom overlay metrics on Map */
 .map-hud-overlay {
   pointer-events: none;
@@ -2030,7 +1882,6 @@ onUnmounted(() => {
 }
 .coord-lbl { color: #00FF6688; }
 .coord-val { color: #00FF66; font-weight: bold; }
-
 .hud-terminal-overlay {
   position: absolute;
   bottom: 6px; left: 6px; right: 6px;
@@ -2076,7 +1927,6 @@ onUnmounted(() => {
   color: #00FF66;
   opacity: 0.95;
 }
-
 /* ─── Compact Table (100% width, bottom) ─────────────────────────────────── */
 .compact-table-wrap {
   border: 1px solid #00FF6622;
@@ -2102,7 +1952,6 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .export-btn-mini:hover { background: #00FF6622; }
-
 .stats-table.compact {
   width: 100%;
   border-collapse: collapse;
@@ -2132,7 +1981,6 @@ onUnmounted(() => {
 .pill-stale { border-color: #FFB000; color: #FFB000; }
 .pill-simulated, .pill-warn { border-color: #FFB000; color: #FFB000; background: rgba(255, 176, 0, 0.08); }
 .pill-danger, .pill-offline { border-color: #FF3333; color: #FF3333; background: rgba(255, 51, 51, 0.08); }
-
 /* ─── Charts Console (stacked, no tabs) ──────────────────────────────────── */
 .charts-console-panel {
   display: flex;
@@ -2161,7 +2009,6 @@ onUnmounted(() => {
   height: 70px !important;
   width: 100% !important;
 }
-
 /* Responsive adjustments */
 @media (max-width: 1024px) {
   .hud-row-upper {
@@ -2177,7 +2024,6 @@ onUnmounted(() => {
     overflow: visible;
   }
 }
-
 /* Blinking 1Hz dot */
 :global(.blinking-dot) {
   animation: blink-1hz 1s infinite steps(1);
@@ -2186,7 +2032,6 @@ onUnmounted(() => {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
-
 /* Audio wave oscillator */
 .bar-osc {
   width: 3px;

@@ -20,13 +20,14 @@ import time
 from typing import Optional, Dict, Any
 
 import httpx
+from services.llm_client import is_ollama_vision_cb_open, record_ollama_vision_failure, record_ollama_vision_success
 
 log = logging.getLogger("hk07.local_vision")
 
 # ── Ollama Configuration ──────────────────────────────────────────────────────
 OLLAMA_BASE_URL  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL     = os.getenv("OLLAMA_VISION_MODEL", "moondream")  # moondream | llava
-OLLAMA_TIMEOUT   = float(os.getenv("OLLAMA_VISION_TIMEOUT_S", "8.0"))
+OLLAMA_TIMEOUT   = float(os.getenv("OLLAMA_VISION_TIMEOUT_S", "45.0"))
 LATENCY_GATE_S   = 2.0   # If cloud LLM latency > 2.0s → local evaluator kicks in
 
 # ── Shared Availability Flag (module-level) ───────────────────────────────────
@@ -50,16 +51,34 @@ async def _pull_ollama_model(model_name: str):
     except Exception as e:
         log.error("[LOCAL_VISION] Error pulling model '%s': %s", model_name, e)
 
+_OLLAMA_PROBE_CANDIDATES = [
+    OLLAMA_BASE_URL,
+    "http://localhost:11434",
+    "http://127.0.0.1:11434",
+    "http://host.docker.internal:11434",  # WSL2 → Docker Desktop host bridge
+    "http://172.17.0.1:11434",            # Docker bridge network from WSL
+]
+
 async def _probe_ollama() -> bool:
-    """Probe Ollama /api/tags endpoint to confirm service is live."""
+    """
+    Probe all candidate Ollama URLs concurrently and pick the first responsive one.
+    Uses 5.0s per probe to accommodate WSL/Docker cold-start latency.
+    """
     global _ollama_available, _ollama_probe_ts, _resolved_vision_model
     now = time.monotonic()
     if _ollama_available is not None and (now - _ollama_probe_ts) < _OLLAMA_PROBE_TTL:
         return _ollama_available
 
-    try:
-        async with httpx.AsyncClient(timeout=1.5) as client:
-            resp = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
+    # Deduplicate candidates while preserving order
+    seen: set = set()
+    candidates = [u for u in _OLLAMA_PROBE_CANDIDATES if not (u in seen or seen.add(u))]  # type: ignore
+
+    # Try each candidate sequentially with a 5s budget per host
+    _winning_ollama_url: str | None = None
+    for url in candidates:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{url}/api/tags")
             if resp.status_code == 200:
                 models = [m.get("name", "") for m in resp.json().get("models", [])]
                 # Accept any moondream or llava variant
@@ -71,27 +90,35 @@ async def _probe_ollama() -> bool:
                         if OLLAMA_MODEL in m:
                             matched_model = m
                             break
-                            
+
                 if matched_model:
                     _resolved_vision_model = matched_model
-                    log.info("[LOCAL_VISION] Ollama available. Model '%s' resolved to '%s'.", OLLAMA_MODEL, _resolved_vision_model)
+                    _winning_ollama_url = url
+                    log.info("[LOCAL_VISION] Ollama available on %s. Model '%s' resolved to '%s'.", url, OLLAMA_MODEL, _resolved_vision_model)
                     _ollama_available = True
+                    break  # found a working host
                 else:
                     log.warning(
-                        "[LOCAL_VISION] Ollama running but model '%s' not found. Available: %s",
-                        OLLAMA_MODEL, models
+                        "[LOCAL_VISION] Ollama on %s running but model '%s' not found. Available: %s",
+                        url, OLLAMA_MODEL, models
                     )
-                    # Trigger background dynamic pull
-                    asyncio.create_task(_pull_ollama_model(OLLAMA_MODEL))
-                    _ollama_available = False
-            else:
-                _ollama_available = False
-    except Exception as exc:
-        log.debug("[LOCAL_VISION] Ollama probe failed: %s", exc)
+                    # Trigger background dynamic pull on first candidate only
+                    if url == candidates[0]:
+                        asyncio.create_task(_pull_ollama_model(OLLAMA_MODEL))
+        except Exception as exc:
+            log.debug("[LOCAL_VISION] Ollama probe failed on %s: %s", url, exc)
+            continue
+
+    if _winning_ollama_url is None:
+        log.warning("[LOCAL_VISION] No Ollama host responded. All %d candidates failed.", len(candidates))
         _ollama_available = False
 
+    # Persist the winning URL for subsequent API calls
+    global _active_ollama_url
+    _active_ollama_url = _winning_ollama_url or OLLAMA_BASE_URL
+
     _ollama_probe_ts = now
-    return _ollama_available  # type: ignore
+    return bool(_ollama_available)
 
 
 # ── Core Ollama Vision Call ───────────────────────────────────────────────────
@@ -103,8 +130,27 @@ async def _call_ollama_vision(
     """
     POST to Ollama /api/generate with a base64 image payload.
     Returns raw text response or None on failure.
-    Uses a strict OLLAMA_TIMEOUT budget — never blocks main loop.
+
+    CPU/RAM optimization: image downscaled to 336×336 (moondream native input)
+    to reduce inference time from 60s+ to ~15-20s on memory-constrained hardware.
     """
+    # ── Image downsample to 336×336 max ───────────────────────────────────────
+    try:
+        import cv2
+        import numpy as np
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is not None:
+            h, w = img.shape[:2]
+            max_dim = 336
+            if max(h, w) > max_dim:
+                scale = max_dim / max(h, w)
+                img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            image_bytes = buf.tobytes()
+    except Exception:
+        pass  # non-fatal: fall through with original bytes
+
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     prompt = (
         "You are a medical-support AI vision system for robot Hugo (Sanitas HK-07). "
@@ -128,17 +174,23 @@ async def _call_ollama_vision(
         "prompt": prompt,
         "images": [b64],
         "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 256}
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 192,  # sufficient for JSON schema
+            "num_ctx": 1024,     # reduced context → less RAM allocated
+        }
     }
 
+    # Use the dynamically resolved URL from the last successful probe
+    target_url = globals().get("_active_ollama_url", OLLAMA_BASE_URL)
     try:
         async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
-            resp = await client.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
+            resp = await client.post(f"{target_url}/api/generate", json=payload)
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("response", "").strip()
     except Exception as exc:
-        log.error("[LOCAL_VISION] Ollama API call failed: %s", exc)
+        log.error("[LOCAL_VISION] Ollama API call failed on %s: %s", target_url, exc)
     return None
 
 
@@ -172,54 +224,19 @@ def _parse_vision_json(raw: str) -> Optional[Dict[str, Any]]:
 def _vitals_only_fallback(vitals_str: str) -> Dict[str, Any]:
     """
     Zero-dependency rule-based fallback when Ollama is also unavailable.
-    Uses the vitals string to derive risk level without any I/O.
-    Optimized to dynamically import and check `_sensor_cache` in-memory.
+    Returns VLM disconnected status and no detection, with absolutely no mock/fake data.
     """
-    risk = "LOW"
-    posture_risk = "LOW"
-    
-    # Try fetching real-time status from main._sensor_cache
-    try:
-        from main import _sensor_cache
-        vitals = _sensor_cache.get("vitals") or {}
-        fall = _sensor_cache.get("fall_detected", False)
-        fever = _sensor_cache.get("fever_alert", False)
-        
-        # In-memory validation
-        hr = vitals.get("hr", 0.0)
-        temp = vitals.get("temp", 0.0)
-        spo2 = vitals.get("spo2", 100.0)
-        
-        if fall or fever or hr > 140 or hr < 40 or temp > 38.5 or spo2 < 88:
-            risk = "CRITICAL"
-        elif hr > 100 or temp > 37.5 or spo2 < 95:
-            risk = "HIGH"
-            
-        if fall:
-            posture_risk = "HIGH"
-            
-        notes = f"[DEGRADED MODE] Mất kết nối Cloud Vision. Chế độ offline cục bộ. Chỉ số: HR={hr:.0f} bpm, Temp={temp:.1f} C, SpO2={spo2:.0f}%, Fall={fall}"
-    except Exception as exc:
-        log.warning("[LOCAL_VISION] Error querying _sensor_cache, fallback to parsing vitals_str: %s", exc)
-        # Fallback to string heuristic if main._sensor_cache import fails or key is missing
-        vs_lower = vitals_str.lower()
-        if any(k in vs_lower for k in ["critical", "emergency", ">140", "<40", "spo2<88", "fall"]):
-            risk = "CRITICAL"
-        elif any(k in vs_lower for k in ["high", "fever", "tachycardia", "bradycardia"]):
-            risk = "HIGH"
-        notes = f"[DEGRADED MODE] Mất kết nối Cloud Vision. Không có dữ liệu VLM. Chỉ số: {vitals_str}"
-
     return {
-        "skin_tone_note": "",
-        "facial_distress": 0.0,
+        "skin_tone_note": "MẤT KẾT NỐI VLM",
+        "facial_distress": -1.0,
         "visible_injuries": [],
-        "posture_risk": posture_risk,
-        "overall_risk": risk,
-        "confidence": 0.3,
-        "notes": notes,
-        "status": "DEGRADED_LOCAL_OFFLINE",
-        "alertLevel": "NORMAL" if risk == "LOW" else "WARNING",
-        "nearest_obstacle_m": 1.5,
+        "posture_risk": "UNKNOWN",
+        "overall_risk": "UNKNOWN",
+        "confidence": 0.0,
+        "notes": "[MẤT KẾT NỐI VLM] Không có kết nối tới máy chủ AI nhận diện hình ảnh. Không thể phát hiện hoặc nhận diện.",
+        "status": "VLM_DISCONNECTED",
+        "alertLevel": "UNKNOWN",
+        "nearest_obstacle_m": -1.0,
     }
 
 
@@ -261,6 +278,15 @@ class LocalVisionEvaluator:
             Dict matching PerceptionScan field schema.
         """
         t_start = time.perf_counter()
+
+        # ── 1. Circuit Breaker Check ──────────────────────────────────────────
+        if is_ollama_vision_cb_open():
+            log.warning(
+                "[LOCAL_VISION] ⚡ Vision Circuit Breaker is OPEN (Ollama CPU swap). "
+                "Bypassing Ollama evaluation instantly to avoid 45s lag."
+            )
+            return _vitals_only_fallback(vitals_str)
+
         ollama_ok = await _probe_ollama()
 
         if ollama_ok and image_bytes:
@@ -277,12 +303,18 @@ class LocalVisionEvaluator:
                             "[LOCAL_VISION] Ollama/%s completed in %.0fms — risk=%s",
                             OLLAMA_MODEL, elapsed_ms, parsed.get("overall_risk")
                         )
+                        # ── Record CB Success ─────────────────────────────────
+                        record_ollama_vision_success()
                         return parsed
                     log.warning("[LOCAL_VISION] Ollama returned unparseable JSON: %s", raw_text[:120])
             except asyncio.TimeoutError:
                 log.error("[LOCAL_VISION] Ollama hard timeout (%.1fs). Routing to rule-based.", OLLAMA_TIMEOUT)
+                # ── Record CB Failure (Timeout) ──────────────────────────────
+                record_ollama_vision_failure()
             except Exception as exc:
                 log.error("[LOCAL_VISION] Unexpected Ollama error: %s", exc)
+                # ── Record CB Failure (Exception) ────────────────────────────
+                record_ollama_vision_failure()
 
         # Final safety net — always succeeds, zero-dependency
         log.warning("[LOCAL_VISION] Activating zero-dependency rule-based vitals assessment.")

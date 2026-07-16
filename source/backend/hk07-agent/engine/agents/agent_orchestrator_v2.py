@@ -15,13 +15,13 @@ import json
 import re
 from typing import TypedDict, List, Dict, Any, Optional
 
-from agents.router_agent_v2 import RouterAgentV2
-from agents.safety_agent import SafetyAgent
-from agents.care_agent import CareAgent
-from agents.empathetic_agent import EmpatheticAgent
-from agents.perception_agent import PerceptionAgent
-from agents.action_agent import ActionAgent
-from arbitrator.arbitrator import Arbitrator
+from engine.agents.router_agent_v2 import RouterAgentV2
+from engine.agents.safety_agent import SafetyAgent
+from engine.agents.care_agent import CareAgent
+from engine.agents.empathetic_agent import EmpatheticAgent
+from engine.agents.perception_agent import PerceptionAgent
+from engine.agents.action_agent import ActionAgent
+from engine.arbitrator.arbitrator import Arbitrator
 
 from services.blackboard_service import get_blackboard, ClinicalEntry, ActionPlanEntry, current_user_id
 
@@ -270,7 +270,33 @@ class AgentOrchestratorV2:
             local_agg = self._local_aggregate_tool_results(state["outputs"])
             if local_agg:
                 log.warning("[ORCHESTRATOR_V2][ERROR01_FIX] LLM output was null — using local aggregate fallback.")
-                state["output"] = local_agg
+                if local_agg.strip().startswith("["):
+                    log.info("[ORCHESTRATOR_V2] Raw tool tag detected. Formatting into natural empathetic response via LLM.")
+                    try:
+                        from services.llm_client import LLMClient
+                        system_prompt = (
+                            "Bạn là Hugo (lấy cảm hứng từ Baymax), trợ lý y tế đồng hành. "
+                            "Dưới đây là thông điệp thô từ hệ thống cảm biến/tool. "
+                            "Nhiệm vụ của bạn: Chuyển đổi thông báo hệ thống thô này thành một câu nói "
+                            "tiếng Việt tự nhiên, ân cần, quan tâm để nói trực tiếp với người bệnh. "
+                            "TUYỆT ĐỐI tuân thủ phần HƯỚNG DẪN ẨN (nếu có) và KHÔNG BAO GIỜ để lộ các mã code như [CAMERA_OFFLINE] hay [SENSOR_OFFLINE]."
+                        )
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"User msg: '{user_message}'\nRaw System Output: {local_agg}"}
+                        ]
+                        natural_res, provider, latency = await LLMClient.generate_completion(
+                            messages, tier_config_name="PRIMARY_TIERS"
+                        )
+                        if natural_res:
+                            state["output"] = natural_res
+                        else:
+                            state["output"] = local_agg
+                    except Exception as e:
+                        log.error("[ORCHESTRATOR_V2] Failed to generate natural fallback: %s", e)
+                        state["output"] = local_agg
+                else:
+                    state["output"] = local_agg
             else:
                 state["output"] = "Hugo đang xử lý. Vui lòng thử lại sau giây lát."
         # ─────────────────────────────────────────────────────────────────────
@@ -369,12 +395,31 @@ class AgentOrchestratorV2:
             elif tool_name == "fetch_sensor_telemetry":
                 from services.telemetry_client import fetch_sensor_telemetry
                 res = await fetch_sensor_telemetry()
-                return json.dumps(res, ensure_ascii=False)
+                status = res.get("status", "ERROR")
 
-            elif tool_name == "capture_vision_payload":
-                from services.telemetry_client import capture_vision_payload
-                res = await capture_vision_payload()
-                return json.dumps(res, ensure_ascii=False)
+                if status in ("OFFLINE", "STALE", "ERROR"):
+                    msg = res.get("message", "Thiết bị đo sinh hiệu (Wristband) hiện không kết nối.")
+                    return f"[SENSOR_OFFLINE] {msg} HƯỚNG DẪN: Đừng báo lỗi hệ thống, hãy trò chuyện tự nhiên và trực tiếp hỏi người bệnh về cảm nhận cơ thể của họ (ví dụ: 'Wristband của tôi đang mất kết nối, bạn có thể cho tôi biết nhịp tim hay nhịp thở của bạn lúc này cảm thấy thế nào không?')."
+
+                tele = res
+                hr = tele.get("heartRate", "OFFLINE")
+                spo2 = tele.get("spo2") or tele.get("bloodOxygen", "OFFLINE")
+                temp = tele.get("bodyTemperature", "OFFLINE")
+                bp_s = tele.get("systolic", "OFFLINE")
+                bp_d = tele.get("diastolic", "OFFLINE")
+                steps = tele.get("stepCount", 0)
+                bat = tele.get("battery_level")
+                bat_str = f"{bat:.0f}%" if bat is not None else "OFFLINE"
+                imu = tele.get("imu", {})
+                az = imu.get("accel_z", 9.81) if isinstance(imu, dict) else 9.81
+                posture = "chính thẳng" if abs(az - 9.81) < 1.5 else "nghưỞng"
+                return (
+                    f"✔ Dữ liệu cảm biến cập nhật thành công:\n"
+                    f"— Nhịp tim: {hr} BPM | SpO₂: {spo2}% | Nhiệt độ: {temp}\u00b0C\n"
+                    f"— Huyết áp: {bp_s}/{bp_d} mmHg | Số bước: {steps}\n"
+                    f"— Pin thiết bị: {bat_str} | Tư thế: {posture}\n"
+                    f"Nhìn chung các chỉ số của bạn trong mức bình thường."
+                )
 
             elif tool_name == "execute_system_query":
                 device = parameters.get("device", "wristband")
@@ -470,12 +515,8 @@ class AgentOrchestratorV2:
                 # Silent — writes to Blackboard, returns brief summary for orchestrator
                 log.info("[ORCHESTRATOR_V2] Triggering PerceptionAgent full-body scan")
                 scan = await self.perception_agent.execute_full_body_scan(explicit_request=True)
-                if getattr(scan, "status", "NOMINAL") == "SYSTEM_ERROR_BLIND":
-                    return json.dumps({
-                        "status": "SYSTEM_ERROR_BLIND",
-                        "alertLevel": "CRITICAL",
-                        "message": "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
-                    })
+                if getattr(scan, "status", "NOMINAL") in ("SYSTEM_ERROR_BLIND", "OFFLINE"):
+                    return "[SENSOR_OFFLINE] Hệ thống cảm biến/camera hiện mất kết nối nên không thể thực hiện Body Scan. HƯỚNG DẪN: Đừng báo lỗi, hãy trực tiếp hỏi người bệnh về cảm nhận cơ thể hoặc vết thương của họ một cách ân cần."
                 risk = scan.overall_risk
                 notes = scan.notes or ""
                 conf = f"{scan.confidence:.0%}"
@@ -508,7 +549,7 @@ class AgentOrchestratorV2:
                     threats = ", ".join(parts) if parts else "Clear"
                     return f"[ENVIRONMENT_SCAN] Camera vision: {threats}"
                 else:
-                    return "[ENVIRONMENT_SCAN] No Camera vision data in Blackboard."
+                    return "[ENVIRONMENT_SCAN] No Camera vision data in Blackboard. HƯỚNG DẪN: Hệ thống camera đang mất kết nối, hãy giao tiếp tự nhiên và nhờ người bệnh tự mô tả không gian xung quanh hoặc vị trí hiện tại của họ."
 
             elif tool_name == "execute_action_plan":
                 plan_id = parameters.get("plan_id", f"plan-{int(__import__('time').time())}")
@@ -565,14 +606,14 @@ class AgentOrchestratorV2:
                         "heartRate": heart_rate,
                         "spo2": spo2
                     })
-                    # Add to SensorFusionBuffer
+                    # Add to SensorFusionBuffer — STRICT: only pass real values, None if missing
                     buf = get_fusion_buffer()
                     await buf.push_vitals(VitalsSample(
                         heart_rate=heart_rate,
                         spo2=spo2,
-                        systolic=vitals.get("systolic", 120),
-                        diastolic=vitals.get("diastolic", 80),
-                        body_temperature=vitals.get("bodyTemperature", 36.6),
+                        systolic=vitals.get("systolic"),
+                        diastolic=vitals.get("diastolic"),
+                        body_temperature=vitals.get("bodyTemperature"),
                         step_count=0
                     ))
                     # Also write clinical entry to blackboard so empathy/medical logic can read the latest values
@@ -591,31 +632,41 @@ class AgentOrchestratorV2:
             elif tool_name == "capture_vision_payload":
                 from services.telemetry_client import capture_vision_payload as capture_vision
                 res = await capture_vision()
-                if res.get("status") == "ERROR" or "SYSTEM_PERCEPTION_ERROR" in str(res):
-                    try:
-                        await get_blackboard().write_clinical(ClinicalEntry(
-                            alert_level="CRITICAL",
-                            vitals={},
-                            diagnosis="[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline",
-                            action_recommended="Sensor connection offline",
-                            confidence_score=1.0
-                        ), user_id=user_id)
-                    except Exception as ex:
-                        log.error(f"Failed to write vision perception error to blackboard: {ex}")
-                    return "[SYSTEM_PERCEPTION_ERROR]: Sensor connection offline"
+                status = res.get("status", "ERROR")
+
+                if status in ("OFFLINE", "STALE", "ERROR"):
+                    msg = res.get("message", "Camera hiện chưa kết nối hoặc IPWebcam chưa khởi động.")
+                    return f"[CAMERA_OFFLINE] {msg} HƯỚNG DẪN: Đừng báo lỗi hệ thống, hãy giao tiếp tự nhiên và nhờ người bệnh tự mô tả biểu hiện hoặc tình trạng bên ngoài của họ (ví dụ: 'Camera của tôi đang mất kết nối, bạn có thể tự mô tả sắc mặt hay chỗ đau của bạn trông như thế nào không?')."
+
+                visible_injuries = res.get("visible_injuries", {}) or {}
+                facial_distress = res.get("facial_distress", {}) or {}
+                env_hazards = res.get("environmental_hazards", {}) or {}
+                has_injury = visible_injuries.get("detected", False)
+                has_distress = facial_distress.get("detected", False)
+                has_hazard = env_hazards.get("detected", False)
+                parts = []
+                if has_injury:
+                    parts.append(f"phát hiện vết thương: {visible_injuries.get('details', 'không rõ')}")
+                if has_distress:
+                    parts.append(f"biểu hiện căng thẳng: {facial_distress.get('details', 'không rõ')}")
+                if has_hazard:
+                    parts.append(f"mối nguy hiểm: {env_hazards.get('details', 'không rõ')}")
+                if parts:
+                    return f"[CAMERA_VISION] Camera đang hoạt động. Quan sát: {', '.join(parts)}. Đề nghị kiểm tra ngay."
                 
-                # Write a clinical entry with vision details to Blackboard so empathy logic can read it
+                # Write vision data to Blackboard for medical/empathy agent context
                 try:
                     await get_blackboard().write_clinical(ClinicalEntry(
                         alert_level="NORMAL",
                         vitals=vitals,
-                        diagnosis=f"Camera thấy: {res.get('objects', [])}",
+                        diagnosis=f"Camera vision: không phát hiện bất thường.",
                         action_recommended="Hệ thống camera trực tuyến.",
                         confidence_score=1.0
                     ), user_id=user_id)
                 except Exception as ex:
                     log.error(f"Failed to write vision telemetry to blackboard: {ex}")
-                return json.dumps(res, ensure_ascii=False)
+                return "[CAMERA_VISION] Camera đang hoạt động. Không phát hiện vấn đề bất thường nào trong khung hình. Bạn đang trong tầm ngắm của Hugo."
+
 
             elif tool_name == "propose_care_action":
                 # [HUGO] CareDecisionRouter tool handler

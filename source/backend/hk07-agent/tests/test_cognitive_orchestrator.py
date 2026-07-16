@@ -7,9 +7,9 @@ import sys
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT_DIR)
 
-from agents.agent_orchestrator_v2 import AgentOrchestratorV2
-from memory.lance_memory import LanceMemory
-from arbitrator.arbitrator import Arbitrator
+from engine.agents.agent_orchestrator_v2 import AgentOrchestratorV2
+from engine.memory.lance_memory import LanceMemory
+from engine.arbitrator.arbitrator import Arbitrator
 from services.blackboard_service import get_blackboard
 
 

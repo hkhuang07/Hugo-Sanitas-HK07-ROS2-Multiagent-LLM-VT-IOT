@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 from services.blackboard_service import get_blackboard, ActionPlanEntry
 from services.agent_log_client import _client as log_client
-from arbitrator.arbitrator import Arbitrator
+from engine.arbitrator.arbitrator import Arbitrator
 
 load_dotenv()
 
@@ -39,7 +39,7 @@ class ActionAgent:
         broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
         broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
         if hasattr(mqtt, "CallbackAPIVersion"):
-            self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="action-agent", protocol=mqtt.MQTTv311)
+            self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="action-agent", protocol=mqtt.MQTTv311)
         else:
             self._mqtt = mqtt.Client(client_id="action-agent", protocol=mqtt.MQTTv311)
         mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
@@ -100,7 +100,7 @@ class ActionAgent:
             is_pump_hug_step = step_type in ("PUMP", "HUG") or "pump" in str(step).lower() or "hug" in str(step).lower()
             if is_pump_hug_step:
                 try:
-                    from agents.safety_agent import SafetyAgent
+                    from engine.agents.safety_agent import SafetyAgent
                     from services.telemetry_client import fetch_sensor_telemetry
                     
                     # Fetch telemetry

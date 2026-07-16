@@ -36,6 +36,57 @@ export interface PerceptionScanResult {
   status: string
 }
 
+function normalizeScan(scan: any): PerceptionScanResult {
+  if (!scan) return {} as PerceptionScanResult
+  const normalized = { ...scan }
+
+  // 1. Normalize visible_injuries to string[]
+  if (normalized.visible_injuries) {
+    if (Array.isArray(normalized.visible_injuries)) {
+      // already an array, keep it
+    } else if (typeof normalized.visible_injuries === 'object') {
+      const details = normalized.visible_injuries.details
+      if (details) {
+        normalized.visible_injuries = details.split(',').map((s: string) => s.trim()).filter(Boolean)
+      } else if (normalized.visible_injuries.detected) {
+        normalized.visible_injuries = ['Injury Detected']
+      } else {
+        normalized.visible_injuries = []
+      }
+    } else if (typeof normalized.visible_injuries === 'string') {
+      normalized.visible_injuries = [normalized.visible_injuries]
+    } else {
+      normalized.visible_injuries = []
+    }
+  } else {
+    normalized.visible_injuries = []
+  }
+
+  // 2. Normalize facial_distress to number
+  if (normalized.facial_distress !== undefined && normalized.facial_distress !== null) {
+    if (typeof normalized.facial_distress === 'object') {
+      const details = normalized.facial_distress.details || ''
+      const match = details.match(/Score:\s*([0-9.]+)/i)
+      if (match) {
+        normalized.facial_distress = parseFloat(match[1])
+      } else if (normalized.facial_distress.detected) {
+        normalized.facial_distress = 0.5 // fallback default
+      } else {
+        normalized.facial_distress = 0.0
+      }
+    } else if (typeof normalized.facial_distress === 'number') {
+      // already a number
+    } else {
+      const num = parseFloat(normalized.facial_distress)
+      normalized.facial_distress = isNaN(num) ? 0.0 : num
+    }
+  } else {
+    normalized.facial_distress = 0.0
+  }
+
+  return normalized as PerceptionScanResult
+}
+
 export const useVisionStore = defineStore('vision', () => {
   // ── Camera state ───────────────────────────────────────────────────────────
   const daemonStatus = ref<string>('UNKNOWN')
@@ -99,7 +150,7 @@ export const useVisionStore = defineStore('vision', () => {
     lastPollMs.value    = Date.now()
 
     if (data.latest_scan) {
-      latestScan.value = data.latest_scan
+      latestScan.value = normalizeScan(data.latest_scan)
       scanAgeS.value   = data.scan_age_s ?? null
     }
   }
@@ -114,8 +165,8 @@ export const useVisionStore = defineStore('vision', () => {
     if (online) mjpegLastOnlineMs.value = Date.now()
   }
 
-  function updatePerceptionScan(scan: PerceptionScanResult) {
-    latestScan.value = scan
+  function updatePerceptionScan(scan: any) {
+    latestScan.value = normalizeScan(scan)
     scanAgeS.value   = 0
   }
 

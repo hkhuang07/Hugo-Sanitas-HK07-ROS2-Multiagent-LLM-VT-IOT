@@ -7,10 +7,10 @@ import logging
 import json
 from typing import TypedDict, List, Dict, Any, Optional
 
-from agents.router_agent import RouterAgent
-from agents.safety_agent import SafetyAgent
-from agents.care_agent import CareAgent
-from agents.empathetic_agent import EmpatheticAgent
+from engine.agents.router_agent import RouterAgent
+from engine.agents.safety_agent import SafetyAgent
+from engine.agents.care_agent import CareAgent
+from engine.agents.empathetic_agent import EmpatheticAgent
 from services.blackboard_service import current_user_id
 
 log = logging.getLogger("hk07.agent_orchestrator")

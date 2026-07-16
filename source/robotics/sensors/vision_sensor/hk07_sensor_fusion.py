@@ -1,5 +1,9 @@
 import os
 import sys
+import warnings
+
+# Suppress deprecated Google Protobuf warnings from third-party libraries (MediaPipe)
+warnings.filterwarnings("ignore", category=UserWarning, module="google.protobuf")
 
 # Ensure package root is in sys.path
 package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -117,7 +121,7 @@ class Hk07SensorFusionNode(Node):
                 mqtt_user = os.environ.get('MQTT_USERNAME', 'hk07agent')
                 mqtt_pass = os.environ.get('MQTT_PASSWORD', 'hk07_mqtt_dev_pwd')
                 if hasattr(mqtt, "CallbackAPIVersion"):
-                    self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="hk07-sensor-fusion-node", protocol=mqtt.MQTTv311)
+                    self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="hk07-sensor-fusion-node", protocol=mqtt.MQTTv311)
                 else:
                     self.mqtt_client = mqtt.Client(client_id="hk07-sensor-fusion-node", protocol=mqtt.MQTTv311)
                 if mqtt_user:
@@ -133,9 +137,11 @@ class Hk07SensorFusionNode(Node):
         self.latest_frame = None
         self.rppg_heart_rate = 0.0
         self.last_valid_rppg_time = 0.0
+        self.user_detected = False
         self.vision_fall = False
-        self.tracker_box = {"x": 42.0, "y": 52.0, "width": 80.0, "height": 85.0}
         self._vlm_in_progress = False
+        # tracker_box initialized to zero — hidden until a real detection is confirmed
+        self.tracker_box = {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0}
 
         # Bounded frame buffer ring (Queue of size 1)
         self.frame_queue = queue.Queue(maxsize=1)
@@ -145,8 +151,8 @@ class Hk07SensorFusionNode(Node):
         self.low_frequency_compute_group = MutuallyExclusiveCallbackGroup()
 
         # Initialize perception agent
-        from agents.perception_agent import PerceptionAgent
-        from arbitrator.arbitrator import Arbitrator
+        from engine.agents.perception_agent import PerceptionAgent
+        from engine.arbitrator.arbitrator import Arbitrator
         self.arbitrator = Arbitrator()
         self.perception_agent = PerceptionAgent(arbitrator=self.arbitrator)
 
@@ -245,8 +251,8 @@ class Hk07SensorFusionNode(Node):
             finally:
                 self.state_lock.release()
 
-        # If camera stream drops/offline, immediately invalidate
-        if not latest_frame_exists:
+        # If camera stream drops/offline or no heart rate detected, immediately invalidate
+        if not latest_frame_exists or math.isnan(hr) or hr <= 0:
             hr = float('nan')
             temp_thermal = float('nan')
             fever_alert = float('nan')
@@ -254,14 +260,9 @@ class Hk07SensorFusionNode(Node):
         else:
             # Estimate body temperature physiologically from computed heart rate
             # Spiking heart rate (tachycardia) estimates slight temperature elevation
-            if not math.isnan(hr) and hr > 0:
-                temp_thermal = 36.6 + (0.01 * (hr - 70.0)) + random.uniform(-0.15, 0.15)
-                temp_thermal = float(round(max(36.1, min(39.5, temp_thermal)), 2))
-                fever_alert = 1.0 if temp_thermal >= 37.8 else 0.0
-            else:
-                temp_thermal = 36.6 + random.uniform(-0.1, 0.1)
-                temp_thermal = float(round(temp_thermal, 2))
-                fever_alert = 0.0
+            temp_thermal = 36.6 + (0.01 * (hr - 70.0)) + random.uniform(-0.15, 0.15)
+            temp_thermal = float(round(max(36.1, min(39.5, temp_thermal)), 2))
+            fever_alert = 1.0 if temp_thermal >= 37.8 else 0.0
             sensor_status = "ONLINE"
 
         # Construct and publish JointState heartbeat message
@@ -276,21 +277,16 @@ class Hk07SensorFusionNode(Node):
         except Exception:
             pass
 
-        # Direct MQTT Vital Signs Sync with Adaptive Thresholding - Dynamic Physiological Inference
+        # Direct MQTT Vital Signs Sync — STRICT: only publish when a user is actively detected
         if self.mqtt_client:
             is_online = not math.isnan(hr) and hr > 0
-            
-            # Check if we should simulate when offline in SIMULATED mode
-            if not is_online and getattr(self, 'robot_mode', 'SIMULATED') == 'SIMULATED':
-                self.tick = getattr(self, 'tick', 0) + 1
-                hr_val = int(72 + 5 * math.sin(self.tick * 0.05) + random.uniform(-1, 1))
-                spo2_val = float(round(98.2 - 0.02 * (hr_val - 70.0) + random.uniform(-0.1, 0.1), 1))
-                sys_bp = float(round(120.0 + 0.5 * (hr_val - 70.0), 1))
-                dias_bp = float(round(80.0 + 0.3 * (hr_val - 70.0), 1))
-                body_temp = float(round(36.6 + 0.05 * math.sin(self.tick * 0.02) + random.uniform(-0.05, 0.05), 1))
-                status_str = "ONLINE"
-                is_sim = True
-            elif is_online:
+
+            with self.state_lock:
+                user_detected = getattr(self, 'user_detected', False)
+                camera_online = (self.latest_frame is not None)
+
+            # Gate: only compute and publish real vitals if a live user is detected
+            if is_online and user_detected:
                 hr_val = int(hr)
                 spo2_val = 98.2 - 0.02 * (hr_val - 70.0) + random.uniform(-0.3, 0.3)
                 spo2_val = float(round(max(94.0, min(99.9, spo2_val)), 1))
@@ -298,17 +294,16 @@ class Hk07SensorFusionNode(Node):
                 sys_bp = float(round(sys_bp, 1))
                 dias_bp = 80.0 + 0.3 * (hr_val - 70.0) + random.uniform(-1.0, 1.0)
                 dias_bp = float(round(dias_bp, 1))
-                body_temp = float(temp_thermal) if not math.isnan(temp_thermal) else 36.6
+                body_temp = float(temp_thermal) if not math.isnan(temp_thermal) else -1.0
                 status_str = "ONLINE"
-                is_sim = False
             else:
+                # No user in frame or rPPG not locked — all vitals are invalid
                 hr_val = -1
                 spo2_val = -1.0
                 sys_bp = -1.0
                 dias_bp = -1.0
                 body_temp = -1.0
-                status_str = "OFFLINE"
-                is_sim = False
+                status_str = "OFFLINE" if not user_detected else "NO_LOCK"
 
             hr_change = abs(hr_val - self.last_pub_hr) if self.last_pub_hr > 0 and hr_val > 0 else 1.0
             temp_change = abs(body_temp - self.last_pub_temp) if self.last_pub_temp > 0 and body_temp > 0 else 1.0
@@ -523,7 +518,7 @@ class Hk07SensorFusionNode(Node):
                         ret, frame = cap.read()
                         if not ret or frame is None or frame.size == 0:
                             consecutive_drops += 1
-                            if consecutive_drops >= 5:
+                            if consecutive_drops >= 30:
                                 raise PrematureCloseException(f"Too many consecutive frame drops ({consecutive_drops})")
                             time.sleep(0.1)
                             continue
@@ -586,8 +581,10 @@ class Hk07SensorFusionNode(Node):
                         
                         vision_fall = False
                         rppg_hr = 0.0
+                        user_detected = False
                         
                         if results.pose_landmarks:
+                            user_detected = True
                             mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
                             landmarks = results.pose_landmarks.landmark
                             
@@ -626,8 +623,12 @@ class Hk07SensorFusionNode(Node):
                                     vision_fall = True
                             except IndexError:
                                 pass
+                        else:
+                            with self.state_lock:
+                                self.tracker_box = {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0}
                                 
                         with self.state_lock:
+                            self.user_detected = user_detected
                             self.vision_fall = vision_fall
                             if rppg_hr > 0.0:
                                 self.rppg_heart_rate = rppg_hr

@@ -117,4 +117,3 @@ echo [INFO] Set Mobile Endpoint Target URL to: http://%WIFI_IP%:5006/data
 echo [INFO] IPWebCam Endpoint Target URL is: http://%PHONE_IP%:8080/video
 echo ======================================================================
 
-pause

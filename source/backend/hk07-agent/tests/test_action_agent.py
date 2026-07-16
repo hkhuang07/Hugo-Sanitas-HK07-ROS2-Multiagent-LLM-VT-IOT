@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.blackboard_service import get_blackboard, ActionPlanEntry, ClinicalEntry
-from agents.action_agent import ActionAgent
-from arbitrator.arbitrator import Arbitrator
+from engine.agents.action_agent import ActionAgent
+from engine.arbitrator.arbitrator import Arbitrator
 
 
 class TestActionAgent(unittest.IsolatedAsyncioTestCase):

@@ -247,7 +247,7 @@ class SpatialTrackerThread:
     def get_latest_detections(self):
         # Read from global cache if available
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             return _sensor_cache.get("spatial_detections", [])
         except Exception:
             return []

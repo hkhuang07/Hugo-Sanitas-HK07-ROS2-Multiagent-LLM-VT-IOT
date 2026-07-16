@@ -105,10 +105,22 @@ class HardwareBridgeNode(Node):
             self._on_emergency_stop, 10)
 
         # ── MQTT Client ────────────────────────────────────────────────────────
-        self._mqtt = mqtt.Client(client_id=MQTT_CLIENT_ID)
-        self._mqtt.on_connect    = self._mqtt_on_connect
-        self._mqtt.on_disconnect = self._mqtt_on_disconnect
-        self._mqtt.on_message    = self._mqtt_on_message
+        if hasattr(mqtt, "CallbackAPIVersion"):
+            self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=MQTT_CLIENT_ID)
+            def _on_connect_v2(client, userdata, flags, reason_code, properties=None):
+                rc = reason_code.value if hasattr(reason_code, "value") else reason_code
+                self._mqtt_on_connect(client, userdata, flags, rc)
+            def _on_disconnect_v2(client, userdata, disconnect_flags, reason_code, properties=None):
+                rc = reason_code.value if hasattr(reason_code, "value") else reason_code
+                self._mqtt_on_disconnect(client, userdata, rc)
+            self._mqtt.on_connect = _on_connect_v2
+            self._mqtt.on_disconnect = _on_disconnect_v2
+            self._mqtt.on_message = self._mqtt_on_message
+        else:
+            self._mqtt = mqtt.Client(client_id=MQTT_CLIENT_ID)
+            self._mqtt.on_connect    = self._mqtt_on_connect
+            self._mqtt.on_disconnect = self._mqtt_on_disconnect
+            self._mqtt.on_message    = self._mqtt_on_message
         self._mqtt_connected = False
 
         # ── State tracking ─────────────────────────────────────────────────────

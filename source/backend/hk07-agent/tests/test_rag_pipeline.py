@@ -17,9 +17,9 @@ warnings.filterwarnings("ignore", message='Field "model_name" has conflict with 
 # Add agent package to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from memory.lance_memory import LanceMemory
+from engine.memory.lance_memory import LanceMemory
 from services.knowledge_ingestion import KnowledgeIngestionService
-from agents.agent_orchestrator_v2 import AgentOrchestratorV2
+from engine.agents.agent_orchestrator_v2 import AgentOrchestratorV2
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
 log = logging.getLogger("hk07.test_rag")

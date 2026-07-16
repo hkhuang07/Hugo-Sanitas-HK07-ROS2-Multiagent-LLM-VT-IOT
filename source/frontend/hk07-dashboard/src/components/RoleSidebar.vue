@@ -137,6 +137,8 @@ const nodeName = computed(() => {
   overflow-y: auto;
   overflow-x: hidden;
   flex-shrink: 0;
+  position: relative;
+  z-index: 99;
 }
 .sidebar-header {
   display: flex;
@@ -205,12 +207,13 @@ const nodeName = computed(() => {
   padding: 6px 8px;
   text-decoration: none;
   color: var(--color-text-dim);
-  border: 1px solid transparent;
+  border: 1px solid var(--color-border-dim);
   transition: all 0.2s ease;
 }
 .sidebar-nav-item:hover {
   color: var(--color-accent-green);
   background: rgba(0, 255, 102, 0.03);
+  border-color: rgba(0, 255, 102, 0.3) !important;
 }
 .sidebar-nav-item.active {
   color: var(--color-accent-green) !important;

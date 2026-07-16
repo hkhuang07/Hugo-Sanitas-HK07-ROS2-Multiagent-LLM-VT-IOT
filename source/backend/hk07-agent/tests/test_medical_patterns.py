@@ -8,7 +8,7 @@ import collections
 # Configure path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from agents.medical_agent import MedicalAgent, CircuitBreaker
+from engine.agents.medical_agent import MedicalAgent, CircuitBreaker
 
 async def test_patterns():
     print("=== Testing MedicalAgent Enterprise Patterns ===")

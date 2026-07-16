@@ -54,6 +54,10 @@
         <div class="stream-header terminal-card-header">
           [ AGENT_EVENT_STREAM ] &nbsp;
           <span class="text-dim">{{ agentsStore.events.length }} events captured</span>
+          <!-- Phase B: SSE connection indicator -->
+          <span :class="['sse-dot ml-2', sseConnected ? 'text-green' : 'text-orange']" :title="sseConnected ? 'SSE LIVE' : 'SSE RECONNECTING'">
+            {{ sseConnected ? '● LIVE' : '◌ CONNECTING' }}
+          </span>
           <button class="cmd-btn" style="margin-left:auto;font-size:9px" @click="agentsStore.clearEvents()">
             CLEAR_LOG
           </button>
@@ -77,7 +81,13 @@
 
           <!-- Empty state -->
           <div v-if="agentsStore.events.length === 0" class="empty-stream text-dim mono">
-            &gt;&gt;&gt; AWAITING AGENT EVENTS... CONNECT MQTT BROKER TO BEGIN
+            <div>█▒░ AGENT_EVENT_STREAM ░▒█</div>
+            <div style="margin-top:10px;font-size:10px;">
+              SSE connection: <span :class="sseConnected ? 'text-green' : 'text-orange'">{{ sseConnected ? 'LIVE ●' : 'CONNECTING ◌' }}</span>
+            </div>
+            <div style="margin-top:6px;font-size:9px;opacity:0.6">
+              Waiting for agent decisions... Send a message to Hugo to trigger events.
+            </div>
           </div>
         </div>
 
@@ -92,15 +102,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useAgentsStore, type AgentType } from '../stores/agents'
 
 const agentsStore = useAgentsStore()
 const eventListRef = ref<HTMLElement | null>(null)
+const sseConnected = ref(false)
 
 onMounted(() => {
   agentsStore.fetchLogs()
   agentsStore.fetchStats()
+  // Phase B: Start real-time SSE event stream
+  agentsStore.startSSEStream()
+  // Check connection via /stream/status
+  fetch(`${(import.meta as any).env?.VITE_AGENT_API_URL || 'http://localhost:8889'}/api/v1/agents/stream/status`)
+    .then(r => r.json())
+    .then(d => { sseConnected.value = d.status === 'ONLINE' })
+    .catch(() => { sseConnected.value = false })
+})
+
+onUnmounted(() => {
+  // Phase B: Clean up SSE on leave
+  agentsStore.stopSSEStream()
 })
 
 const agentPanels = [
@@ -273,4 +296,15 @@ function truncate(s: string, max: number) {
 }
 .ticker-text { animation: slide-in 0.3s ease; color: #00FF66; text-shadow: 0 0 4px rgba(0, 255, 102, 0.5); }
 @keyframes slide-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+
+/* SSE indicator utilities */
+.ml-2 { margin-left: 8px; }
+.text-orange { color: #FFB000; text-shadow: 0 0 4px rgba(255, 176, 0, 0.5); }
+.sse-dot { font-size: 9px; font-family: var(--font-hud); letter-spacing: 0.1em; animation: sse-blink 2s ease-in-out infinite; }
+@keyframes sse-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+/* Healthcare FSM stage event highlight */
+.ev-row.ev-healthcare_fsm { border-left-color: #FFB000; }
 </style>

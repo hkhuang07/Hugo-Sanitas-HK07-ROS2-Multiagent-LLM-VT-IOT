@@ -11,7 +11,7 @@ import logging
 # Set up path so we can import packages
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from memory.lance_memory import LanceMemory
+from engine.memory.lance_memory import LanceMemory
 from services.knowledge_ingestion import KnowledgeIngestionService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")

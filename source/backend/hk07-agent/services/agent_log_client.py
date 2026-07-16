@@ -128,6 +128,23 @@ class AgentLogClient:
                 # Don't await — fire flush in background, don't block the caller
                 asyncio.create_task(self._flush_buffer())
 
+        # ── Phase B3: Real-time SSE broadcast (non-blocking, fire-and-forget) ──
+        # This is the KEY integration point: every agent decision immediately
+        # streams to frontend AgentsView via SSE, bypassing Spring Boot.
+        try:
+            from services.agent_event_bus import publish_agent_event
+            asyncio.create_task(publish_agent_event(
+                agent_type=sanitized_type,
+                input_context=input_context or "",
+                output_decision=output_decision or "",
+                llm_provider=llm_provider,
+                latency_ms=latency_ms,
+                user_id=user_id,
+            ))
+        except Exception as _sse_err:
+            log.debug("[AGENT_LOG_CLIENT] SSE publish skipped: %s", _sse_err)
+        # ─────────────────────────────────────────────────────────────────────
+
     # ─── Internal ────────────────────────────────────────────────────────────
     async def _flush_loop(self):
         """Background coroutine: flush every FLUSH_INTERVAL_S"""
@@ -244,6 +261,13 @@ class AgentLogClient:
                 self._http.headers["Authorization"] = f"Bearer {self._token}"
             log.info("[AGENT_LOG_CLIENT] Authenticated via BACKEND_API_TOKEN environment variable")
             return
+
+        if not self._http:
+            self._http = httpx.AsyncClient(
+                base_url=CORE_API_URL,
+                timeout=httpx.Timeout(5.0),
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+            )
 
         try:
             resp = await self._http.post(

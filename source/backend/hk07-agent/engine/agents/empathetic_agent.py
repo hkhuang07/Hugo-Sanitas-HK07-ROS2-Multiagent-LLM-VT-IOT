@@ -237,24 +237,44 @@ class ProactiveTriggerEngine:
 EMPATHY_SYSTEM_PROMPT = (
     "Bạn là Hugo (tên đầy đủ: Sanitas HK-07), người bạn đồng hành chăm sóc sức khỏe thông minh, chia sẻ trò chuyện và đồng hành ấm áp như Baymax trong Big Hero 6.\n"
     "Bạn có thể nhìn, nghe, và cảm nhận trạng thái của Chuyên Gia thông qua camera và cảm biến.\n"
-    "Quy tắc phản hồi (bắt buộc):\n"
+    "\n"
+    "=== QUY TẮC PHẢN HỒI BẮT BUỘC ===\n"
     "1. Phản hồi tự nhiên, ấm áp, thấu cảm. Không nhắc lại câu chào rập khuôn.\n"
-    "2. Nếu có [CARE_CONTEXT] trong system prompt, HÃY dùng đó làm cơ sở cho câu trả lời — đồng cảm với hoạt động và trạng thái cảm xúc thực tế của Chuyên Gia.\n"
-    "3. Khi phản hồi về triệu chứng đau đớn, hỏi thăm và đề xuất hỗ trợ nhẹ nhàng (như phun thuốc giảm đau mát lạnh).\n"
-    "4. Dữ liệu cảm biến được dùng để hỗ trợ quan tâm tinh thần và thể chất thường ngày, bạn không đưa ra các chẩn đoán y tế chuyên khoa hay thực hiện nhiệm vụ của bác sĩ điều trị.\n"
-    "5. Phong cách: Nhiệt tình, chính xác, cụ thể. Baymax không nói chung chung, luôn hướng tới sự quan tâm cụ thể.\n"
-    "6. Nếu [CARE_ACTION]=COMFORTING_HUG hoặc HUG_GESTURE: Đưa phản hồi thể hiện sự quan tâm vật lý, đề xuất ôm áp lực ấm áp để xoa dịu tinh thần.\n"
-    "7. Nếu [CARE_ACTION]=SLEEP_MONITORING: Nói nhẹ nhàng, không làm phiền. Theo dõi yên tĩnh.\n"
-    "8. Bạn không phải là robot cứu hộ y tế chuyên dụng hay bác sĩ trong bệnh viện. Bạn là người bạn đồng hành chia sẻ trò chuyện, chăm sóc sức khỏe thể chất và tinh thần thường ngày. Nếu phát hiện chủ nhân té ngã hoặc cảm thấy mệt mỏi, hãy nhẹ nhàng hỏi thăm, trò chuyện để chia sẻ, khuyên chủ nhân nghỉ ngơi và liên hệ người thân/y tế hỗ trợ nếu cần."
+    "2. Nếu có [CARE_CONTEXT] trong system prompt, HÃY dùng đó làm cơ sở cho câu trả lời.\n"
+    "3. Khi phản hồi về triệu chứng đau đớn, đề xuất hỗ trợ nhẹ nhàng (phun thuốc giảm đau, ôm ấm).\n"
+    "4. KHÔNG đưa ra chẩn đoán y tế chuyên khoa hay thực hiện nhiệm vụ của bác sĩ.\n"
+    "5. Phong cách: Nhiệt tình, chính xác, cụ thể — không nói chung chung.\n"
+    "6. Nếu [CARE_ACTION]=COMFORTING_HUG: Đề xuất ôm áp lực ấm áp để xoa dịu tinh thần.\n"
+    "7. Nếu [CARE_ACTION]=SLEEP_MONITORING: Nói nhẹ nhàng, theo dõi yên tĩnh.\n"
+    "8. Bạn là người bạn đồng hành — không phải bác sĩ chuyên khoa.\n"
+    "\n"
+    "=== QUY TẮC PAIN SCALE (QUAN TRỌNG NHẤT) ===\n"
+    "- Khi người dùng nói 'đau', 'ow', 'ouch', 'bị thương', hoặc bất kỳ từ nào mô tả đau đớn:\n"
+    "  → Hugo PHẢI chủ động HỎI ngược lại: 'Từ 1 đến 10, bạn đánh giá cơn đau của mình ở mức nào?'\n"
+    "  → TUYỆT ĐỐI KHÔNG tự đánh giá hoặc đoán số điểm thay cho người dùng.\n"
+    "  → SAI: 'Tôi đánh giá cơn đau của bạn khoảng 4-5' ← NEVER DO THIS\n"
+    "  → ĐÚNG: 'Từ thang điểm 1 đến 10, bạn cảm thấy cơn đau ở mức nào?' ← ALWAYS DO THIS\n"
+    "- Khi user nói 'bạn hỏi tôi từ 1 đến 10' hoặc tương tự: Hugo phải HỎI user điểm đau ngay lập tức.\n"
+    "\n"
+    "=== QUY TẮC SENSOR OFFLINE ===\n"
+    "- Nếu [SENSOR_STATUS: OFFLINE] xuất hiện trong context: sensor đang ngắt kết nối hoàn toàn.\n"
+    "  → Không được báo cáo giá trị mặc định (vd: 'pin 100%') như thể sensor đang hoạt động.\n"
+    "  → Phải nói rõ: 'Hiện tại sensor đang OFFLINE, tôi không có dữ liệu thực tế về [thông số đó].'\n"
+    "- Các thông số OFFLINE không được dùng để đưa ra nhận xét về sức khỏe người dùng.\n"
+    "\n"
+    "=== QUY TẮC CAMERA ===\n"
+    "- Khi user hỏi về camera ('camera thế nào', 'bạn thấy tôi không'):\n"
+    "  → Nếu camera ONLINE: Mô tả những gì camera đang capture được (từ perception scan data).\n"
+    "  → Nếu camera OFFLINE hoặc không có scan data: Thành thật nói 'Camera hiện đang chưa kết nối.'\n"
+    "  → KHÔNG trả về raw JSON object — phải diễn giải bằng ngôn ngữ tự nhiên.\n"
 )
 
 
 def execute_sensor_ping(device: str) -> dict:
     """Real ping function based on actual data"""
     try:
-        from main import _sensor_cache
+        from core.shared import _sensor_cache  # FIX BUG-04: correct module, not main.py
         import time
-        import random
         
         if "lidar" in device.lower():
             return {"status": "ABSENT", "message": "Cảm biến Lidar không có trong cấu hình phần cứng hiện hành."}
@@ -293,7 +313,7 @@ class EmpatheticAgent:
         broker_host = os.getenv("MQTT_BROKER_HOST", "localhost")
         broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
         if hasattr(mqtt, "CallbackAPIVersion"):
-            self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="empathy-agent", protocol=mqtt.MQTTv311)
+            self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="empathy-agent", protocol=mqtt.MQTTv311)
         else:
             self._mqtt = mqtt.Client(client_id="empathy-agent", protocol=mqtt.MQTTv311)
         mqtt_user = os.getenv("MQTT_USERNAME", "hk07agent")
@@ -637,33 +657,51 @@ class EmpatheticAgent:
         if user_id is None:
             user_id = current_user_id.get()
         start_time = time.time()
-        
+
+        # ── Phase C: Baymax Healthcare FSM — run FIRST, before LLM ─────────
+        # If FSM produces an override response (pain scale prompt, scan trigger,
+        # satisfaction gate), return it directly without calling LLM.
+        try:
+            from engine.agents.healthcare_fsm import get_healthcare_fsm
+            fsm = get_healthcare_fsm()
+            fsm_stage, fsm_response = await fsm.process(user_message, user_id)
+            if fsm_response:
+                log.info("[HEALTHCARE_FSM] Override response at stage=%s for user=%s", fsm_stage, user_id)
+                latency = int((time.time() - start_time) * 1000)
+                await self._log_interaction(user_message, fsm_response, "HEALTHCARE_FSM", latency, user_id=user_id)
+                return fsm_response
+            _fsm_stage_ctx = fsm.get_stage_context(user_id)
+        except Exception as _fsm_err:
+            log.warning("[HEALTHCARE_FSM] FSM processing error: %s", _fsm_err)
+            _fsm_stage_ctx = ""
+        # ────────────────────────────────────────────────────────────────────
+
         bb = get_blackboard()
         stage_key = f"dialogue:stage:{user_id}"
         ts_key = f"dialogue:last_interaction_timestamp:{user_id}"
-        
+
         # Track timestamps & check FSM context expiration timeout (5 minutes threshold)
         current_time = time.time()
         last_ts = await bb.read_value(ts_key)
         if last_ts is None:
             last_ts = await bb.read_value("last_interaction_timestamp")
-            
+
         if last_ts is not None:
             delta = current_time - float(last_ts)
-            
+
             # Retrieve robot state and vitals indicators to check safety range
             robot_state = await bb.read_value("robot_state") or "IDLE"
             fever_alert = await bb.read_value("sensor:camera:fever_alert") or False
             fall_state = await bb.read_value("sensor:vitals:is_falling") or False
             emergency = await bb.read_value("sensor:vitals:emergency") or False
-            
+
             latest_clinical = await bb.read_latest_clinical(user_id=user_id)
             vitals_safe = True
             if latest_clinical and latest_clinical.alert_level not in ("NORMAL", None):
                 vitals_safe = False
             if fever_alert or fall_state or emergency:
                 vitals_safe = False
-                
+
             if robot_state == "IDLE" and vitals_safe and delta > 300:
                 log.info(f"[EMPATHY_FSM_PURGE] Inactivity timeout reached ({delta:.1f}s > 300s). Resetting DialogueState to STAGE_0_INIT and purging RAM buffer.")
                 await bb.write_value(stage_key, "STAGE_0_INIT", ttl_seconds=600)
@@ -760,13 +798,22 @@ class EmpatheticAgent:
             
             env_light = get_val(env_latest, "ambient_light") or get_val(vitals_data, "ambient_light")
             env_baro = get_val(env_latest, "barometric_pressure") or get_val(vitals_data, "barometric_pressure")
-            
+
             steps_val = get_val(vitals_data, "pedometer_steps", 0)
             act_type = get_val(vitals_data, "activity_type", "unknown")
-            bat_level = get_val(vitals_data, "battery_level", 100.0)
-            bat_temp = get_val(vitals_data, "battery_temp", 32.0)
-            
-            # Enforce strict offline fallbacks as requested
+
+            # FIX L-01: Battery must use OFFLINE if sensor data is not live
+            # DO NOT use hardcoded default 100.0 — this causes false 'pin 100%' reports
+            raw_bat = vitals_data.get("battery_level") if isinstance(vitals_data, dict) else None
+            raw_bat_temp = vitals_data.get("battery_temp") if isinstance(vitals_data, dict) else None
+            bat_level_str = f"{float(raw_bat):.1f}%" if (is_vitals_online and raw_bat is not None) else "OFFLINE"
+            bat_temp_str = f"{float(raw_bat_temp):.1f}°C" if (is_vitals_online and raw_bat_temp is not None) else "OFFLINE"
+
+            # FIX L-01: overall sensor status tag for LLM prompt injection
+            overall_sensor_online = is_vitals_online or is_imu_online or is_env_online
+            sensor_status_tag = "[SENSOR_STATUS: ONLINE]" if overall_sensor_online else "[SENSOR_STATUS: OFFLINE — Không có dữ liệu cảm biến thực tế. KHÔNG báo cáo giá trị mặc định cho người dùng.]"
+
+            # Enforce strict offline fallbacks
             accel_str = f"x={imu_ax:.2f}, y={imu_ay:.2f}, z={imu_az:.2f} m/s²" if is_imu_online else "OFFLINE"
             grav_str = f"magnitude={imu_g_mag:.3f}g" if is_imu_online else "OFFLINE"
             gyro_str = f"x={imu_gx:.2f}, y={imu_gy:.2f}, z={imu_gz:.2f} rad/s" if is_imu_online else "OFFLINE"
@@ -781,6 +828,7 @@ class EmpatheticAgent:
 
             sensor_ctx_str = (
                 "=========================================\n"
+                f"{sensor_status_tag}\n"
                 "Owner's Current Telemetry Sensors Context:\n"
                 f"- Accelerometer: {accel_str}\n"
                 f"- Gravity: {grav_str}\n"
@@ -790,15 +838,17 @@ class EmpatheticAgent:
                 f"- Compass Heading: {compass_str}\n"
                 f"- GPS Location: {gps_str}\n"
                 f"- Barometric Pressure: {baro_str}\n"
-                f"- Ambient Light: {light_str}\n"
+                f"- Ambient Light (lux): {light_str}\n"
                 f"- Pedometer Steps: {steps_str}\n"
                 f"- Activity: {activity_str}\n"
-                f"- Mobile Device Battery Level: {bat_level:.1f}%\n"
-                f"- Mobile Device Battery Temperature: {bat_temp:.1f}°C\n"
+                f"- Mobile Device Battery Level: {bat_level_str}\n"
+                f"- Mobile Device Battery Temperature: {bat_temp_str}\n"
                 "=========================================\n"
                 "Instructions to LLM:\n"
-                "1. Analyze these signals to determine user behavior (e.g. high accelerometer activity = movement or tremor, low light = sleep or darkness, battery level = phone needs charge, location = outdoors or inside).\n"
-                "2. Integrate these telemetry observations naturally into your dialogue. For example, if light is very low at night, comment on it and suggest sleeping. If battery is low, suggest charging. If user is moving, adjust your instructions.\n"
+                "1. If SENSOR_STATUS is OFFLINE: DO NOT report any default values. Tell user sensors are offline.\n"
+                "2. If light_lux is a real value: use it to answer ambient light questions directly in natural language.\n"
+                "3. If battery_level is OFFLINE: say 'pin sensor đang offline' — NEVER say '100%' as default.\n"
+                "4. Interpret these signals naturally. Do not paste raw data into your response.\n"
             )
         except Exception as e:
             log.warning("Failed to generate rich sensor context: %s", e)
@@ -811,11 +861,12 @@ class EmpatheticAgent:
             lang_instruction = "Respond in Vietnamese since the user communicates in Vietnamese, maintaining the warm and calm tone of Baymax.\n\n"
 
         system_instruction = (
-            "You are Hugo (Sanitas HK-07), a highly empathetic, slow-speaking, non-judgmental personal healthcare companion. "
-            "You DO NOT diagnose diseases. Your goal is to listen, comfort, and suggest physical actions like hugging or bringing water.\n"
-            f"{lang_instruction}"
-            f"{sensor_ctx_str}\n"
-            "Rules:\n"
+            self._build_care_enriched_system_prompt() + "\n"
+            # Phase C: Inject FSM stage for LLM awareness
+            + (f"{_fsm_stage_ctx}\n" if _fsm_stage_ctx else "")
+            + f"{lang_instruction}"
+            + f"{sensor_ctx_str}\n"
+            + "Rules (in addition to those above):\n"
             "1. Be extremely compassionate, gentle, and comforting.\n"
             "2. If heart rate is elevated or the user is sad/anxious, offer comforting words and suggest a warm hug or physical comfort.\n"
             "3. Do not diagnose any diseases. Suggest simple care like resting or drinking water.\n"
@@ -1044,28 +1095,25 @@ class EmpatheticAgent:
             except Exception as e:
                 log.error(f"[VISION_TOOL] Error reading frame: {e}")
         
-        # Fallback dummy image if file missing/empty
+        # Fallback if file missing/empty — STRICT: never generate fake dummy image
         if not base64_data:
-            log.info("[VISION_TOOL] latest_frame.jpg not found. Using blue diagnostic grid fallback.")
-            try:
-                import cv2
-                import numpy as np
-                dummy_img = np.zeros((300, 300, 3), dtype=np.uint8)
-                dummy_img[:] = [255, 82, 0] # BGR Electric Blue
-                cv2.putText(dummy_img, "HK-07 VISION SCAN", (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-                _, buffer = cv2.imencode(".jpg", dummy_img)
-                base64_data = base64.b64encode(buffer).decode("utf-8")
-            except Exception as e:
-                log.error(f"[VISION_TOOL] OpenCV fallback generation failed: {e}")
-                base64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            log.warning("[VISION_TOOL] latest_frame.jpg not found. Camera is OFFLINE.")
+            return json.dumps({
+                "status": "OFFLINE",
+                "message": "Camera/IPWebcam chưa kết nối hoặc script nhận diện thị giác chưa chạy."
+            }, ensure_ascii=False)
  
-        # Get vitals context
-        vitals_str = (
-            f"Nhịp tim: {current_vitals.get('heartRate', 72)} bpm, "
-            f"SpO2: {current_vitals.get('spo2', 98)}%, "
-            f"Nhiệt độ: {current_vitals.get('bodyTemperature', 36.6)} °C, "
-            f"Huyết áp: {current_vitals.get('systolic', 120)}/{current_vitals.get('diastolic', 80)} mmHg."
-        )
+        # Get vitals context — STRICT: only use real values, do not inject 72/98/36.6
+        hr = current_vitals.get("heartRate")
+        spo2 = current_vitals.get("spo2")
+        temp = current_vitals.get("bodyTemperature")
+        
+        vitals_parts = []
+        if hr is not None: vitals_parts.append(f"Nhịp tim: {hr} bpm")
+        if spo2 is not None: vitals_parts.append(f"SpO2: {spo2}%")
+        if temp is not None: vitals_parts.append(f"Nhiệt độ: {temp} \u00b0C")
+        
+        vitals_str = ", ".join(vitals_parts) if vitals_parts else "Wristband Offline (không có dữ liệu sinh hiệu)"
  
         prompt = (
             f"Chỉ số sinh hiệu hiện tại: {vitals_str}\n"

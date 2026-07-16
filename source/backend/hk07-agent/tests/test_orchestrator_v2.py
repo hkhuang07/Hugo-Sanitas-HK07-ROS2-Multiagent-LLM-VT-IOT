@@ -41,7 +41,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("hk07.test_orchestrator_v2")
 
-from agents.router_agent_v2 import RouterAgentV2
+from engine.agents.router_agent_v2 import RouterAgentV2
 from services.blackboard_service import (
     ClinicalEntry,
     get_blackboard,

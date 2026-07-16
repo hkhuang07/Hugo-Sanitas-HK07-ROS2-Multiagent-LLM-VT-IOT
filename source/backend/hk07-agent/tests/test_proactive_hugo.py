@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.blackboard_service import get_blackboard, ClinicalEntry, EmotionalEntry
-from agents.medical_agent import MedicalAgent
-from agents.empathetic_agent import EmpatheticAgent
-from arbitrator.arbitrator import Arbitrator
+from engine.agents.medical_agent import MedicalAgent
+from engine.agents.empathetic_agent import EmpatheticAgent
+from engine.arbitrator.arbitrator import Arbitrator
 
 
 class TestProactiveHugo(unittest.IsolatedAsyncioTestCase):

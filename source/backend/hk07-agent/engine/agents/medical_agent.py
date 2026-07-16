@@ -1,5 +1,5 @@
 # Backwards compatibility compatibility redirect for CareAgent
-from agents.care_agent import CareAgent, safe_extract_json
+from engine.agents.care_agent import CareAgent, safe_extract_json
 
 # Alias
 MedicalAgent = CareAgent

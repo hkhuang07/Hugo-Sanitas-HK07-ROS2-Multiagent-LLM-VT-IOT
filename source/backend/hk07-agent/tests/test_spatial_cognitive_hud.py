@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.spatial_tracker import YOLOv11SpatialTracker, SpatialTrackerThread
 from services.llm_client import LocalOfflineFallback
-from agents.perception_agent import PerceptionScan
+from engine.agents.perception_agent import PerceptionScan
 
 class TestSpatialCognitiveHUD(unittest.TestCase):
     def setUp(self):

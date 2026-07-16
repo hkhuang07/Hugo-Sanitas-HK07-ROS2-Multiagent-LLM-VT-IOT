@@ -21,7 +21,7 @@ log = logging.getLogger("hk07.lance_memory")
 
 # ── Compaction Config ────────────────────────────────────────────────────────
 COMPACTION_INTERVAL_SEC = 3600   # 1 hour between compaction runs
-MAX_VECTOR_AGE_MS       = 5_184_000_000  # 60 days in milliseconds
+MAX_VECTOR_AGE_MS       = 259_200_000  # 72 hours in milliseconds
 
 
 class LanceMemory:

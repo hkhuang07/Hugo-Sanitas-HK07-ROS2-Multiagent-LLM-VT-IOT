@@ -319,7 +319,7 @@ class VisionPipeline:
             # 3. Publish Biomarkers
             hrv_lf_hf = 1.6 # Default placeholder; normally extracted from vitals
             try:
-                from main import _sensor_cache
+                from core.shared import _sensor_cache
                 vitals = _sensor_cache.get("vitals") or {}
                 # In real scenario, extract LF/HF from PPG metrics
             except Exception:
@@ -518,7 +518,7 @@ class VisionPipeline:
             faces = face_cascade.detectMultiScale(gray, 1.1, 4, minSize=(30, 30))
             is_detected = len(faces) > 0
         except Exception:
-            is_detected = True  # assume owner present if cascade fails
+            is_detected = False  # Do not assume owner present if cascade fails to avoid fake detections
 
         return {
             "is_owner":        is_detected,

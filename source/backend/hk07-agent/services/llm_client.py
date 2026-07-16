@@ -292,10 +292,49 @@ _VISION_TIER2_TIMEOUT_S: float = 4.5
 # TIER 3 Ollama config (mirrors local_vision_evaluator.py but kept inline for LLMClient scope)
 _OLLAMA_BASE_URL  = os.getenv("OLLAMA_BASE_URL",  "http://localhost:11434")
 _OLLAMA_VIS_MODEL = os.getenv("OLLAMA_VISION_MODEL", "moondream")
-_OLLAMA_VIS_TIMEOUT = float(os.getenv("OLLAMA_VISION_TIMEOUT_S", "8.0"))
+_OLLAMA_VIS_TIMEOUT = float(os.getenv("OLLAMA_VISION_TIMEOUT_S", "45.0"))
 
-# Codes that trigger immediate TIER 3 activation (no retry in TIER 2 cluster)
-_TIER2_ABORT_CODES = frozenset({"429", "501", "503", "502", "504", "rate_limit", "ratelimiterror", "resourceexhausted"})
+# ── TIER 3 Ollama Circuit Breaker ────────────────────────────────────────────
+# Prevents wasting 45s per scan cycle when Ollama is confirmed too slow (CPU swap).
+# After CB_FAILURE_THRESHOLD consecutive failures, circuit OPENS for CB_RECOVERY_S.
+# After recovery window, circuit goes HALF-OPEN for one probe attempt.
+_OLLAMA_CB_FAILURE_THRESHOLD: int   = int(os.getenv("OLLAMA_CB_FAIL_THRESHOLD", "3"))
+_OLLAMA_CB_RECOVERY_S:        float = float(os.getenv("OLLAMA_CB_RECOVERY_S",    "300.0"))
+_ollama_cb_failure_count: int   = 0
+_ollama_cb_open_since:    float = 0.0   # monotonic timestamp when circuit last opened
+
+
+def is_ollama_vision_cb_open() -> bool:
+    """Check if the Ollama Vision Circuit Breaker is currently OPEN (tripped due to slow CPU)."""
+    global _ollama_cb_failure_count, _ollama_cb_open_since
+    if _ollama_cb_failure_count >= _OLLAMA_CB_FAILURE_THRESHOLD:
+        elapsed = time.monotonic() - _ollama_cb_open_since
+        if elapsed < _OLLAMA_CB_RECOVERY_S:
+            return True
+    return False
+
+
+def record_ollama_vision_failure():
+    """Record an Ollama Vision failure and trip the circuit breaker if threshold is exceeded."""
+    global _ollama_cb_failure_count, _ollama_cb_open_since
+    _ollama_cb_failure_count += 1
+    if _ollama_cb_failure_count >= _OLLAMA_CB_FAILURE_THRESHOLD:
+        _ollama_cb_open_since = time.monotonic()
+        log.error(
+            "[TIER3_OLLAMA] ⚡ Circuit OPENED after %d consecutive failures. "
+            "TIER 3 bypassed for %.0fs. TIER 4 rule-based will handle vision.",
+            _ollama_cb_failure_count, _OLLAMA_CB_RECOVERY_S
+        )
+
+
+def record_ollama_vision_success():
+    """Reset the Ollama Vision circuit breaker on success."""
+    global _ollama_cb_failure_count, _ollama_cb_open_since
+    _ollama_cb_failure_count = 0
+    _ollama_cb_open_since = 0.0
+
+
+
 
 
 def _get_execution_chain(is_vision: bool = False) -> List[Dict[str, Any]]:
@@ -421,11 +460,12 @@ def _is_tier2_abort_error(exc: Exception) -> bool:
 # TIER 3 ─ Local Ollama Vision Endpoint (direct httpx, no litellm)
 # ─────────────────────────────────────────────────────────────────────────────
 def _get_ollama_candidate_urls() -> List[str]:
-    """Get candidate URLs for Ollama host probing."""
+    """Get candidate URLs for Ollama host probing (WSL + Docker aware)."""
     candidates = [
         "http://localhost:11434",
         "http://127.0.0.1:11434",
-        "http://172.17.0.1:11434",
+        "http://host.docker.internal:11434",  # WSL2 → Docker Desktop host bridge
+        "http://172.17.0.1:11434",            # Docker bridge network from WSL
         "http://0.0.0.0:11434"
     ]
     env_url = os.getenv("OLLAMA_BASE_URL", "").strip()
@@ -438,69 +478,57 @@ def _get_ollama_candidate_urls() -> List[str]:
 
 
 async def _probe_ollama_host(client: Any, url: str) -> bool:
-    """Probe a single Ollama host's /api/tags endpoint to check if it's active."""
+    """
+    Probe a single Ollama host's /api/tags endpoint.
+    Uses 3.0s per-host timeout (not the full vision budget) for fast multi-host probing.
+    """
     try:
+        # Use 3s per-host (quick enough for tags, matches Docker cold-start)
         resp = await client.get(f"{url}/api/tags", timeout=3.0)
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            return False
+        # Additionally verify the target model is listed
+        models = [m.get("name", "") for m in resp.json().get("models", [])]
+        return any(_OLLAMA_VIS_MODEL in m for m in models)
     except Exception:
         return False
 
 
-async def _probe_ollama_hosts_concurrent() -> Optional[str]:
+async def _probe_ollama_hosts_sequential() -> Optional[str]:
     """
-    Probe candidate Ollama URLs concurrently.
-    Returns the first url that responds with 200 OK.
-    Cancels all other pending tasks. Strict 1.5s timeout.
+    Probe Ollama candidate URLs in strict priority order (sequential).
+    Localhost is always tried first to prevent Docker bridge IPs (e.g. 172.17.0.1)
+    from winning the probe race via a faster TCP handshake that then fails on /generate.
+    Returns the first URL that responds with 200 OK AND has the target model loaded.
     """
     import httpx
-    urls = _get_ollama_candidate_urls()
-    
-    async def task_wrapper(url: str) -> Optional[str]:
-        try:
-            async with httpx.AsyncClient() as client:
-                success = await _probe_ollama_host(client, url)
-                if success:
+    # Priority order: localhost variants FIRST, Docker bridge LAST
+    priority_urls: List[str] = []
+    env_url = os.getenv("OLLAMA_BASE_URL", "").strip().rstrip("/")
+    if env_url:
+        priority_urls.append(env_url)
+    for u in [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://host.docker.internal:11434",
+        # 172.17.0.1 INTENTIONALLY LAST — Docker bridge responds to /api/tags
+        # but fails on /api/generate from WSL (iptables routing issue)
+    ]:
+        if u not in priority_urls:
+            priority_urls.append(u)
+
+    async with httpx.AsyncClient() as client:
+        for url in priority_urls:
+            try:
+                ok = await _probe_ollama_host(client, url)
+                if ok:
+                    log.info("[OLLAMA_PROBE] Active Ollama host confirmed: %s (model=%s)", url, _OLLAMA_VIS_MODEL)
                     return url
-        except Exception:
-            pass
-        return None
+            except Exception:
+                continue
 
-    tasks = [asyncio.create_task(task_wrapper(url)) for url in urls]
-    if not tasks:
-        return None
-
-    winning_url = None
-    try:
-        async def get_first_successful_host():
-            for completed_task in asyncio.as_completed(tasks):
-                try:
-                    res = await completed_task
-                    if res:
-                        return res
-                except Exception:
-                    pass
-            return None
-
-        winning_url = await asyncio.wait_for(get_first_successful_host(), timeout=3.0)
-    except asyncio.TimeoutError:
-        log.warning("[OLLAMA_PROBE] Probing timed out after 3.0s.")
-    except Exception as exc:
-        log.error("[OLLAMA_PROBE] Concurrent probing error: %s", exc)
-    finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
-            else:
-                try:
-                    t.exception()
-                except (asyncio.CancelledError, asyncio.InvalidStateError):
-                    pass
-            
-    return winning_url
+    log.warning("[OLLAMA_PROBE] No Ollama host with model '%s' found.", _OLLAMA_VIS_MODEL)
+    return None
 
 
 async def _call_ollama_vision_direct(
@@ -511,16 +539,65 @@ async def _call_ollama_vision_direct(
     """
     TIER 3 Emergency Local Edge Vision — direct httpx call to Ollama API.
     Bypasses litellm entirely to avoid any additional indirection layer.
-    Uses a strict _OLLAMA_VIS_TIMEOUT budget.
+
+    CPU/RAM optimization: image is downscaled to 336×336 (moondream native input)
+    before base64 encoding. This reduces inference RAM from ~300MB to ~30MB and
+    cuts CPU inference time from 60s+ to ~15-20s on memory-constrained hardware.
+
+    Circuit Breaker: after _OLLAMA_CB_FAILURE_THRESHOLD consecutive timeouts,
+    the circuit opens for _OLLAMA_CB_RECOVERY_S seconds to skip the 45s wait.
+    This keeps scan latency at ~5s (T4 rule-based) instead of 65s per cycle.
 
     Returns: (response_text, "OLLAMA_TIER_3") or (None, "OLLAMA_TIER_3_FAILED")
     """
+    global _ollama_cb_failure_count, _ollama_cb_open_since
     import base64
+    import io
     try:
         import httpx
     except ImportError:
         log.error("[TIER3_OLLAMA] httpx not installed — cannot call Ollama.")
         return None, "OLLAMA_TIER_3_FAILED"
+
+    # ── Circuit Breaker: OPEN / HALF-OPEN check ───────────────────────────────
+    if _ollama_cb_failure_count >= _OLLAMA_CB_FAILURE_THRESHOLD:
+        elapsed = time.monotonic() - _ollama_cb_open_since
+        if elapsed < _OLLAMA_CB_RECOVERY_S:
+            remaining = int(_OLLAMA_CB_RECOVERY_S - elapsed)
+            log.warning(
+                "[TIER3_OLLAMA] ⚡ Circuit OPEN (CPU too slow, %d failures). "
+                "Bypassing Ollama for %ds more → fast-path to TIER 4.",
+                _ollama_cb_failure_count, remaining
+            )
+            return None, "OLLAMA_TIER_3_FAILED"
+        else:
+            log.info(
+                "[TIER3_OLLAMA] Circuit HALF-OPEN after %.0fs. Testing Ollama again.",
+                elapsed
+            )
+            # Reset failure count to give it one full attempt
+            _ollama_cb_failure_count = max(0, _OLLAMA_CB_FAILURE_THRESHOLD - 1)
+
+    # ── Image downsample to 336×336 max (moondream native resolution) ──────────
+    # Sending a 640×480 frame = ~900KB base64 → forces moondream to allocate ~300MB
+    # Downsizing to 336px max = ~150KB base64 → reduces RAM by ~10× and inference by ~4×
+    try:
+        import cv2
+        import numpy as np
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is not None:
+            h, w = img.shape[:2]
+            max_dim = 336
+            if max(h, w) > max_dim:
+                scale = max_dim / max(h, w)
+                new_w, new_h = int(w * scale), int(h * scale)
+                img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            image_bytes = buf.tobytes()
+            log.debug("[TIER3_OLLAMA] Image resized to %dx%d for moondream inference.", new_w if max(h,w) > max_dim else w, new_h if max(h,w) > max_dim else h)
+    except Exception as resize_err:
+        log.debug("[TIER3_OLLAMA] Image resize skipped (non-fatal): %s", resize_err)
 
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
@@ -530,12 +607,16 @@ async def _call_ollama_vision_direct(
         "prompt": full_prompt,
         "images": [b64],
         "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 256}
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 192,   # Reduced: sufficient for JSON schema, saves RAM
+            "num_ctx": 1024,      # Reduced context window → less RAM allocated
+        }
     }
 
-    winning_url = await _probe_ollama_hosts_concurrent()
+    winning_url = await _probe_ollama_hosts_sequential()
     if not winning_url:
-        log.error("[TIER3_OLLAMA] No active Ollama candidate responded to concurrent probe.")
+        log.error("[TIER3_OLLAMA] No active Ollama host with model '%s' found.", _OLLAMA_VIS_MODEL)
         return None, "OLLAMA_TIER_3_FAILED"
 
     try:
@@ -545,12 +626,125 @@ async def _call_ollama_vision_direct(
                 text = resp.json().get("response", "").strip()
                 if text:
                     log.info("[TIER3_OLLAMA] Ollama/%s responded OK on %s.", _OLLAMA_VIS_MODEL, winning_url)
+                    # ── Circuit Breaker: SUCCESS → reset ──────────────────────
+                    record_ollama_vision_success()
                     return text, "OLLAMA_TIER_3"
         log.warning("[TIER3_OLLAMA] Ollama HTTP %d — empty or bad response on %s.", resp.status_code, winning_url)
     except Exception as exc:
-        log.error("[TIER3_OLLAMA] Ollama vision call failed on %s: %s", winning_url, exc)
+        exc_type = type(exc).__name__
+        log.error("[TIER3_OLLAMA] Ollama vision call failed on %s: [%s] %s", winning_url, exc_type, exc)
+
+    # ── Circuit Breaker: FAILURE → increment ─────────────────────────────────
+    record_ollama_vision_failure()
 
     return None, "OLLAMA_TIER_3_FAILED"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOCAL TEXT SLM ─ qwen2.5:0.5b via Ollama (offline text reasoning fallback)
+# ─────────────────────────────────────────────────────────────────────────────
+_OLLAMA_TEXT_MODEL   = os.getenv("OLLAMA_TEXT_MODEL",   "qwen2.5:0.5b")
+_OLLAMA_TEXT_TIMEOUT = float(os.getenv("OLLAMA_TEXT_TIMEOUT_S", "20.0"))
+
+# Separate circuit breaker for text SLM (independent of vision/moondream CB)
+_OLLAMA_TEXT_CB_THRESHOLD: int   = int(os.getenv("OLLAMA_TEXT_CB_FAIL_THRESHOLD", "5"))
+_OLLAMA_TEXT_CB_RECOVERY_S: float = float(os.getenv("OLLAMA_TEXT_CB_RECOVERY_S", "120.0"))
+_ollama_text_cb_failure_count: int   = 0
+_ollama_text_cb_open_since:    float = 0.0
+
+
+async def _call_ollama_text(
+    prompt: str,
+    system_prompt: str = "",
+    max_tokens: int = 512,
+) -> Tuple[Optional[str], str]:
+    """
+    Local SLM text completion via Ollama qwen2.5:0.5b.
+    Zero network dependency — pure CPU inference, ~2-5s latency on 0.5B params.
+
+    Used as FINAL TEXT FALLBACK in generate_completion() when all cloud tiers fail.
+    Enables full offline operation of HK-07 care/empathetic/router agents.
+
+    Circuit Breaker: after _OLLAMA_TEXT_CB_THRESHOLD consecutive failures,
+    circuit opens for _OLLAMA_TEXT_CB_RECOVERY_S seconds (default 120s).
+
+    Returns: (response_text, "OLLAMA_TEXT_LOCAL") or (None, "OLLAMA_TEXT_FAILED")
+    """
+    global _ollama_text_cb_failure_count, _ollama_text_cb_open_since
+
+    try:
+        import httpx
+    except ImportError:
+        return None, "OLLAMA_TEXT_FAILED"
+
+    # ── Circuit Breaker: OPEN / HALF-OPEN check ───────────────────────────────
+    if _ollama_text_cb_failure_count >= _OLLAMA_TEXT_CB_THRESHOLD:
+        elapsed = time.monotonic() - _ollama_text_cb_open_since
+        if elapsed < _OLLAMA_TEXT_CB_RECOVERY_S:
+            remaining = int(_OLLAMA_TEXT_CB_RECOVERY_S - elapsed)
+            log.warning(
+                "[LOCAL_TEXT_SLM] ⚡ Circuit OPEN (%d failures). Skipping for %ds.",
+                _ollama_text_cb_failure_count, remaining
+            )
+            return None, "OLLAMA_TEXT_FAILED"
+        else:
+            log.info("[LOCAL_TEXT_SLM] Circuit HALF-OPEN. Testing qwen2.5:0.5b.")
+            _ollama_text_cb_failure_count = max(0, _OLLAMA_TEXT_CB_THRESHOLD - 1)
+
+    # ── Probe: find active Ollama host (reuses vision probe, text model verified) ──
+    winning_url = await _probe_ollama_hosts_sequential()
+    if not winning_url:
+        log.warning("[LOCAL_TEXT_SLM] No Ollama host found for text SLM.")
+        _ollama_text_cb_failure_count += 1
+        return None, "OLLAMA_TEXT_FAILED"
+
+    # Build OpenAI-style chat messages → Ollama native format
+    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+    payload = {
+        "model": _OLLAMA_TEXT_MODEL,
+        "prompt": full_prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": min(max_tokens, 512),
+            "num_ctx": 2048,    # qwen2.5:0.5b supports 32k but limit for RAM
+            "stop": ["<|im_end|>", "</s>"],
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TEXT_TIMEOUT) as client:
+            resp = await client.post(f"{winning_url}/api/generate", json=payload)
+            if resp.status_code == 200:
+                text = resp.json().get("response", "").strip()
+                if text:
+                    log.info(
+                        "[LOCAL_TEXT_SLM] ✅ qwen2.5:0.5b responded OK on %s (%d chars).",
+                        winning_url, len(text)
+                    )
+                    # SUCCESS → reset CB
+                    _ollama_text_cb_failure_count = 0
+                    _ollama_text_cb_open_since    = 0.0
+                    return text, "OLLAMA_TEXT_LOCAL"
+            log.warning(
+                "[LOCAL_TEXT_SLM] Ollama HTTP %d on %s.", resp.status_code, winning_url
+            )
+    except Exception as exc:
+        log.error(
+            "[LOCAL_TEXT_SLM] qwen2.5:0.5b call failed on %s: [%s] %s",
+            winning_url, type(exc).__name__, exc
+        )
+
+    # FAILURE → update CB
+    _ollama_text_cb_failure_count += 1
+    if _ollama_text_cb_failure_count >= _OLLAMA_TEXT_CB_THRESHOLD:
+        _ollama_text_cb_open_since = time.monotonic()
+        log.error(
+            "[LOCAL_TEXT_SLM] ⚡ Circuit OPENED after %d failures. "
+            "Text SLM bypassed for %.0fs.",
+            _ollama_text_cb_failure_count, _OLLAMA_TEXT_CB_RECOVERY_S
+        )
+    return None, "OLLAMA_TEXT_FAILED"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -560,6 +754,7 @@ ROUTER_TIERS: List[Dict[str, Any]] = []
 MEDICAL_TIERS: List[Dict[str, Any]] = []
 EMPATHY_TIERS: List[Dict[str, Any]] = []
 VISION_TIERS: List[Dict[str, Any]] = []   # Kept for legacy compatibility — use generate_vision_completion_grouped()
+
 SYSTEM_QUERY_TIERS: List[Dict[str, Any]] = []
 
 
@@ -596,19 +791,18 @@ class LocalOfflineFallback:
         import os
         model_name = os.getenv("OLLAMA_TEXT_MODEL", "qwen2.5")
         
-        # Probing Ollama URLs
-        candidates = [
+        # Priority order candidates
+        candidates = []
+        env_url = os.getenv("OLLAMA_BASE_URL", "").strip().rstrip("/")
+        if env_url:
+            candidates.append(env_url)
+        for u in [
             "http://localhost:11434",
             "http://127.0.0.1:11434",
-            "http://172.17.0.1:11434",
-            "http://0.0.0.0:11434"
-        ]
-        env_url = os.getenv("OLLAMA_BASE_URL", "").strip()
-        if env_url:
-            if env_url.endswith("/"):
-                env_url = env_url[:-1]
-            if env_url not in candidates:
-                candidates.insert(0, env_url)
+            "http://host.docker.internal:11434",
+        ]:
+            if u not in candidates:
+                candidates.append(u)
                 
         winning_url = None
         resolved_model = model_name
@@ -617,22 +811,20 @@ class LocalOfflineFallback:
                 with httpx.Client(timeout=3.0) as client:
                     resp = client.get(f"{url}/api/tags")
                     if resp.status_code == 200:
-                        winning_url = url
-                        try:
-                            models = [m.get("name", "") for m in resp.json().get("models", [])]
-                            # If exact model_name is not in models, look for a substring match
-                            if model_name not in models:
-                                for m in models:
-                                    if model_name in m:
-                                        resolved_model = m
-                                        break
-                        except Exception:
-                            pass
-                        break
+                        models = [m.get("name", "") for m in resp.json().get("models", [])]
+                        # Verify the target model or a close variant is present
+                        if any(model_name in m for m in models):
+                            winning_url = url
+                            for m in models:
+                                if model_name in m:
+                                    resolved_model = m
+                                    break
+                            break
             except Exception:
                 continue
                 
         if not winning_url:
+            log.warning(f"[OLLAMA_TEXT] No active Ollama host with model '{model_name}' found for sync text generation.")
             return None
             
         payload = {
@@ -734,7 +926,7 @@ class LocalOfflineFallback:
         # 3. Fall back directly to rule-based completion if Ollama and GGUF are not available
         vitals_context = None
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             vitals = _sensor_cache.get("vitals")
             fall = _sensor_cache.get("fall_detected", False)
             fever = _sensor_cache.get("fever_alert", False)
@@ -1057,56 +1249,37 @@ class LocalOfflineFallback:
 
     @staticmethod
     def get_vision_completion_fallback(prompt: str, system_prompt: Optional[str] = None) -> str:
-        # 1. Try local Ollama vision endpoint first
+        # 1. Try local Ollama vision endpoint first (uses CB, priority probe, and image downscaling)
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             frame_bytes = _sensor_cache.get("frame_bytes")
             if frame_bytes:
-                import base64
-                import httpx
-                
-                b64 = base64.b64encode(frame_bytes).decode("utf-8")
-                full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-                payload = {
-                    "model": _OLLAMA_VIS_MODEL,
-                    "prompt": full_prompt,
-                    "images": [b64],
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 256}
-                }
-                
-                # Probing Ollama URLs
-                candidates = [
-                    "http://localhost:11434",
-                    "http://127.0.0.1:11434",
-                    "http://172.17.0.1:11434",
-                    "http://0.0.0.0:11434"
-                ]
-                winning_url = None
-                for url in candidates:
+                if not is_ollama_vision_cb_open():
+                    vitals = _sensor_cache.get("vitals") or {}
+                    import math
+                    hr = vitals.get("hr")
+                    temp = vitals.get("temp")
+                    hr_val = hr if (hr is not None and not (isinstance(hr, float) and math.isnan(hr))) else 0
+                    temp_val = temp if (temp is not None and not (isinstance(temp, float) and math.isnan(temp))) else 0
+                    vitals_str = f"HR: {hr_val:.0f}bpm, Temp: {temp_val:.1f}C"
+                    
+                    import asyncio
                     try:
-                        with httpx.Client(timeout=1.0) as client:
-                            resp = client.get(f"{url}/api/tags")
-                            if resp.status_code == 200:
-                                winning_url = url
-                                break
-                    except Exception:
-                        continue
-                
-                if winning_url:
-                    with httpx.Client(timeout=6.0) as client:
-                        resp = client.post(f"{winning_url}/api/generate", json=payload)
-                        if resp.status_code == 200:
-                            text = resp.json().get("response", "").strip()
-                            if text:
-                                log.info(f"[OLLAMA_VISION_FALLBACK] Ollama vision generation succeeded using {winning_url}.")
-                                return text
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    text = loop.run_until_complete(_call_ollama_vision(frame_bytes, vitals_str))
+                    if text:
+                        log.info("[OLLAMA_VISION_FALLBACK] Dynamic Ollama vision generation succeeded.")
+                        return text
         except Exception as e:
             log.warning(f"[OLLAMA_VISION_FALLBACK] Ollama vision fallback failed: {e}")
 
         # 2. Rule-based / cache fallback
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             vitals = _sensor_cache.get("vitals") or {}
             fall = _sensor_cache.get("fall_detected", False)
             fever = _sensor_cache.get("fever_alert", False)
@@ -1186,6 +1359,29 @@ class LocalOfflineFallback:
 
     @classmethod
     def get_local_vision_completion(cls, prompt: str, image_bytes: Optional[bytes], system_prompt: Optional[str] = None) -> str:
+        # 1. Try local Ollama VLM first (uses CB, priority probe, and image downscaling)
+        if image_bytes is not None and not is_ollama_vision_cb_open():
+            try:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                res_text, label = loop.run_until_complete(
+                    _call_ollama_vision_direct(
+                        image_bytes=image_bytes,
+                        prompt=prompt,
+                        system_prompt=system_prompt or ""
+                    )
+                )
+                if res_text:
+                    log.info("[LOCAL_VLM] In-thread VQA via local Ollama VLM succeeded.")
+                    return res_text
+            except Exception as e:
+                log.warning(f"[LOCAL_VLM] In-thread VQA via local Ollama failed: {e}")
+
         model, chat_handler = cls.get_vlm_model()
         
         if model is not None and image_bytes is not None:
@@ -1334,7 +1530,7 @@ class LocalOfflineFallback:
                 
         # Incorporate Fall/Fever state from Cache
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             fall = _sensor_cache.get("fall_detected", False)
             fever = _sensor_cache.get("fever_alert", False)
             vitals = _sensor_cache.get("vitals") or {}
@@ -1351,11 +1547,12 @@ class LocalOfflineFallback:
                 notes = "Cảnh báo sốt cao được phát hiện từ camera nhiệt."
                 facial_distress = max(facial_distress, 0.5)
                 
-            hr = vitals.get("hr", 72.0)
-            if hr > 120 or hr < 50:
+            hr = vitals.get("hr")  # None if sensor offline
+            if hr is not None and (hr > 120 or hr < 50):
                 overall_risk = "CRITICAL"
                 notes = f"Chỉ số sinh tồn bất thường: Nhịp tim y tế={hr:.0f} bpm."
                 confidence = 0.95
+            # REMOVED: fake fallback hr=72.0 — no clinical judgment without real data
         except Exception:
             pass
 
@@ -1384,7 +1581,7 @@ class LocalOfflineFallback:
         # 1. Determine activity context
         # Try loading fall status dynamically to avoid circular import issues
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             fall_active = _sensor_cache.get("fall_detected", False)
         except Exception:
             fall_active = False
@@ -1418,19 +1615,18 @@ class LocalOfflineFallback:
             if "LOCAL_VLM_OPENCV_FALLBACK" in injury_desc:
                 injury_desc = "prominent localized contusion/hematoma"
         
-        # 4. Generate overall clinical reasoning
-        hr = vitals_summary.get("hr")
-        hr = hr if hr is not None else 72.0
-        temp = vitals_summary.get("temp")
-        temp = temp if temp is not None else 36.6
-        
+        # 4. Generate overall clinical reasoning — STRICT: only use real sensor values
+        hr = vitals_summary.get("hr")    # None if sensor offline
+        temp = vitals_summary.get("temp")  # None if sensor offline
+        # REMOVED: fake fallback hr=72.0, temp=36.6 — never reason from fabricated values
+
         reasoning_parts = []
         if fall_active:
             reasoning_parts.append("User is detected lying down on the floor (potential fall).")
-        if hr > 100:
+        if hr is not None and hr > 100:
             reasoning_parts.append(f"Tachycardia detected (HR={hr:.0f} bpm).")
-        if temp >= 38.0:
-            reasoning_parts.append(f"High fever detected (Temp={temp:.1f}°C).")
+        if temp is not None and temp >= 38.0:
+            reasoning_parts.append(f"High fever detected (Temp={temp:.1f}\u00b0C).")
         if "hematoma" in injury_desc or injury_roi:
             reasoning_parts.append("A localized hematoma/contusion is visible.")
             
@@ -1509,6 +1705,10 @@ class LLMClient:
         except asyncio.TimeoutError as te:
             log.error(f"Tier {tier_config['label']} hit hard budget timeout (wait_for). Rotating...")
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
             raise asyncio.TimeoutError(f"Tier {tier_config['label']} timed out.") from te
         except asyncio.CancelledError:
             log.warning(f"Tier {tier_config['label']} task cancelled.")
@@ -1698,7 +1898,22 @@ class LLMClient:
                     else:
                         break
 
-        log.error("[LLM_CLIENT] All LLM tiers failed for text completion. Raising RuntimeError.")
+        log.warning("[LLM_CLIENT] All cloud LLM tiers failed for text completion. Activating TIER 3 Local SLM fallback (qwen2.5:0.5b)...")
+        try:
+            local_text, local_label = await _call_ollama_text(
+                prompt=prompt,
+                system_prompt=system_prompt or "",
+                max_tokens=max_tokens
+            )
+            if local_text:
+                log.info("[LLM_CLIENT] ✅ Local SLM Text fallback succeeded via %s.", local_label)
+                result = (local_text, local_label)
+                cls._set_cached_value(cache_key, result, ttl=5.0)
+                return result
+        except Exception as local_err:
+            log.error("[LLM_CLIENT] Local SLM fallback failed: %s", local_err)
+
+        log.error("[LLM_CLIENT] All LLM tiers (including local SLM fallback) failed for text completion. Raising RuntimeError.")
         raise RuntimeError("All LLM tiers failed for text completion.")
 
     @classmethod

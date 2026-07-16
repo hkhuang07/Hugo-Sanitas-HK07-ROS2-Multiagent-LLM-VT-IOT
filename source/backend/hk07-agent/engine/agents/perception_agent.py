@@ -37,7 +37,7 @@ import httpx
 
 from services.blackboard_service import get_blackboard
 from services.sensor_fusion_buffer import get_fusion_buffer, FusedContext
-from arbitrator.arbitrator import Arbitrator
+from engine.arbitrator.arbitrator import Arbitrator
 # [FIX-1] Dynamic IP scanner + async frame fetcher
 from utils.ip_scanner import discover_ipwebcam_ip, fetch_frame_nonblocking
 # [FIX-2] Local Ollama Vision Evaluator
@@ -207,6 +207,7 @@ class PerceptionScan:
     ttl_seconds:      int   = 300
     status:           str   = "UNKNOWN"
     alertLevel:       str   = "NORMAL"
+    is_owner:         bool  = True
 
     # Robotics / Dynamic physical properties
     nearest_obstacle_m: float = 1.5  # Safe dynamic distance fallback
@@ -274,26 +275,7 @@ class PerceptionScan:
             s_targets.append(target_entry)
             
         if not s_targets:
-            s_targets = [
-                {
-                    "label": "user_face",
-                    "coordinates": [0.25, 0.40, 0.42, 0.60],
-                    "confidence": 0.95,
-                    "expression": "distressed" if self.facial_distress > 0.4 else "calm"
-                }
-            ]
-            if self.posture_risk == "HIGH" or self.overall_risk == "CRITICAL":
-                s_targets.append({
-                    "label": "user_body",
-                    "coordinates": [0.65, 0.15, 0.95, 0.85],
-                    "confidence": 0.89
-                })
-            if self.visible_injuries:
-                s_targets.append({
-                    "label": "localized_injury",
-                    "coordinates": [0.60, 0.30, 0.72, 0.45],
-                    "confidence": 0.95
-                })
+            s_targets = []
                 
         activity = "sitting_down"
         if self.posture_risk == "HIGH" or self.overall_risk == "CRITICAL":
@@ -337,7 +319,11 @@ class PerceptionScan:
             "vitals": vitals_payload,
             "spatial_targets": s_targets,
             "cognitive_insights": cognitive_insights,
-            "vitals_summary": {"hr": 72.0 if math.isnan(hr) else hr, "temp": 36.6 if math.isnan(temp) else temp},
+            "vitals_summary": {
+                # STRICT: None if NaN/offline — never replace with fake 72/36.6
+                "hr": None if math.isnan(hr) else hr,
+                "temp": None if math.isnan(temp) else temp
+            },
             "cognitive_analysis_frontend": {
                 "user_activity": "lying_down" if activity == "lying_down" else "sitting_or_standing",
                 "clinical_reasoning": clinical_reasoning
@@ -547,14 +533,15 @@ Rules:
         # ── Crop ROIs and Run Cognitive Reasoning Loop ───────────────────────
         spatial_detections = []
         try:
-            from main import _sensor_cache
+            from core.shared import _sensor_cache
             spatial_detections = _sensor_cache.get("spatial_detections", [])
         except Exception:
             pass
 
         vitals_summary = {
-            "hr": ctx.vitals.heart_rate if (ctx.vitals and ctx.vitals.heart_rate is not None) else 72.0,
-            "temp": ctx.vitals.body_temperature if (ctx.vitals and ctx.vitals.body_temperature is not None) else 36.6
+            # STRICT: only use real values, None if sensor offline
+            "hr":   ctx.vitals.heart_rate       if (ctx.vitals and ctx.vitals.heart_rate       is not None) else None,
+            "temp": ctx.vitals.body_temperature if (ctx.vitals and ctx.vitals.body_temperature is not None) else None
         }
 
         rois = []
@@ -594,6 +581,14 @@ Rules:
         cognitive_reasoning_str = cognitive_analysis.get("clinical_reasoning", "")
         notes_str = cognitive_reasoning_str if cognitive_reasoning_str else vision_result.get("notes", "")
 
+        # Get is_owner from cache
+        is_owner = True
+        try:
+            from core.shared import _sensor_cache
+            is_owner = _sensor_cache.get("is_owner", True)
+        except Exception:
+            pass
+
         # ── Build PerceptionScan ─────────────────────────────────────────────
         scan = PerceptionScan(
             scan_duration_ms=round((time.perf_counter() - t_start) * 1000, 1),
@@ -613,6 +608,7 @@ Rules:
             nearest_obstacle_m=safe_float(vision_result.get("nearest_obstacle_m", 999.0), 999.0),
             spatial_detections=spatial_detections,
             cognitive_analysis=cognitive_analysis,
+            is_owner=is_owner,
         )
 
         # ── Adjust overall_risk based on vitals thresholds ───────────────────

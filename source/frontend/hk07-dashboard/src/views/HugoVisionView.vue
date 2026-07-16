@@ -72,11 +72,11 @@
         </div>
         <div class="header-right mono">
           <span class="dim">HR:</span>
-          <span :class="vitalsStore.isEmergency ? 'text-crit' : 'text-em'">{{ heartRateDisplay }}</span>
+          <span :class="vitalsStore.isEmergency ? 'text-crit' : 'text-em'">{{ patientDetected ? heartRateDisplay : 'N/A' }}</span>
           <span class="dim ml-2">SpO₂:</span>
-          <span :class="isSpo2Low ? 'text-crit' : 'text-em'">{{ spo2Display }}</span>
+          <span :class="isSpo2Low ? 'text-crit' : 'text-em'">{{ patientDetected ? spo2Display : 'N/A' }}</span>
           <span class="dim ml-2">TEMP:</span>
-          <span :class="isTempHigh ? 'text-crit' : 'text-em'">{{ tempDisplay }}</span>
+          <span :class="isTempHigh ? 'text-crit' : 'text-em'">{{ patientDetected ? tempDisplay : 'N/A' }}</span>
         </div>
       </header>
 
@@ -181,15 +181,15 @@
               <circle cx="150" cy="150" r="4" fill="#00FF66" class="target-dot"/>
             </svg>
 
-            <!-- Dynamic face tracker -->
-            <div class="face-tracker" :style="trackerStyle" v-if="cameraOnline">
+            <!-- Dynamic face tracker — only shown when a real user target is confirmed -->
+            <div class="face-tracker" :style="trackerStyle" v-if="patientDetected">
               <span class="tracker-tag mono">TGT: PATIENT</span>
             </div>
           </div>
 
           <!-- Subtitle overlay -->
           <div class="subtitle-layer">
-            <p class="subtitle-text">{{ currentSubtitle }}</p>
+            <p class="subtitle-text">{{ patientDetected ? (latestScan?.notes || 'SCANNING_SUBJECT_VITALS...') : 'AWAITING_SUBJECT' }}</p>
           </div>
         </main>
 
@@ -323,7 +323,7 @@
         </div>
         <div class="ft-cell">
           <span class="dim">STRESS_IDX:</span>
-          <span :class="stressIndex > 0.6 ? 'text-crit' : 'text-em'">{{ (stressIndex * 100).toFixed(0) }}/100</span>
+          <span :class="stressIndex > 0.6 ? 'text-crit' : 'text-em'">{{ heartRateDisplay === 'N/A' ? 'N/A' : (stressIndex * 100).toFixed(0) + '/100' }}</span>
         </div>
         <div class="ft-cell">
           <span class="dim">CAM_HOST:</span>
@@ -405,6 +405,9 @@ const trackerStyle = computed(() => {
     return { display: 'none' };
   }
   const { x, y, width, height } = kinematicsStore.tracker;
+  if (width <= 0 || height <= 0) {
+    return { display: 'none' };
+  }
   return {
     top: `${y}%`,
     left: `${x}%`,
@@ -495,39 +498,39 @@ const stressIndex = computed(() => {
 
 // ── Neurotransmitters / hormones ───────────────────────────────────────────
 const dopVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.dopamine === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.dopamine === null) return 'N/A';
   return Math.round(biomarkersStore.dopamine);
 });
 const serVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.serotonin === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.serotonin === null) return 'N/A';
   return Math.round(biomarkersStore.serotonin);
 });
 const epiVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.adrenaline === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.adrenaline === null) return 'N/A';
   return Math.round(biomarkersStore.adrenaline);
 });
 const gnrhVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.gnrh === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.gnrh === null) return 'N/A';
   return biomarkersStore.gnrh;
 });
 const lhVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.lh === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.lh === null) return 'N/A';
   return biomarkersStore.lh;
 });
 const fshVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.fsh === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.fsh === null) return 'N/A';
   return biomarkersStore.fsh;
 });
 const testosteroneVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.testosterone === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.testosterone === null) return 'N/A';
   return biomarkersStore.testosterone;
 });
 const estradiolVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.estradiol === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.estradiol === null) return 'N/A';
   return biomarkersStore.estradiol;
 });
 const cortisolVal = computed(() => {
-  if (!biomarkersStore.isLive || biomarkersStore.cortisol === null) return 'N/A';
+  if (isNaN(heartRate.value) || !biomarkersStore.isLive || biomarkersStore.cortisol === null) return 'N/A';
   return Math.round(biomarkersStore.cortisol);
 });
 
@@ -561,11 +564,30 @@ const currentSymptoms = computed(() => {
   latestScan.value?.visible_injuries?.forEach((inj: string) => list.push(inj));
   return list;
 });
+// patientDetected — true only when AI has confirmed real spatial targets (no fake detection)
+const patientDetected = computed(() => spatialBoxes.value.length > 0)
+
 const currentSubtitle = computed(() => {
   if (vitalsStore.isEmergency) return 'CẢNH BÁO NGUY CẤP: PHÁT HIỆN SỰ CỐ TÉ NGÃ!';
+  // VLM disconnected — show status from Agent
+  const scan = latestScan.value
+  if (scan?.status === 'VLM_DISCONNECTED') {
+    return '[MẤT KẾT NỐI VLM] Không có kết nối tới máy chủ AI nhận diện hình ảnh.'
+  }
+  // Live Agent notes take full priority — never show hardcoded strings when notes exist
+  if (scan?.notes && scan.notes.trim().length > 0) {
+    return scan.notes
+  }
+  // No patient detected
+  if (!patientDetected.value) {
+    return cameraOnline.value
+      ? '[ĐANG GIÁM SÁT] Không phát hiện bệnh nhân trong vùng quan sát.'
+      : '[CAMERA OFFLINE] Đang chờ luồng hình ảnh từ camera.'
+  }
+  // Patient present but no scan notes yet
   if (calculatedDiagnosis.value.includes('BEREAVEMENT')) return 'Liệu pháp: liên lạc bạn bè và gia đình.';
   if (stressIndex.value > 0.6) return 'Bạn đang có tâm trạng bất thường.';
-  return 'Chỉ số sinh hóa ổn định. Hệ thống quan sát nominal.';
+  return '[ĐANG PHÂN TÍCH] Hệ thống đang thu thập và xử lý dữ liệu lâm sàng...';
 });
 
 // ── Bar helper ─────────────────────────────────────────────────────────────
@@ -692,6 +714,7 @@ onUnmounted(() => {
 /* ── ROOT SHELL ─────────────────────────────────────────────────────────── */
 .vision-shell {
   position: relative;
+  z-index: 1;
   width: 100%;
   height: 100vh;
   overflow: hidden;

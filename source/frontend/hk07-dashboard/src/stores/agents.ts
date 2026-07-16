@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import api from '../services/api'
 
+// Phase B: SSE base URL — connects directly to FastAPI hk07-agent (port 8889)
+const AGENT_ENGINE_URL = (import.meta as any).env?.VITE_AGENT_API_URL || 'http://localhost:8889'
+
 export type AgentType = 'SAFETY' | 'MEDICAL' | 'EMPATHETIC' | 'CARE' | 'PERCEPTION' | 'ACTION' | 'ROUTER'
 
 export interface AgentEvent {
@@ -121,7 +124,9 @@ export const useAgentsStore = defineStore('agents', () => {
         events.value = merged
       }
     } catch (err) {
-      console.error('Failed to fetch agent logs:', err)
+      console.warn('[AGENT_STREAM] Failed to fetch persisted logs from Spring Boot backend. Falling back to FastAPI Agent Engine ring buffer:', err)
+      // Fallback to FastAPI in-memory history if Core DB is offline
+      await fetchStreamHistory()
     }
   }
 
@@ -170,6 +175,107 @@ export const useAgentsStore = defineStore('agents', () => {
     localStorage.setItem('hk07_agent_chat_log', JSON.stringify(newVal))
   }, { deep: true })
 
+  // ── Phase B: SSE subscription ────────────────────────────────────────────
+  let _sseSource: EventSource | null = null
+  let _sseReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let _sseFailCount = 0
+  const SSE_MAX_FAILS = 5
+  const SSE_RECONNECT_BASE_MS = 3000
+
+  function startSSEStream() {
+    if (typeof window === 'undefined') return
+    if (_sseSource && _sseSource.readyState !== EventSource.CLOSED) return // already open
+
+    const url = `${AGENT_ENGINE_URL}/api/v1/agents/stream?replay=30`
+    _sseSource = new EventSource(url)
+
+    _sseSource.onopen = () => {
+      _sseFailCount = 0
+      console.info('[AGENT_STREAM] SSE connected to', url)
+    }
+
+    _sseSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        // Ignore heartbeat/connection meta events
+        if (payload.type === 'CONNECTED') return
+        const ev: AgentEvent = {
+          id: payload.id || `sse_${Date.now()}`,
+          agentType: (payload.agentType as AgentType) || 'EMPATHETIC',
+          inputContext: payload.inputContext || '',
+          outputDecision: payload.outputDecision || '',
+          llmProvider: payload.llmProvider || 'UNKNOWN',
+          latencyMs: payload.latencyMs || 0,
+          triggeredAt: payload.triggeredAt || new Date().toISOString(),
+          alertLevel: payload.alertLevel || 'NORMAL',
+        }
+        addEvent(ev)
+        // Update agent status to ACTIVE when event received
+        if (agentStatus.value[ev.agentType]) {
+          agentStatus.value[ev.agentType] = 'ACTIVE'
+          // Auto-reset to IDLE after 5s
+          setTimeout(() => {
+            if (agentStatus.value[ev.agentType] === 'ACTIVE') {
+              agentStatus.value[ev.agentType] = 'IDLE'
+            }
+          }, 5000)
+        }
+      } catch (e) {
+        console.warn('[AGENT_STREAM] Failed to parse SSE event:', e)
+      }
+    }
+
+    _sseSource.onerror = () => {
+      _sseFailCount++
+      console.warn(`[AGENT_STREAM] SSE error. Fail count: ${_sseFailCount}/${SSE_MAX_FAILS}`)
+      _sseSource?.close()
+      _sseSource = null
+      if (_sseFailCount <= SSE_MAX_FAILS) {
+        // Exponential backoff reconnect
+        const delay = SSE_RECONNECT_BASE_MS * Math.pow(2, Math.min(_sseFailCount - 1, 4))
+        _sseReconnectTimer = setTimeout(() => startSSEStream(), delay)
+      } else {
+        console.error('[AGENT_STREAM] SSE max fails reached. Falling back to HTTP polling.')
+        // Fallback: poll /stream/history every 5s
+        _sseReconnectTimer = setInterval(() => fetchStreamHistory(), 5000)
+      }
+    }
+  }
+
+  function stopSSEStream() {
+    if (_sseReconnectTimer) {
+      clearTimeout(_sseReconnectTimer as ReturnType<typeof setTimeout>)
+      clearInterval(_sseReconnectTimer as ReturnType<typeof setInterval>)
+      _sseReconnectTimer = null
+    }
+    if (_sseSource) {
+      _sseSource.close()
+      _sseSource = null
+    }
+  }
+
+  async function fetchStreamHistory() {
+    try {
+      const resp = await fetch(`${AGENT_ENGINE_URL}/api/v1/agents/stream/history?limit=50`)
+      if (!resp.ok) return
+      const data = await resp.json()
+      const list: AgentEvent[] = (data.events || []).map((item: any) => ({
+        id: item.id,
+        agentType: item.agentType as AgentType,
+        inputContext: item.inputContext || '',
+        outputDecision: item.outputDecision || '',
+        llmProvider: item.llmProvider || 'UNKNOWN',
+        latencyMs: item.latencyMs || 0,
+        triggeredAt: item.triggeredAt || new Date().toISOString(),
+        alertLevel: item.alertLevel || 'NORMAL',
+      }))
+      for (const ev of list) addEvent(ev)
+    } catch (e) {
+      console.debug('[AGENT_STREAM] fetchStreamHistory failed:', e)
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   return {
     events,
     stats,
@@ -183,7 +289,11 @@ export const useAgentsStore = defineStore('agents', () => {
     setSubsumptionActive,
     clearEvents,
     fetchLogs,
-    fetchStats
+    fetchStats,
+    // Phase B: SSE stream control
+    startSSEStream,
+    stopSSEStream,
+    fetchStreamHistory,
   }
 })
 

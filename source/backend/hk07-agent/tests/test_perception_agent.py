@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.sensor_fusion_buffer import (
     SensorFusionBuffer, VitalsSample, CameraFrame, get_fusion_buffer
 )
-from agents.perception_agent import PerceptionAgent, PerceptionScan
+from engine.agents.perception_agent import PerceptionAgent, PerceptionScan
 from services.blackboard_service import BlackboardService
 
 
@@ -127,7 +127,7 @@ async def test_router_body_scan_routing():
     """Test 5: Router local rules — 'Quét toàn thân' → execute_full_body_scan"""
     print("\n[TEST 5] Router V2 local rules — body scan keyword routing")
 
-    from agents.router_agent_v2 import RouterAgentV2
+    from engine.agents.router_agent_v2 import RouterAgentV2
     router = RouterAgentV2()
 
     test_cases = [
@@ -156,7 +156,7 @@ async def test_environment_scan_no_vision():
     """Test 6: execute_environment_scan when no camera vision data — graceful response"""
     print("\n[TEST 6] Environment scan — no camera vision data in Blackboard")
 
-    from agents.agent_orchestrator_v2 import AgentOrchestratorV2
+    from engine.agents.agent_orchestrator_v2 import AgentOrchestratorV2
     orch = AgentOrchestratorV2()
     result = await orch._execute_tool("execute_environment_scan", {}, {})
     
